@@ -35,6 +35,11 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
         .bg(Color::Indexed(75))
         .add_modifier(Modifier::BOLD);
       (sel, sel)
+    } else if entry.is_git_ignored {
+      (
+        Style::default().fg(icon.color).add_modifier(Modifier::DIM),
+        Style::default().fg(name_color).add_modifier(Modifier::DIM),
+      )
     } else {
       (
         Style::default().fg(icon.color),
