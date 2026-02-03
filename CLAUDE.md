@@ -1,4 +1,4 @@
-# Agent instructions for tui-file-explorer
+# Agent instructions for tfl
 
 ## Git commits
 

@@ -1,4 +1,4 @@
-# tui-file-explorer
+# tfl
 
 A terminal file explorer with vim-style navigation and rich file previews, built with [ratatui](https://ratatui.rs).
 
@@ -95,12 +95,12 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 cargo build --release
 ```
 
-The binary will be at `target/release/tui-file-explorer`.
+The binary will be at `target/release/tfl`.
 
 ## Usage
 
 ```sh
-tui-file-explorer [path]
+tfl [path]
 ```
 
 If no path is given, opens the current directory.

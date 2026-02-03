@@ -1,5 +1,5 @@
 [package]
-name = "tui-file-explorer"
+name = "tfl"
 version = "0.1.0"
 edition = "2024"
 
