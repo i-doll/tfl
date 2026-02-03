@@ -28,6 +28,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Fuzzy search/filter** across file names
 - **Yank path** to clipboard
 - **Shell integrations** - drop into `$EDITOR`, `$SHELL`, or Claude Code
+- **Git status highlighting** — modified (yellow), staged (green), untracked (red), conflicted (bright red) with parent directory propagation
+- **Git branch display** in header with ahead/behind counts and summary stats
 - **.gitignore-aware** hidden file toggling
 - **Resizable panes** with adjustable tree/preview ratio
 - **Preview cache** with LRU eviction and debounced loading

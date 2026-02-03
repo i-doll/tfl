@@ -51,7 +51,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
   let path_str = app.tree.root.to_string_lossy();
-  let line = Line::from(vec![
+  let mut spans = vec![
     Span::styled(" ", Style::default().fg(Color::Indexed(75))),
     Span::styled(
       path_str.to_string(),
@@ -59,7 +59,17 @@ fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
         .fg(Color::Indexed(252))
         .add_modifier(Modifier::BOLD),
     ),
-  ]);
+  ];
+
+  if let Some(ref branch) = app.tree.git_info.branch {
+    spans.push(Span::styled("  ", Style::default().fg(Color::Indexed(114))));
+    spans.push(Span::styled(
+      branch.clone(),
+      Style::default().fg(Color::Indexed(114)),
+    ));
+  }
+
+  let line = Line::from(spans);
   let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Indexed(236)));
   paragraph.render(area, buf);
 }

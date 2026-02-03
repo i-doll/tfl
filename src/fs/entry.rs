@@ -1,5 +1,74 @@
 use std::path::PathBuf;
 
+use ratatui::style::Color;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitFileStatus {
+  Modified,
+  Added,
+  Deleted,
+  Renamed,
+  Untracked,
+  Conflicted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GitStatus {
+  pub staged: Option<GitFileStatus>,
+  pub unstaged: Option<GitFileStatus>,
+}
+
+impl GitStatus {
+  pub fn is_clean(&self) -> bool {
+    self.staged.is_none() && self.unstaged.is_none()
+  }
+
+  pub fn display_color(&self) -> Option<Color> {
+    // Conflicted → red
+    if self.staged == Some(GitFileStatus::Conflicted)
+      || self.unstaged == Some(GitFileStatus::Conflicted)
+    {
+      return Some(Color::Indexed(196));
+    }
+    // Untracked → red (167)
+    if self.staged == Some(GitFileStatus::Untracked)
+      || self.unstaged == Some(GitFileStatus::Untracked)
+    {
+      return Some(Color::Indexed(167));
+    }
+    // Unstaged changes → yellow
+    if self.unstaged.is_some() {
+      return Some(Color::Indexed(214));
+    }
+    // Staged only → green
+    if self.staged.is_some() {
+      return Some(Color::Indexed(114));
+    }
+    None
+  }
+
+  /// Merge another status into this one, keeping the highest severity.
+  pub fn merge(&mut self, other: &GitStatus) {
+    if self.staged.is_none() || severity(other.staged) > severity(self.staged) {
+      self.staged = other.staged;
+    }
+    if self.unstaged.is_none() || severity(other.unstaged) > severity(self.unstaged) {
+      self.unstaged = other.unstaged;
+    }
+  }
+}
+
+fn severity(status: Option<GitFileStatus>) -> u8 {
+  match status {
+    None => 0,
+    Some(GitFileStatus::Added) | Some(GitFileStatus::Renamed) => 1,
+    Some(GitFileStatus::Deleted) => 2,
+    Some(GitFileStatus::Modified) => 3,
+    Some(GitFileStatus::Untracked) => 4,
+    Some(GitFileStatus::Conflicted) => 5,
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct FileEntry {
   pub path: PathBuf,
@@ -11,6 +80,7 @@ pub struct FileEntry {
   pub expanded: bool,
   pub size: u64,
   pub is_git_ignored: bool,
+  pub git_status: GitStatus,
 }
 
 impl FileEntry {
@@ -42,6 +112,7 @@ impl FileEntry {
       expanded: false,
       size,
       is_git_ignored: false,
+      git_status: GitStatus::default(),
     }
   }
 
@@ -100,6 +171,7 @@ mod tests {
       expanded: false,
       size: 0,
       is_git_ignored: false,
+      git_status: GitStatus::default(),
     };
     assert!(entry.is_hidden());
 
@@ -113,6 +185,7 @@ mod tests {
       expanded: false,
       size: 0,
       is_git_ignored: false,
+      git_status: GitStatus::default(),
     };
     assert!(!entry.is_hidden());
   }
@@ -170,5 +243,94 @@ mod tests {
     assert!(!entry.is_dir);
     assert!(!entry.is_symlink);
     assert_eq!(entry.size, 0);
+  }
+
+  #[test]
+  fn test_git_status_default_is_clean() {
+    let status = GitStatus::default();
+    assert!(status.is_clean());
+    assert_eq!(status.display_color(), None);
+  }
+
+  #[test]
+  fn test_git_status_staged_not_clean() {
+    let status = GitStatus {
+      staged: Some(GitFileStatus::Added),
+      unstaged: None,
+    };
+    assert!(!status.is_clean());
+  }
+
+  #[test]
+  fn test_git_status_unstaged_not_clean() {
+    let status = GitStatus {
+      staged: None,
+      unstaged: Some(GitFileStatus::Modified),
+    };
+    assert!(!status.is_clean());
+  }
+
+  #[test]
+  fn test_display_color_staged_only() {
+    let status = GitStatus {
+      staged: Some(GitFileStatus::Added),
+      unstaged: None,
+    };
+    assert_eq!(status.display_color(), Some(Color::Indexed(114)));
+  }
+
+  #[test]
+  fn test_display_color_unstaged() {
+    let status = GitStatus {
+      staged: None,
+      unstaged: Some(GitFileStatus::Modified),
+    };
+    assert_eq!(status.display_color(), Some(Color::Indexed(214)));
+  }
+
+  #[test]
+  fn test_display_color_untracked() {
+    let status = GitStatus {
+      staged: None,
+      unstaged: Some(GitFileStatus::Untracked),
+    };
+    assert_eq!(status.display_color(), Some(Color::Indexed(167)));
+  }
+
+  #[test]
+  fn test_display_color_conflicted() {
+    let status = GitStatus {
+      staged: Some(GitFileStatus::Conflicted),
+      unstaged: None,
+    };
+    assert_eq!(status.display_color(), Some(Color::Indexed(196)));
+  }
+
+  #[test]
+  fn test_display_color_mixed_is_yellow() {
+    let status = GitStatus {
+      staged: Some(GitFileStatus::Added),
+      unstaged: Some(GitFileStatus::Modified),
+    };
+    assert_eq!(status.display_color(), Some(Color::Indexed(214)));
+  }
+
+  #[test]
+  fn test_git_status_merge() {
+    let mut parent = GitStatus::default();
+    let child = GitStatus {
+      staged: Some(GitFileStatus::Modified),
+      unstaged: None,
+    };
+    parent.merge(&child);
+    assert_eq!(parent.staged, Some(GitFileStatus::Modified));
+
+    // Higher severity wins
+    let child2 = GitStatus {
+      staged: Some(GitFileStatus::Conflicted),
+      unstaged: None,
+    };
+    parent.merge(&child2);
+    assert_eq!(parent.staged, Some(GitFileStatus::Conflicted));
   }
 }

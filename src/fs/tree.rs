@@ -1,9 +1,189 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::entry::FileEntry;
+use super::entry::{FileEntry, GitFileStatus, GitStatus};
+
+#[derive(Debug, Default)]
+pub struct GitRepoInfo {
+  pub branch: Option<String>,
+  pub ahead: usize,
+  pub behind: usize,
+  pub staged_count: usize,
+  pub modified_count: usize,
+  pub untracked_count: usize,
+}
+
+fn parse_status_char(c: u8) -> Option<GitFileStatus> {
+  match c {
+    b'M' => Some(GitFileStatus::Modified),
+    b'A' => Some(GitFileStatus::Added),
+    b'D' => Some(GitFileStatus::Deleted),
+    b'R' => Some(GitFileStatus::Renamed),
+    b'?' => Some(GitFileStatus::Untracked),
+    b'U' => Some(GitFileStatus::Conflicted),
+    _ => None,
+  }
+}
+
+fn is_conflict(x: u8, y: u8) -> bool {
+  matches!((x, y), (b'U', _) | (_, b'U') | (b'A', b'A') | (b'D', b'D'))
+}
+
+fn query_git_status(dir: &Path) -> (HashMap<PathBuf, GitStatus>, GitRepoInfo) {
+  let mut info = GitRepoInfo::default();
+  let empty = (HashMap::new(), info);
+
+  // Find repo root
+  let output = std::process::Command::new("git")
+    .args(["rev-parse", "--show-toplevel"])
+    .current_dir(dir)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .output();
+  let Ok(output) = output else { return empty };
+  if !output.status.success() {
+    return empty;
+  }
+  let repo_root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+
+  // Get branch name
+  let branch_output = std::process::Command::new("git")
+    .args(["rev-parse", "--abbrev-ref", "HEAD"])
+    .current_dir(&repo_root)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .output();
+  info = GitRepoInfo::default();
+  if let Ok(bo) = branch_output {
+    let branch = String::from_utf8_lossy(&bo.stdout).trim().to_string();
+    if !branch.is_empty() && branch != "HEAD" {
+      info.branch = Some(branch);
+    }
+  }
+
+  // Get ahead/behind
+  let ab_output = std::process::Command::new("git")
+    .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    .current_dir(&repo_root)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .output();
+  if let Ok(ab) = ab_output
+    && ab.status.success()
+  {
+    let text = String::from_utf8_lossy(&ab.stdout);
+    let parts: Vec<&str> = text.trim().split('\t').collect();
+    if parts.len() == 2 {
+      info.ahead = parts[0].parse().unwrap_or(0);
+      info.behind = parts[1].parse().unwrap_or(0);
+    }
+  }
+
+  // Get file statuses
+  let status_output = std::process::Command::new("git")
+    .args(["status", "--porcelain=v1", "-uall"])
+    .current_dir(&repo_root)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .output();
+  let Ok(status_output) = status_output else {
+    return (HashMap::new(), info);
+  };
+
+  let mut map: HashMap<PathBuf, GitStatus> = HashMap::new();
+  let text = String::from_utf8_lossy(&status_output.stdout);
+
+  for line in text.lines() {
+    if line.len() < 4 {
+      continue;
+    }
+    let bytes = line.as_bytes();
+    let x = bytes[0];
+    let y = bytes[1];
+    let path_str = &line[3..];
+
+    // Handle renames: "R  old -> new"
+    let file_path = if x == b'R' || y == b'R' {
+      if let Some(arrow) = path_str.find(" -> ") {
+        &path_str[arrow + 4..]
+      } else {
+        path_str
+      }
+    } else {
+      path_str
+    };
+
+    let abs_path = repo_root.join(file_path);
+
+    let status = if is_conflict(x, y) {
+      GitStatus {
+        staged: Some(GitFileStatus::Conflicted),
+        unstaged: Some(GitFileStatus::Conflicted),
+      }
+    } else if x == b'?' && y == b'?' {
+      GitStatus {
+        staged: None,
+        unstaged: Some(GitFileStatus::Untracked),
+      }
+    } else {
+      GitStatus {
+        staged: if x != b' ' && x != b'?' { parse_status_char(x) } else { None },
+        unstaged: if y != b' ' && y != b'?' { parse_status_char(y) } else { None },
+      }
+    };
+
+    // Count stats
+    if status.staged.is_some() && status.staged != Some(GitFileStatus::Untracked) {
+      info.staged_count += 1;
+    }
+    if status.unstaged == Some(GitFileStatus::Modified) {
+      info.modified_count += 1;
+    }
+    if status.unstaged == Some(GitFileStatus::Untracked) {
+      info.untracked_count += 1;
+    }
+
+    map.insert(abs_path, status);
+  }
+
+  (map, info)
+}
+
+fn mark_git_status(statuses: &HashMap<PathBuf, GitStatus>, children: &mut [FileEntry]) {
+  for child in children.iter_mut() {
+    let status = statuses.get(&child.path).or_else(|| {
+      child.path.canonicalize().ok().and_then(|p| statuses.get(&p))
+    });
+    if let Some(status) = status {
+      child.git_status = *status;
+    }
+  }
+}
+
+fn propagate_git_status(entries: &mut [FileEntry]) {
+  // Walk forward; for each non-clean entry, walk backward to set parent dirs
+  let len = entries.len();
+  for i in 0..len {
+    if entries[i].git_status.is_clean() {
+      continue;
+    }
+    let child_status = entries[i].git_status;
+    let child_depth = entries[i].depth;
+    // Walk backward to find parent directories
+    if child_depth > 0 {
+      for j in (0..i).rev() {
+        if entries[j].is_dir && entries[j].depth < child_depth {
+          entries[j].git_status.merge(&child_status);
+          if entries[j].depth == 0 {
+            break;
+          }
+        }
+      }
+    }
+  }
+}
 
 fn mark_git_ignored(dir: &Path, children: &mut [FileEntry]) {
   if children.is_empty() {
@@ -31,16 +211,22 @@ pub struct FileTree {
   pub root: PathBuf,
   pub entries: Vec<FileEntry>,
   pub show_hidden: bool,
+  pub git_statuses: HashMap<PathBuf, GitStatus>,
+  pub git_info: GitRepoInfo,
 }
 
 impl FileTree {
   pub fn new(root: PathBuf) -> Result<Self> {
+    let (git_statuses, git_info) = query_git_status(&root);
     let mut tree = Self {
       root: root.clone(),
       entries: Vec::new(),
       show_hidden: false,
+      git_statuses,
+      git_info,
     };
     tree.load_dir(&root, 0)?;
+    propagate_git_status(&mut tree.entries);
     Ok(tree)
   }
 
@@ -79,6 +265,7 @@ impl FileTree {
     });
 
     mark_git_ignored(path, &mut children);
+    mark_git_status(&self.git_statuses, &mut children);
 
     // Insert children at the correct position
     for (i, child) in children.into_iter().enumerate() {
@@ -127,10 +314,13 @@ impl FileTree {
     });
 
     mark_git_ignored(&path, &mut children);
+    mark_git_status(&self.git_statuses, &mut children);
 
     for (i, child) in children.into_iter().enumerate() {
       self.entries.insert(index + 1 + i, child);
     }
+
+    propagate_git_status(&mut self.entries);
 
     Ok(())
   }
@@ -158,6 +348,11 @@ impl FileTree {
   }
 
   pub fn reload(&mut self) -> Result<()> {
+    // Re-query git status
+    let (statuses, info) = query_git_status(&self.root);
+    self.git_statuses = statuses;
+    self.git_info = info;
+
     // Remember expanded dirs
     let expanded: Vec<PathBuf> = self
       .entries
@@ -178,6 +373,8 @@ impl FileTree {
       i += 1;
     }
 
+    propagate_git_status(&mut self.entries);
+
     Ok(())
   }
 
@@ -187,9 +384,13 @@ impl FileTree {
     }
     let path = self.entries[index].path.clone();
     self.root = path;
+    let (statuses, info) = query_git_status(&self.root);
+    self.git_statuses = statuses;
+    self.git_info = info;
     let root = self.root.clone();
     self.entries.clear();
     self.load_dir(&root, 0)?;
+    propagate_git_status(&mut self.entries);
     Ok(())
   }
 
@@ -197,9 +398,13 @@ impl FileTree {
     if let Some(parent) = self.root.parent().map(|p| p.to_path_buf()) {
       let old_root = self.root.clone();
       self.root = parent;
+      let (statuses, info) = query_git_status(&self.root);
+      self.git_statuses = statuses;
+      self.git_info = info;
       let root = self.root.clone();
       self.entries.clear();
       self.load_dir(&root, 0)?;
+      propagate_git_status(&mut self.entries);
       Ok(Some(old_root))
     } else {
       Ok(None)
@@ -432,5 +637,203 @@ mod tests {
     assert!(tree.entries[0].expanded);
     assert!(tree.entries.iter().any(|e| e.name == "inner.txt"));
     cleanup(&dir);
+  }
+
+  #[test]
+  fn test_parse_status_char() {
+    assert_eq!(parse_status_char(b'M'), Some(GitFileStatus::Modified));
+    assert_eq!(parse_status_char(b'A'), Some(GitFileStatus::Added));
+    assert_eq!(parse_status_char(b'D'), Some(GitFileStatus::Deleted));
+    assert_eq!(parse_status_char(b'R'), Some(GitFileStatus::Renamed));
+    assert_eq!(parse_status_char(b'?'), Some(GitFileStatus::Untracked));
+    assert_eq!(parse_status_char(b'U'), Some(GitFileStatus::Conflicted));
+    assert_eq!(parse_status_char(b' '), None);
+    assert_eq!(parse_status_char(b'X'), None);
+  }
+
+  #[test]
+  fn test_is_conflict_patterns() {
+    assert!(is_conflict(b'U', b'U'));
+    assert!(is_conflict(b'U', b'A'));
+    assert!(is_conflict(b'A', b'U'));
+    assert!(is_conflict(b'A', b'A'));
+    assert!(is_conflict(b'D', b'D'));
+    assert!(!is_conflict(b'M', b' '));
+    assert!(!is_conflict(b' ', b'M'));
+  }
+
+  #[test]
+  fn test_non_git_dir_all_clean() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_nogit_clean_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "data").unwrap();
+
+    let tree = FileTree::new(dir.clone()).unwrap();
+    assert!(tree.entries.iter().all(|e| e.git_status.is_clean()));
+    assert!(tree.git_info.branch.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_git_status_on_modified_files() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_gitstatus_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // Init git repo with initial commit
+    std::process::Command::new("git")
+      .args(["init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["config", "user.email", "test@test.com"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["config", "user.name", "Test"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["config", "commit.gpgsign", "false"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    // Create and commit a file
+    fs::write(dir.join("tracked.txt"), "initial").unwrap();
+    std::process::Command::new("git")
+      .args(["add", "tracked.txt"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["commit", "-m", "init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    // Modify the tracked file
+    fs::write(dir.join("tracked.txt"), "modified").unwrap();
+    // Create an untracked file
+    fs::write(dir.join("untracked.txt"), "new").unwrap();
+    // Create a staged file
+    fs::write(dir.join("staged.txt"), "staged").unwrap();
+    std::process::Command::new("git")
+      .args(["add", "staged.txt"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    let tree = FileTree::new(dir.clone()).unwrap();
+
+    let tracked = tree.entries.iter().find(|e| e.name == "tracked.txt").unwrap();
+    assert!(!tracked.git_status.is_clean());
+    assert_eq!(tracked.git_status.unstaged, Some(GitFileStatus::Modified));
+
+    let untracked = tree.entries.iter().find(|e| e.name == "untracked.txt").unwrap();
+    assert_eq!(untracked.git_status.unstaged, Some(GitFileStatus::Untracked));
+
+    let staged = tree.entries.iter().find(|e| e.name == "staged.txt").unwrap();
+    assert_eq!(staged.git_status.staged, Some(GitFileStatus::Added));
+
+    // Branch should be set
+    assert!(tree.git_info.branch.is_some());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_git_status_parent_propagation() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_gitprop_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("subdir")).unwrap();
+
+    std::process::Command::new("git")
+      .args(["init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    // Create untracked file inside subdir
+    fs::write(dir.join("subdir").join("new.txt"), "new").unwrap();
+
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    // Expand subdir
+    let subdir_idx = tree.entries.iter().position(|e| e.name == "subdir").unwrap();
+    tree.toggle_expand(subdir_idx).unwrap();
+
+    // Parent dir should have propagated status
+    let subdir_entry = &tree.entries[subdir_idx];
+    assert!(!subdir_entry.git_status.is_clean());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_reload_refreshes_git_status() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_gitreload_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    std::process::Command::new("git")
+      .args(["init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["config", "user.email", "test@test.com"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["config", "user.name", "Test"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["config", "commit.gpgsign", "false"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    // Create and commit
+    fs::write(dir.join("file.txt"), "initial").unwrap();
+    std::process::Command::new("git")
+      .args(["add", "."])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+    std::process::Command::new("git")
+      .args(["commit", "-m", "init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    let file = tree.entries.iter().find(|e| e.name == "file.txt").unwrap();
+    assert!(file.git_status.is_clean());
+
+    // Modify file and reload
+    fs::write(dir.join("file.txt"), "changed").unwrap();
+    tree.reload().unwrap();
+
+    let file = tree.entries.iter().find(|e| e.name == "file.txt").unwrap();
+    assert!(!file.git_status.is_clean());
+    assert_eq!(file.git_status.unstaged, Some(GitFileStatus::Modified));
+
+    let _ = fs::remove_dir_all(&dir);
   }
 }
