@@ -139,7 +139,7 @@ If no path is given, opens the current directory."
   let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms));
 
   loop {
-    terminal.draw(|frame| ui::draw(frame, &mut app))?;
+    terminal.draw(|frame| ui::draw(frame, &mut app, &config))?;
 
     match events.next()? {
       Event::Key(key) => {

@@ -11,6 +11,32 @@ pub struct KeyBinding {
   pub modifiers: KeyModifiers,
 }
 
+impl KeyBinding {
+  pub fn display_key(&self) -> String {
+    let key_name = match self.code {
+      KeyCode::Char(' ') => "Space".to_string(),
+      KeyCode::Char(c) => c.to_string(),
+      KeyCode::Enter => "Enter".to_string(),
+      KeyCode::Esc => "Esc".to_string(),
+      KeyCode::Backspace => "Backspace".to_string(),
+      KeyCode::Tab => "Tab".to_string(),
+      KeyCode::Up => "Up".to_string(),
+      KeyCode::Down => "Down".to_string(),
+      KeyCode::Left => "Left".to_string(),
+      KeyCode::Right => "Right".to_string(),
+      _ => format!("{:?}", self.code),
+    };
+
+    if self.modifiers.contains(KeyModifiers::CONTROL) {
+      format!("Ctrl+{key_name}")
+    } else if self.modifiers.contains(KeyModifiers::ALT) {
+      format!("Alt+{key_name}")
+    } else {
+      key_name
+    }
+  }
+}
+
 pub struct Config {
   pub tree_ratio: u16,
   pub min_tree_ratio: u16,
@@ -223,10 +249,27 @@ q = "quit"
 esc = "quit"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
+"?" = "toggle_help"
 
 [keys.g_prefix]
 g = "go_to_top"
 "#
+  }
+
+  pub fn reverse_lookup(&self) -> HashMap<Action, Vec<String>> {
+    let mut map: HashMap<Action, Vec<String>> = HashMap::new();
+    for (kb, action) in &self.normal_keys {
+      map.entry(action.clone()).or_default().push(kb.display_key());
+    }
+    for (kb, action) in &self.g_prefix_keys {
+      let key_str = format!("g{}", kb.display_key());
+      map.entry(action.clone()).or_default().push(key_str);
+    }
+    // Sort keys for deterministic display
+    for keys in map.values_mut() {
+      keys.sort();
+    }
+    map
   }
 
   pub fn config_path() -> Result<std::path::PathBuf, String> {
@@ -408,6 +451,7 @@ mod tests {
       (KeyCode::Char('s'), n, Action::OpenShell),
       (KeyCode::Char('ø'), n, Action::ShrinkTree),
       (KeyCode::Char('æ'), n, Action::GrowTree),
+      (KeyCode::Char('?'), n, Action::ToggleHelp),
     ];
 
     for (code, mods, action) in expected {
@@ -642,5 +686,65 @@ tree_ratio = 40
     let config = Config::load_from_str("this is not [valid toml");
     assert_eq!(config.tree_ratio, 30);
     assert_eq!(config.tick_rate_ms, 100);
+  }
+
+  // --- display_key tests ---
+
+  #[test]
+  fn test_display_key_plain_char() {
+    let kb = KeyBinding { code: KeyCode::Char('j'), modifiers: KeyModifiers::NONE };
+    assert_eq!(kb.display_key(), "j");
+  }
+
+  #[test]
+  fn test_display_key_space() {
+    let kb = KeyBinding { code: KeyCode::Char(' '), modifiers: KeyModifiers::NONE };
+    assert_eq!(kb.display_key(), "Space");
+  }
+
+  #[test]
+  fn test_display_key_ctrl() {
+    let kb = KeyBinding { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL };
+    assert_eq!(kb.display_key(), "Ctrl+c");
+  }
+
+  #[test]
+  fn test_display_key_named() {
+    let kb = KeyBinding { code: KeyCode::Enter, modifiers: KeyModifiers::NONE };
+    assert_eq!(kb.display_key(), "Enter");
+    let kb = KeyBinding { code: KeyCode::Esc, modifiers: KeyModifiers::NONE };
+    assert_eq!(kb.display_key(), "Esc");
+  }
+
+  #[test]
+  fn test_display_key_multibyte() {
+    let kb = KeyBinding { code: KeyCode::Char('ø'), modifiers: KeyModifiers::NONE };
+    assert_eq!(kb.display_key(), "ø");
+  }
+
+  // --- reverse_lookup tests ---
+
+  #[test]
+  fn test_reverse_lookup_contains_quit() {
+    let config = Config::default();
+    let lookup = config.reverse_lookup();
+    let quit_keys = lookup.get(&Action::Quit).expect("Quit should have keys");
+    assert!(quit_keys.contains(&"q".to_string()));
+    assert!(quit_keys.contains(&"Ctrl+c".to_string()));
+  }
+
+  #[test]
+  fn test_reverse_lookup_contains_go_to_top_with_g_prefix() {
+    let config = Config::default();
+    let lookup = config.reverse_lookup();
+    let top_keys = lookup.get(&Action::GoToTop).expect("GoToTop should have keys");
+    assert!(top_keys.contains(&"gg".to_string()));
+  }
+
+  #[test]
+  fn test_default_has_toggle_help_binding() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('?'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleHelp));
   }
 }

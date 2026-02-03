@@ -1,4 +1,5 @@
 pub mod file_tree;
+pub mod help;
 pub mod preview;
 pub mod status_bar;
 
@@ -10,8 +11,9 @@ use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::config::Config;
 
-pub fn draw(frame: &mut Frame, app: &mut App) {
+pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   let area = frame.area();
 
   // Vertical layout: header, main, status bar
@@ -47,6 +49,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
   // Status bar
   status_bar::render_status_bar(app, chunks[2], frame.buffer_mut());
+
+  // Help overlay
+  if app.show_help {
+    help::render_help(config, area, frame.buffer_mut());
+  }
 }
 
 fn render_header(app: &App, area: Rect, buf: &mut Buffer) {

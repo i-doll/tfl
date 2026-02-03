@@ -74,6 +74,7 @@ pub enum InputMode {
   Normal,
   Search,
   GPrefix,
+  Help,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
@@ -89,6 +90,11 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       let kb = normalize_key_event(key);
       config.g_prefix_keys.get(&kb).cloned().unwrap_or(Action::None)
     }
+    InputMode::Help => match key.code {
+      KeyCode::Esc => Action::ToggleHelp,
+      KeyCode::Char('?') => Action::ToggleHelp,
+      _ => Action::None,
+    },
     InputMode::Normal => {
       let kb = normalize_key_event(key);
       config.normal_keys.get(&kb).cloned().unwrap_or(Action::None)
@@ -182,6 +188,26 @@ mod tests {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::GPrefix, &c), Action::GoToTop);
     assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::GPrefix, &c), Action::None);
+  }
+
+  #[test]
+  fn test_help_mode_question_mark_toggles() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('?')), InputMode::Help, &c), Action::ToggleHelp);
+  }
+
+  #[test]
+  fn test_help_mode_esc_toggles() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Help, &c), Action::ToggleHelp);
+  }
+
+  #[test]
+  fn test_help_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Help, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Help, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Help, &c), Action::None);
   }
 
   #[test]
