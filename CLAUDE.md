@@ -29,6 +29,10 @@ When adding or changing features, keybinds, or preview types, update README.md:
 
 ## Testing
 
+- Write tests following TDD practices
+ - First write a failing test case for the expected functionality
+ - Write the code that should work for the intended feature
+ - Run `cargo test` to verify the test passing
 - Run `cargo test` after changes
 - Run `cargo clippy` before committing
 - Never run dev servers or build commands — ask the user
