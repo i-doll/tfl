@@ -6,6 +6,7 @@ pub enum Action {
   MoveLeft,
   MoveRight,
   ToggleExpand,
+  EnterDir,
   ScrollPreviewUp,
   ScrollPreviewDown,
   ToggleHidden,
@@ -37,6 +38,7 @@ impl Action {
       "move_left" => Some(Action::MoveLeft),
       "move_right" => Some(Action::MoveRight),
       "toggle_expand" => Some(Action::ToggleExpand),
+      "enter_dir" => Some(Action::EnterDir),
       "scroll_preview_up" => Some(Action::ScrollPreviewUp),
       "scroll_preview_down" => Some(Action::ScrollPreviewDown),
       "toggle_hidden" => Some(Action::ToggleHidden),
@@ -68,6 +70,7 @@ mod tests {
     assert_eq!(Action::from_name("move_left"), Some(Action::MoveLeft));
     assert_eq!(Action::from_name("move_right"), Some(Action::MoveRight));
     assert_eq!(Action::from_name("toggle_expand"), Some(Action::ToggleExpand));
+    assert_eq!(Action::from_name("enter_dir"), Some(Action::EnterDir));
     assert_eq!(Action::from_name("scroll_preview_up"), Some(Action::ScrollPreviewUp));
     assert_eq!(Action::from_name("scroll_preview_down"), Some(Action::ScrollPreviewDown));
     assert_eq!(Action::from_name("toggle_hidden"), Some(Action::ToggleHidden));

@@ -62,7 +62,9 @@ impl App {
       Action::Quit => self.should_quit = true,
       Action::MoveDown => self.move_cursor(1),
       Action::MoveUp => self.move_cursor(-1),
-      Action::MoveRight | Action::ToggleExpand => self.enter_or_expand()?,
+      Action::ToggleExpand => self.enter_or_expand()?,
+      Action::MoveRight => self.expand_only()?,
+      Action::EnterDir => self.enter_directory()?,
       Action::MoveLeft => self.go_parent_or_collapse()?,
       Action::ScrollPreviewDown => self.preview.scroll_down(3),
       Action::ScrollPreviewUp => self.preview.scroll_up(3),
@@ -168,6 +170,33 @@ impl App {
         self.update_preview();
       } else {
         // File selected - just update preview
+        self.update_preview();
+      }
+    }
+    Ok(())
+  }
+
+  fn expand_only(&mut self) -> Result<()> {
+    let entries = self.visible_entries();
+    if let Some(idx) = entries.get(self.cursor).copied() {
+      if self.tree.entries[idx].is_dir && !self.tree.entries[idx].expanded {
+        self.tree.toggle_expand(idx)?;
+      }
+      self.update_preview();
+    }
+    Ok(())
+  }
+
+  fn enter_directory(&mut self) -> Result<()> {
+    let entries = self.visible_entries();
+    if let Some(idx) = entries.get(self.cursor).copied() {
+      if self.tree.entries[idx].is_dir {
+        self.tree.enter_dir(idx)?;
+        self.cursor = 0;
+        self.tree_scroll_offset = 0;
+        self.preview.invalidate();
+        self.update_preview();
+      } else {
         self.update_preview();
       }
     }
@@ -546,6 +575,72 @@ mod tests {
     app.update(Action::OpenShell).unwrap();
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::Shell(_))));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_enter_dir_changes_root() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry should be aaa_dir (dirs first, alphabetical)
+    assert!(app.tree.entries[0].is_dir);
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+
+    let old_root = app.tree.root.clone();
+    app.update(Action::EnterDir).unwrap();
+    assert_ne!(app.tree.root, old_root);
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+    assert_eq!(app.cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_enter_dir_on_file_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move cursor to a file (past the dirs)
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let root_before = app.tree.root.clone();
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, root_before);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_move_right_only_expands() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.tree.entries[0].is_dir);
+    assert!(!app.tree.entries[0].expanded);
+
+    // First MoveRight should expand
+    app.update(Action::MoveRight).unwrap();
+    assert!(app.tree.entries[0].expanded);
+
+    // Second MoveRight should NOT collapse
+    app.update(Action::MoveRight).unwrap();
+    assert!(app.tree.entries[0].expanded);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_expand_still_toggles() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.tree.entries[0].expanded);
+
+    // ToggleExpand should expand
+    app.update(Action::ToggleExpand).unwrap();
+    assert!(app.tree.entries[0].expanded);
+
+    // ToggleExpand again should collapse
+    app.update(Action::ToggleExpand).unwrap();
+    assert!(!app.tree.entries[0].expanded);
     cleanup_test_dir(&dir);
   }
 }
