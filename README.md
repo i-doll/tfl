@@ -6,15 +6,15 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 ┌──────────────────────────────────────────────────────────┐
 │  ~/projects/my-app                                       │
 ├──────────────────┬───────────────────────────────────────┤
-│  alpha_dir/     │ fn main() {                           │
-│  beta_dir/      │     let config = Config::load();      │
+│  alpha_dir/      │ fn main() {                           │
+│  beta_dir/       │     let config = Config::load();      │
 │ > src/           │     let app = App::new(config);       │
-│    main.rs      │     app.run();                        │
-│    lib.rs       │ }                                     │
-│  Cargo.toml     │                                       │
-│  README.md      │                                       │
+│    main.rs       │     app.run();                        │
+│    lib.rs        │ }                                     │
+│  Cargo.toml      │                                       │
+│  README.md       │                                       │
 ├──────────────────┴───────────────────────────────────────┤
-│  main.rs | 234 B | rs | 12 lines              3/7      │
+│  main.rs | 234 B | rs | 12 lines                3/7      │
 └──────────────────────────────────────────────────────────┘
 ```
 
