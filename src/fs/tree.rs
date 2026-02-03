@@ -1,8 +1,30 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
 use super::entry::FileEntry;
+
+fn mark_git_ignored(dir: &Path, children: &mut [FileEntry]) {
+  if children.is_empty() {
+    return;
+  }
+  let output = std::process::Command::new("git")
+    .arg("check-ignore")
+    .args(children.iter().map(|c| &c.path))
+    .current_dir(dir)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .output();
+  let Ok(output) = output else { return };
+  let ignored: HashSet<PathBuf> = String::from_utf8_lossy(&output.stdout)
+    .lines()
+    .map(PathBuf::from)
+    .collect();
+  for child in children.iter_mut() {
+    child.is_git_ignored = ignored.contains(&child.path);
+  }
+}
 
 #[derive(Debug)]
 pub struct FileTree {
@@ -56,6 +78,8 @@ impl FileTree {
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
+    mark_git_ignored(path, &mut children);
+
     // Insert children at the correct position
     for (i, child) in children.into_iter().enumerate() {
       self.entries.insert(insert_pos + i, child);
@@ -101,6 +125,8 @@ impl FileTree {
         .cmp(&a.is_dir)
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
+
+    mark_git_ignored(&path, &mut children);
 
     for (i, child) in children.into_iter().enumerate() {
       self.entries.insert(index + 1 + i, child);
@@ -305,6 +331,94 @@ mod tests {
     assert_eq!(tree.root, dir.join("alpha_dir"));
     assert!(tree.entries.iter().any(|e| e.name == "inner.txt"));
     cleanup(&dir);
+  }
+
+  #[test]
+  fn test_mark_git_ignored_marks_ignored_files() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_gitignore_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // Init a git repo
+    std::process::Command::new("git")
+      .args(["init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+    fs::write(dir.join("foo.log"), "log data").unwrap();
+    fs::write(dir.join("bar.txt"), "text data").unwrap();
+
+    let mut children = vec![
+      FileEntry::from_path(dir.join("foo.log"), 0),
+      FileEntry::from_path(dir.join("bar.txt"), 0),
+    ];
+
+    mark_git_ignored(&dir, &mut children);
+
+    let foo = children.iter().find(|e| e.name == "foo.log").unwrap();
+    let bar = children.iter().find(|e| e.name == "bar.txt").unwrap();
+    assert!(foo.is_git_ignored);
+    assert!(!bar.is_git_ignored);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_mark_git_ignored_no_git_repo() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_no_git_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("foo.log"), "data").unwrap();
+    fs::write(dir.join("bar.txt"), "data").unwrap();
+
+    let mut children = vec![
+      FileEntry::from_path(dir.join("foo.log"), 0),
+      FileEntry::from_path(dir.join("bar.txt"), 0),
+    ];
+
+    mark_git_ignored(&dir, &mut children);
+
+    // No entries should be marked when not in a git repo
+    assert!(!children.iter().any(|e| e.is_git_ignored));
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_tree_loads_with_git_ignored_flag() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_tree_load_ignored_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    std::process::Command::new("git")
+      .args(["init"])
+      .current_dir(&dir)
+      .output()
+      .unwrap();
+
+    fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+    fs::write(dir.join("ignored.log"), "log").unwrap();
+    fs::write(dir.join("visible.txt"), "text").unwrap();
+
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    tree.show_hidden = true;
+    tree.reload().unwrap();
+
+    let ignored = tree.entries.iter().find(|e| e.name == "ignored.log").unwrap();
+    let visible = tree.entries.iter().find(|e| e.name == "visible.txt").unwrap();
+    assert!(ignored.is_git_ignored);
+    assert!(!visible.is_git_ignored);
+
+    let _ = fs::remove_dir_all(&dir);
   }
 
   #[test]

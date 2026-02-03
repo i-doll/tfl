@@ -10,6 +10,7 @@ pub struct FileEntry {
   pub symlink_target: Option<String>,
   pub expanded: bool,
   pub size: u64,
+  pub is_git_ignored: bool,
 }
 
 impl FileEntry {
@@ -40,6 +41,7 @@ impl FileEntry {
       symlink_target,
       expanded: false,
       size,
+      is_git_ignored: false,
     }
   }
 
@@ -97,6 +99,7 @@ mod tests {
       symlink_target: None,
       expanded: false,
       size: 0,
+      is_git_ignored: false,
     };
     assert!(entry.is_hidden());
 
@@ -109,6 +112,7 @@ mod tests {
       symlink_target: None,
       expanded: false,
       size: 0,
+      is_git_ignored: false,
     };
     assert!(!entry.is_hidden());
   }
@@ -141,6 +145,20 @@ mod tests {
     let entry = FileEntry::from_path(file.clone(), 0);
     assert!(!entry.is_symlink);
     assert_eq!(entry.symlink_target, None);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_entry_default_not_git_ignored() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_not_ignored");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.txt");
+    fs::write(&file, "hello").unwrap();
+
+    let entry = FileEntry::from_path(file, 0);
+    assert!(!entry.is_git_ignored);
 
     let _ = fs::remove_dir_all(&dir);
   }
