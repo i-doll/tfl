@@ -24,6 +24,8 @@ use crate::app::{App, SuspendAction};
 use crate::event::{Event, EventLoop, map_key};
 
 fn main() -> Result<()> {
+  let config = config::Config::load();
+
   // Detect Kitty protocol support BEFORE entering alternate screen
   let picker = Picker::from_query_stdio().ok();
 
@@ -45,21 +47,21 @@ fn main() -> Result<()> {
   let backend = CrosstermBackend::new(io::stdout());
   let mut terminal = Terminal::new(backend)?;
 
-  let mut app = App::new(root, picker)?;
+  let mut app = App::new(root, picker, &config)?;
   // Trigger initial preview
   if !app.tree.entries.is_empty() {
     let path = app.tree.entries[0].path.clone();
     app.preview.request_preview(&path, app.picker.as_ref());
   }
 
-  let events = EventLoop::new(Duration::from_millis(config::TICK_RATE_MS));
+  let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms));
 
   loop {
     terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
     match events.next()? {
       Event::Key(key) => {
-        let action = map_key(key, app.input_mode);
+        let action = map_key(key, app.input_mode, &config);
         app.update(action)?;
       }
       Event::Resize(w, h) => {

@@ -31,6 +31,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **.gitignore-aware** hidden file toggling
 - **Resizable panes** with adjustable tree/preview ratio
 - **Preview cache** with LRU eviction and debounced loading
+- **Configurable keybindings** via TOML config file
 
 ## Keybindings
 
@@ -88,6 +89,9 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `anyhow` / `thiserror` | Error handling |
 | `unicode-width` | Accurate column width for Unicode strings |
 | `clipboard-anywhere` | Cross-platform clipboard (yank path) |
+| `serde` | Serialization/deserialization for config |
+| `toml` | TOML config file parsing |
+| `dirs` | XDG config directory resolution |
 
 ## Build
 
@@ -105,6 +109,61 @@ tfl [path]
 
 If no path is given, opens the current directory.
 
+## Configuration
+
+tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/.config/tfl/config.toml`). All fields are optional — unspecified values keep their defaults.
+
+```toml
+[general]
+tree_ratio = 30       # initial tree pane width (percentage, default 30)
+tick_rate_ms = 100    # event loop tick rate in ms (default 100)
+
+[keys.normal]
+j = "move_down"
+k = "move_up"
+h = "move_left"
+l = "move_right"
+down = "move_down"
+up = "move_up"
+left = "move_left"
+right = "move_right"
+space = "toggle_expand"
+enter = "toggle_expand"
+"shift+j" = "scroll_preview_down"
+"shift+k" = "scroll_preview_up"
+"." = "toggle_hidden"
+"shift+g" = "go_to_bottom"
+g = "g_press"
+"/" = "search_start"
+y = "yank_path"
+e = "open_editor"
+c = "open_claude"
+"ctrl+c" = "quit"
+s = "open_shell"
+q = "quit"
+esc = "quit"
+ø = "shrink_tree"
+æ = "grow_tree"
+
+[keys.g_prefix]
+g = "go_to_top"
+```
+
+### Key format
+
+- Single characters: `j`, `q`, `.`, `/`, `ø`
+- Uppercase / shift: `"shift+j"` or `"J"` (equivalent)
+- Ctrl combos: `"ctrl+c"`
+- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `tab`
+
+### Available actions
+
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `none`
+
+Use `"none"` to unbind a key (e.g., `q = "none"`).
+
+Search mode keys are not configurable (they handle text input).
+
 ## Module structure
 
 ```
@@ -113,7 +172,7 @@ src/
   app.rs           Application state, action dispatch, suspend/resume
   action.rs        Action enum (all possible user actions)
   event.rs         Event loop, key mapping, input modes
-  config.rs        Constants (ratios, tick rate)
+  config.rs        Config loading, key binding parsing, defaults
   fs/
     entry.rs       FileEntry struct (path, metadata, depth)
     tree.rs        FileTree: flat vec, expand/collapse, sort, reload

@@ -5,7 +5,7 @@ use anyhow::Result;
 use ratatui_image::picker::Picker;
 
 use crate::action::Action;
-use crate::config;
+use crate::config::Config;
 use crate::event::InputMode;
 use crate::fs::FileTree;
 use crate::preview::PreviewState;
@@ -18,6 +18,9 @@ pub struct App {
   pub input_mode: InputMode,
   pub search_query: String,
   pub tree_ratio: u16,
+  pub min_tree_ratio: u16,
+  pub max_tree_ratio: u16,
+  pub ratio_step: u16,
   pub should_quit: bool,
   pub should_suspend: Option<SuspendAction>,
   pub status_message: Option<String>,
@@ -33,7 +36,7 @@ pub enum SuspendAction {
 }
 
 impl App {
-  pub fn new(root: PathBuf, picker: Option<Picker>) -> Result<Self> {
+  pub fn new(root: PathBuf, picker: Option<Picker>, config: &Config) -> Result<Self> {
     let tree = FileTree::new(root)?;
     Ok(Self {
       tree,
@@ -42,7 +45,10 @@ impl App {
       picker,
       input_mode: InputMode::Normal,
       search_query: String::new(),
-      tree_ratio: config::TREE_RATIO,
+      tree_ratio: config.tree_ratio,
+      min_tree_ratio: config.min_tree_ratio,
+      max_tree_ratio: config.max_tree_ratio,
+      ratio_step: config.ratio_step,
       should_quit: false,
       should_suspend: None,
       status_message: None,
@@ -111,10 +117,10 @@ impl App {
         self.should_suspend = Some(SuspendAction::Shell(dir));
       }
       Action::ShrinkTree => {
-        self.tree_ratio = self.tree_ratio.saturating_sub(config::RATIO_STEP).max(config::MIN_TREE_RATIO);
+        self.tree_ratio = self.tree_ratio.saturating_sub(self.ratio_step).max(self.min_tree_ratio);
       }
       Action::GrowTree => {
-        self.tree_ratio = (self.tree_ratio + config::RATIO_STEP).min(config::MAX_TREE_RATIO);
+        self.tree_ratio = (self.tree_ratio + self.ratio_step).min(self.max_tree_ratio);
       }
       Action::Resize(_, h) => {
         self.viewport_height = h.saturating_sub(4) as usize;
@@ -317,10 +323,14 @@ mod tests {
     let _ = fs::remove_dir_all(dir);
   }
 
+  fn cfg() -> Config {
+    Config::default()
+  }
+
   #[test]
   fn test_app_creation() {
     let dir = setup_test_dir();
-    let app = App::new(dir.clone(), None).unwrap();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
     assert_eq!(app.cursor, 0);
     assert!(!app.should_quit);
     assert!(!app.tree.entries.is_empty());
@@ -328,9 +338,19 @@ mod tests {
   }
 
   #[test]
+  fn test_app_creation_custom_ratio() {
+    let dir = setup_test_dir();
+    let mut c = cfg();
+    c.tree_ratio = 50;
+    let app = App::new(dir.clone(), None, &c).unwrap();
+    assert_eq!(app.tree_ratio, 50);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_move_down_up() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     assert_eq!(app.cursor, 0);
     app.update(Action::MoveDown).unwrap();
     assert_eq!(app.cursor, 1);
@@ -345,7 +365,7 @@ mod tests {
   #[test]
   fn test_move_down_clamps() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     let max = app.visible_entries().len() - 1;
     for _ in 0..100 {
       app.update(Action::MoveDown).unwrap();
@@ -357,7 +377,7 @@ mod tests {
   #[test]
   fn test_go_to_top_bottom() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     let max = app.visible_entries().len() - 1;
     app.update(Action::GoToBottom).unwrap();
     assert_eq!(app.cursor, max);
@@ -369,7 +389,7 @@ mod tests {
   #[test]
   fn test_toggle_hidden() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     let initial_count = app.tree.entries.len();
     assert!(!app.tree.show_hidden);
     // Hidden files should not be shown
@@ -387,7 +407,7 @@ mod tests {
   #[test]
   fn test_quit() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     assert!(!app.should_quit);
     app.update(Action::Quit).unwrap();
     assert!(app.should_quit);
@@ -397,7 +417,7 @@ mod tests {
   #[test]
   fn test_search_filter() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.update(Action::SearchStart).unwrap();
     assert_eq!(app.input_mode, InputMode::Search);
 
@@ -422,7 +442,7 @@ mod tests {
     let dir = setup_test_dir();
     // Create a file inside aaa_dir
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
 
     // First entry should be a directory (dirs come first)
     assert!(app.tree.entries[0].is_dir);
@@ -447,7 +467,7 @@ mod tests {
   fn test_go_parent() {
     let dir = setup_test_dir();
     let child_dir = dir.join("aaa_dir");
-    let mut app = App::new(child_dir.clone(), None).unwrap();
+    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
     assert_eq!(app.tree.root, child_dir);
 
     // Navigate to parent (cursor is on a non-expanded dir or file)
@@ -460,7 +480,7 @@ mod tests {
   #[test]
   fn test_visible_entries_with_search() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
 
     // Without search, all entries visible
     assert_eq!(app.visible_entries().len(), app.tree.entries.len());
@@ -479,7 +499,7 @@ mod tests {
   #[test]
   fn test_g_prefix_mode() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.update(Action::MoveDown).unwrap();
     app.update(Action::MoveDown).unwrap();
     assert!(app.cursor > 0);
@@ -498,7 +518,7 @@ mod tests {
   #[test]
   fn test_open_editor_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file (after dirs)
     while app.selected_entry().map_or(true, |e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -512,7 +532,7 @@ mod tests {
   #[test]
   fn test_open_claude_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.update(Action::OpenClaude).unwrap();
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::Claude(_))));
@@ -522,7 +542,7 @@ mod tests {
   #[test]
   fn test_open_shell_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.update(Action::OpenShell).unwrap();
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::Shell(_))));

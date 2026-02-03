@@ -3,9 +3,10 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent};
 
 use crate::action::Action;
+use crate::config::{Config, normalize_key_event};
 
 pub enum Event {
   Key(KeyEvent),
@@ -57,7 +58,7 @@ pub enum InputMode {
   GPrefix,
 }
 
-pub fn map_key(key: KeyEvent, mode: InputMode) -> Action {
+pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
   match mode {
     InputMode::Search => match key.code {
       KeyCode::Esc => Action::SearchCancel,
@@ -66,38 +67,14 @@ pub fn map_key(key: KeyEvent, mode: InputMode) -> Action {
       KeyCode::Char(c) => Action::SearchInput(c),
       _ => Action::None,
     },
-    InputMode::GPrefix => match key.code {
-      KeyCode::Char('g') => Action::GoToTop,
-      _ => Action::None,
-    },
-    InputMode::Normal => match key.code {
-      KeyCode::Char('q') => Action::Quit,
-      KeyCode::Esc => Action::Quit,
-      KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
-      KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
-      KeyCode::Char('h') | KeyCode::Left => Action::MoveLeft,
-      KeyCode::Char('l') | KeyCode::Right => Action::MoveRight,
-      KeyCode::Char(' ') | KeyCode::Enter => Action::ToggleExpand,
-      KeyCode::Char('J') => Action::ScrollPreviewDown,
-      KeyCode::Char('K') => Action::ScrollPreviewUp,
-      KeyCode::Char('.') => Action::ToggleHidden,
-      KeyCode::Char('g') => Action::GPress,
-      KeyCode::Char('G') => Action::GoToBottom,
-      KeyCode::Char('/') => Action::SearchStart,
-      KeyCode::Char('y') => Action::YankPath,
-      KeyCode::Char('e') => Action::OpenEditor,
-      KeyCode::Char('c') => {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-          Action::Quit
-        } else {
-          Action::OpenClaude
-        }
-      }
-      KeyCode::Char('s') => Action::OpenShell,
-      KeyCode::Char('ø') => Action::ShrinkTree,
-      KeyCode::Char('æ') => Action::GrowTree,
-      _ => Action::None,
-    },
+    InputMode::GPrefix => {
+      let kb = normalize_key_event(key);
+      config.g_prefix_keys.get(&kb).cloned().unwrap_or(Action::None)
+    }
+    InputMode::Normal => {
+      let kb = normalize_key_event(key);
+      config.normal_keys.get(&kb).cloned().unwrap_or(Action::None)
+    }
   }
 }
 
@@ -124,57 +101,79 @@ mod tests {
     }
   }
 
+  fn cfg() -> Config {
+    Config::default()
+  }
+
   #[test]
   fn test_normal_mode_quit() {
-    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Normal), Action::Quit);
-    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Normal), Action::Quit);
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Normal, &c), Action::Quit);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Normal, &c), Action::Quit);
   }
 
   #[test]
   fn test_normal_mode_navigation() {
-    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal), Action::MoveDown);
-    assert_eq!(map_key(key(KeyCode::Char('k')), InputMode::Normal), Action::MoveUp);
-    assert_eq!(map_key(key(KeyCode::Down), InputMode::Normal), Action::MoveDown);
-    assert_eq!(map_key(key(KeyCode::Up), InputMode::Normal), Action::MoveUp);
-    assert_eq!(map_key(key(KeyCode::Char('h')), InputMode::Normal), Action::MoveLeft);
-    assert_eq!(map_key(key(KeyCode::Char('l')), InputMode::Normal), Action::MoveRight);
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal, &c), Action::MoveDown);
+    assert_eq!(map_key(key(KeyCode::Char('k')), InputMode::Normal, &c), Action::MoveUp);
+    assert_eq!(map_key(key(KeyCode::Down), InputMode::Normal, &c), Action::MoveDown);
+    assert_eq!(map_key(key(KeyCode::Up), InputMode::Normal, &c), Action::MoveUp);
+    assert_eq!(map_key(key(KeyCode::Char('h')), InputMode::Normal, &c), Action::MoveLeft);
+    assert_eq!(map_key(key(KeyCode::Char('l')), InputMode::Normal, &c), Action::MoveRight);
   }
 
   #[test]
   fn test_normal_mode_actions() {
-    assert_eq!(map_key(key(KeyCode::Char(' ')), InputMode::Normal), Action::ToggleExpand);
-    assert_eq!(map_key(key(KeyCode::Char('.')), InputMode::Normal), Action::ToggleHidden);
-    assert_eq!(map_key(key(KeyCode::Char('G')), InputMode::Normal), Action::GoToBottom);
-    assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::Normal), Action::GPress);
-    assert_eq!(map_key(key(KeyCode::Char('/')), InputMode::Normal), Action::SearchStart);
-    assert_eq!(map_key(key(KeyCode::Char('J')), InputMode::Normal), Action::ScrollPreviewDown);
-    assert_eq!(map_key(key(KeyCode::Char('K')), InputMode::Normal), Action::ScrollPreviewUp);
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char(' ')), InputMode::Normal, &c), Action::ToggleExpand);
+    assert_eq!(map_key(key(KeyCode::Char('.')), InputMode::Normal, &c), Action::ToggleHidden);
+    assert_eq!(map_key(key(KeyCode::Char('G')), InputMode::Normal, &c), Action::GoToBottom);
+    assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::Normal, &c), Action::GPress);
+    assert_eq!(map_key(key(KeyCode::Char('/')), InputMode::Normal, &c), Action::SearchStart);
+    assert_eq!(map_key(key(KeyCode::Char('J')), InputMode::Normal, &c), Action::ScrollPreviewDown);
+    assert_eq!(map_key(key(KeyCode::Char('K')), InputMode::Normal, &c), Action::ScrollPreviewUp);
   }
 
   #[test]
   fn test_ctrl_c_quits() {
+    let c = cfg();
     assert_eq!(
-      map_key(key_with_mod(KeyCode::Char('c'), KeyModifiers::CONTROL), InputMode::Normal),
+      map_key(key_with_mod(KeyCode::Char('c'), KeyModifiers::CONTROL), InputMode::Normal, &c),
       Action::Quit
     );
   }
 
   #[test]
   fn test_c_opens_claude() {
-    assert_eq!(map_key(key(KeyCode::Char('c')), InputMode::Normal), Action::OpenClaude);
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('c')), InputMode::Normal, &c), Action::OpenClaude);
   }
 
   #[test]
   fn test_search_mode() {
-    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::Search), Action::SearchInput('a'));
-    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Search), Action::SearchConfirm);
-    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Search), Action::SearchCancel);
-    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::Search), Action::SearchBackspace);
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::Search, &c), Action::SearchInput('a'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Search, &c), Action::SearchConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Search, &c), Action::SearchCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::Search, &c), Action::SearchBackspace);
   }
 
   #[test]
   fn test_g_prefix_mode() {
-    assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::GPrefix), Action::GoToTop);
-    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::GPrefix), Action::None);
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::GPrefix, &c), Action::GoToTop);
+    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::GPrefix, &c), Action::None);
+  }
+
+  #[test]
+  fn test_custom_config_remaps_key() {
+    let mut c = cfg();
+    let kb = crate::config::KeyBinding {
+      code: KeyCode::Char('j'),
+      modifiers: KeyModifiers::NONE,
+    };
+    c.normal_keys.insert(kb, Action::Quit);
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal, &c), Action::Quit);
   }
 }
