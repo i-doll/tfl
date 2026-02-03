@@ -21,6 +21,8 @@ impl KeyBinding {
       KeyCode::Backspace => "Backspace".to_string(),
       KeyCode::Delete => "Delete".to_string(),
       KeyCode::Tab => "Tab".to_string(),
+      KeyCode::PageUp => "PageUp".to_string(),
+      KeyCode::PageDown => "PageDown".to_string(),
       KeyCode::Up => "Up".to_string(),
       KeyCode::Down => "Down".to_string(),
       KeyCode::Left => "Left".to_string(),
@@ -136,6 +138,8 @@ fn named_key(s: &str) -> Option<KeyCode> {
     "backspace" => Some(KeyCode::Backspace),
     "delete" => Some(KeyCode::Delete),
     "tab" => Some(KeyCode::Tab),
+    "pageup" => Some(KeyCode::PageUp),
+    "pagedown" => Some(KeyCode::PageDown),
     s if s.starts_with('f') && s.len() > 1 => {
       s[1..].parse::<u8>().ok().filter(|&n| (1..=24).contains(&n)).map(KeyCode::F)
     }
@@ -242,6 +246,8 @@ space = "toggle_expand"
 enter = "enter_dir"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
+pagedown = "scroll_preview_down"
+pageup = "scroll_preview_up"
 "." = "toggle_hidden"
 "shift+g" = "go_to_bottom"
 g = "g_press"
@@ -453,6 +459,8 @@ mod tests {
       (KeyCode::Enter, n, Action::EnterDir),
       (KeyCode::Char('J'), n, Action::ScrollPreviewDown),
       (KeyCode::Char('K'), n, Action::ScrollPreviewUp),
+      (KeyCode::PageDown, n, Action::ScrollPreviewDown),
+      (KeyCode::PageUp, n, Action::ScrollPreviewUp),
       (KeyCode::Char('.'), n, Action::ToggleHidden),
       (KeyCode::Char('g'), n, Action::GPress),
       (KeyCode::Char('G'), n, Action::GoToBottom),

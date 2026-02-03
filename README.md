@@ -48,8 +48,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `l` / `→` | Expand directory / select file |
 | `Space` | Toggle expand/collapse directory |
 | `Enter` | Enter directory |
-| `J` | Scroll preview down |
-| `K` | Scroll preview up |
+| `J` / `PageDown` | Scroll preview down |
+| `K` / `PageUp` | Scroll preview up |
 | `gg` | Go to top |
 | `G` | Go to bottom |
 | `/` | Start search |
@@ -175,6 +175,8 @@ space = "toggle_expand"
 enter = "enter_dir"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
+pagedown = "scroll_preview_down"
+pageup = "scroll_preview_up"
 "." = "toggle_hidden"
 "shift+g" = "go_to_bottom"
 g = "g_press"
@@ -206,7 +208,7 @@ g = "go_to_top"
 - Single characters: `j`, `q`, `.`, `/`, `ø`
 - Uppercase / shift: `"shift+j"` or `"J"` (equivalent)
 - Ctrl combos: `"ctrl+c"`
-- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `delete`, `tab`
+- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `delete`, `tab`, `pageup`, `pagedown`
 - Function keys: `f1` through `f24`
 
 ### Available actions
