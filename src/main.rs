@@ -27,8 +27,25 @@ fn main() -> Result<()> {
   let args: Vec<String> = std::env::args().skip(1).collect();
 
   if args.first().is_some_and(|a| a == "--init") {
-    match config::Config::dump_default_config() {
-      Ok(path) => {
+    let path = match config::Config::config_path() {
+      Ok(p) => p,
+      Err(e) => {
+        eprintln!("tfl: {e}");
+        std::process::exit(1);
+      }
+    };
+
+    if path.exists() {
+      eprint!("{} already exists. Overwrite? [y/N] ", path.display());
+      let mut answer = String::new();
+      io::stdin().read_line(&mut answer).unwrap_or(0);
+      if !answer.trim().eq_ignore_ascii_case("y") {
+        return Ok(());
+      }
+    }
+
+    match config::Config::dump_default_config(&path) {
+      Ok(()) => {
         println!("{}", path.display());
         return Ok(());
       }

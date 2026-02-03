@@ -229,19 +229,22 @@ g = "go_to_top"
 "#
   }
 
-  pub fn dump_default_config() -> Result<std::path::PathBuf, String> {
-    let config_dir = dirs::config_dir()
-      .map(|d| d.join("tfl"))
-      .ok_or("could not determine config directory")?;
+  pub fn config_path() -> Result<std::path::PathBuf, String> {
+    dirs::config_dir()
+      .map(|d| d.join("tfl").join("config.toml"))
+      .ok_or_else(|| "could not determine config directory".to_string())
+  }
 
-    std::fs::create_dir_all(&config_dir)
-      .map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
+  pub fn dump_default_config(path: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+      std::fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
 
-    let config_path = config_dir.join("config.toml");
-    std::fs::write(&config_path, Self::default_toml())
-      .map_err(|e| format!("failed to write {}: {e}", config_path.display()))?;
+    std::fs::write(path, Self::default_toml())
+      .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
 
-    Ok(config_path)
+    Ok(())
   }
 
   pub fn load() -> Config {
