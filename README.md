@@ -105,13 +105,20 @@ The binary will be at `target/release/tfl`.
 ## Usage
 
 ```sh
-tfl [path]
+tfl [options] [path]
 tfl --init
+tfl -a ~/projects
+tfl --help
 ```
 
 If no path is given, opens the current directory.
 
-`--init` writes the default configuration to `$XDG_CONFIG_HOME/tfl/config.toml` (creating the directory if needed) and prints the path.
+| Flag | Description |
+|---|---|
+| `-a`, `--all` | Show hidden files |
+| `--init` | Write default config to `~/.config/tfl/config.toml` |
+| `-h`, `--help` | Print help message |
+| `-V`, `--version` | Print version |
 
 ## Configuration
 
