@@ -75,6 +75,15 @@ pub enum InputMode {
   Search,
   GPrefix,
   Help,
+  Prompt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+  Rename,
+  NewFile,
+  NewDir,
+  ConfirmDelete,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
@@ -93,6 +102,18 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
     InputMode::Help => match key.code {
       KeyCode::Esc => Action::ToggleHelp,
       KeyCode::Char('?') => Action::ToggleHelp,
+      _ => Action::None,
+    },
+    InputMode::Prompt => match key.code {
+      KeyCode::Esc => Action::PromptCancel,
+      KeyCode::Enter => Action::PromptConfirm,
+      KeyCode::Backspace => Action::PromptBackspace,
+      KeyCode::Delete => Action::PromptDelete,
+      KeyCode::Left => Action::PromptLeft,
+      KeyCode::Right => Action::PromptRight,
+      KeyCode::Home => Action::PromptHome,
+      KeyCode::End => Action::PromptEnd,
+      KeyCode::Char(c) => Action::PromptInput(c),
       _ => Action::None,
     },
     InputMode::Normal => {
@@ -160,11 +181,11 @@ mod tests {
   }
 
   #[test]
-  fn test_ctrl_c_quits() {
+  fn test_ctrl_c_copies_file() {
     let c = cfg();
     assert_eq!(
       map_key(key_with_mod(KeyCode::Char('c'), KeyModifiers::CONTROL), InputMode::Normal, &c),
-      Action::Quit
+      Action::CopyFile
     );
   }
 
@@ -208,6 +229,31 @@ mod tests {
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Help, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Help, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Help, &c), Action::None);
+  }
+
+  #[test]
+  fn test_prompt_mode_char() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::Prompt, &c), Action::PromptInput('a'));
+    assert_eq!(map_key(key(KeyCode::Char('y')), InputMode::Prompt, &c), Action::PromptInput('y'));
+  }
+
+  #[test]
+  fn test_prompt_mode_enter() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Prompt, &c), Action::PromptConfirm);
+  }
+
+  #[test]
+  fn test_prompt_mode_esc() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Prompt, &c), Action::PromptCancel);
+  }
+
+  #[test]
+  fn test_prompt_mode_backspace() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::Prompt, &c), Action::PromptBackspace);
   }
 
   #[test]

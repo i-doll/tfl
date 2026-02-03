@@ -26,6 +26,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
+- **File management** — cut, copy, paste, delete, rename, new file/dir
 - **Yank path** to clipboard
 - **Shell integrations** - drop into `$EDITOR`, `$SHELL`, or Claude Code
 - **Git status highlighting** — modified (yellow), staged (green), untracked (red), conflicted (bright red) with parent directory propagation
@@ -47,13 +48,20 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `l` / `→` | Expand directory / select file |
 | `Space` | Toggle expand/collapse directory |
 | `Enter` | Enter directory |
-| `J` | Scroll preview down |
-| `K` | Scroll preview up |
+| `J` / `PageDown` | Scroll preview down |
+| `K` / `PageUp` | Scroll preview up |
 | `gg` | Go to top |
 | `G` | Go to bottom |
 | `/` | Start search |
 | `.` | Toggle hidden files |
 | `y` | Yank path to clipboard |
+| `Ctrl+c` | Copy file/dir to clipboard |
+| `Ctrl+x` | Cut file/dir to clipboard |
+| `Ctrl+v` | Paste from clipboard |
+| `Delete` | Delete file/dir (y/N confirm) |
+| `r` / `F2` | Rename file/dir |
+| `a` | Create new file |
+| `A` | Create new directory |
 | `e` | Open file in `$EDITOR` |
 | `c` | Open Claude Code in current directory |
 | `s` | Open `$SHELL` in current directory |
@@ -61,7 +69,6 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `æ` | Grow tree pane |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
-| `Ctrl+c` | Quit |
 
 ### Search mode
 
@@ -77,6 +84,22 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | Key | Action |
 |---|---|
 | `g` | Go to top (`gg`) |
+| Any other | Cancel |
+
+### Prompt mode (rename, new file, new dir)
+
+| Key | Action |
+|---|---|
+| Characters | Type name |
+| `Enter` | Confirm |
+| `Esc` | Cancel |
+| `Backspace` | Delete character |
+
+### Delete confirmation
+
+| Key | Action |
+|---|---|
+| `y` | Confirm delete |
 | Any other | Cancel |
 
 ### Help mode
@@ -152,6 +175,8 @@ space = "toggle_expand"
 enter = "enter_dir"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
+pagedown = "scroll_preview_down"
+pageup = "scroll_preview_up"
 "." = "toggle_hidden"
 "shift+g" = "go_to_bottom"
 g = "g_press"
@@ -159,10 +184,17 @@ g = "g_press"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
-"ctrl+c" = "quit"
 s = "open_shell"
 q = "quit"
 esc = "quit"
+delete = "delete_file"
+"ctrl+x" = "cut_file"
+"ctrl+v" = "paste"
+"ctrl+c" = "copy_file"
+r = "rename_start"
+f2 = "rename_start"
+a = "new_file_start"
+"shift+a" = "new_dir_start"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
 "?" = "toggle_help"
@@ -176,15 +208,16 @@ g = "go_to_top"
 - Single characters: `j`, `q`, `.`, `/`, `ø`
 - Uppercase / shift: `"shift+j"` or `"J"` (equivalent)
 - Ctrl combos: `"ctrl+c"`
-- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `tab`
+- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `delete`, `tab`, `pageup`, `pagedown`
+- Function keys: `f1` through `f24`
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
-Search mode keys are not configurable (they handle text input).
+Search and prompt mode keys are not configurable (they handle text input).
 
 ## Module structure
 
@@ -197,6 +230,7 @@ src/
   config.rs        Config loading, key binding parsing, defaults
   fs/
     entry.rs       FileEntry struct (path, metadata, depth)
+    ops.rs         Filesystem helpers (copy, unique path)
     tree.rs        FileTree: flat vec, expand/collapse, sort, reload
   preview/
     mod.rs         PreviewState: cache, debounce, type detection

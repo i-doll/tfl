@@ -19,11 +19,15 @@ impl KeyBinding {
       KeyCode::Enter => "Enter".to_string(),
       KeyCode::Esc => "Esc".to_string(),
       KeyCode::Backspace => "Backspace".to_string(),
+      KeyCode::Delete => "Delete".to_string(),
       KeyCode::Tab => "Tab".to_string(),
+      KeyCode::PageUp => "PageUp".to_string(),
+      KeyCode::PageDown => "PageDown".to_string(),
       KeyCode::Up => "Up".to_string(),
       KeyCode::Down => "Down".to_string(),
       KeyCode::Left => "Left".to_string(),
       KeyCode::Right => "Right".to_string(),
+      KeyCode::F(n) => format!("F{n}"),
       _ => format!("{:?}", self.code),
     };
 
@@ -132,7 +136,13 @@ fn named_key(s: &str) -> Option<KeyCode> {
     "left" => Some(KeyCode::Left),
     "right" => Some(KeyCode::Right),
     "backspace" => Some(KeyCode::Backspace),
+    "delete" => Some(KeyCode::Delete),
     "tab" => Some(KeyCode::Tab),
+    "pageup" => Some(KeyCode::PageUp),
+    "pagedown" => Some(KeyCode::PageDown),
+    s if s.starts_with('f') && s.len() > 1 => {
+      s[1..].parse::<u8>().ok().filter(|&n| (1..=24).contains(&n)).map(KeyCode::F)
+    }
     _ => None,
   }
 }
@@ -236,6 +246,8 @@ space = "toggle_expand"
 enter = "enter_dir"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
+pagedown = "scroll_preview_down"
+pageup = "scroll_preview_up"
 "." = "toggle_hidden"
 "shift+g" = "go_to_bottom"
 g = "g_press"
@@ -243,10 +255,17 @@ g = "g_press"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
-"ctrl+c" = "quit"
 s = "open_shell"
 q = "quit"
 esc = "quit"
+delete = "delete_file"
+"ctrl+x" = "cut_file"
+"ctrl+v" = "paste"
+"ctrl+c" = "copy_file"
+r = "rename_start"
+f2 = "rename_start"
+a = "new_file_start"
+"shift+a" = "new_dir_start"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
 "?" = "toggle_help"
@@ -440,6 +459,8 @@ mod tests {
       (KeyCode::Enter, n, Action::EnterDir),
       (KeyCode::Char('J'), n, Action::ScrollPreviewDown),
       (KeyCode::Char('K'), n, Action::ScrollPreviewUp),
+      (KeyCode::PageDown, n, Action::ScrollPreviewDown),
+      (KeyCode::PageUp, n, Action::ScrollPreviewUp),
       (KeyCode::Char('.'), n, Action::ToggleHidden),
       (KeyCode::Char('g'), n, Action::GPress),
       (KeyCode::Char('G'), n, Action::GoToBottom),
@@ -447,8 +468,15 @@ mod tests {
       (KeyCode::Char('y'), n, Action::YankPath),
       (KeyCode::Char('e'), n, Action::OpenEditor),
       (KeyCode::Char('c'), n, Action::OpenClaude),
-      (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::Quit),
       (KeyCode::Char('s'), n, Action::OpenShell),
+      (KeyCode::Delete, n, Action::DeleteFile),
+      (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
+      (KeyCode::Char('v'), KeyModifiers::CONTROL, Action::Paste),
+      (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::CopyFile),
+      (KeyCode::Char('r'), n, Action::RenameStart),
+      (KeyCode::F(2), n, Action::RenameStart),
+      (KeyCode::Char('a'), n, Action::NewFileStart),
+      (KeyCode::Char('A'), n, Action::NewDirStart),
       (KeyCode::Char('ø'), n, Action::ShrinkTree),
       (KeyCode::Char('æ'), n, Action::GrowTree),
       (KeyCode::Char('?'), n, Action::ToggleHelp),
@@ -730,7 +758,7 @@ tree_ratio = 40
     let lookup = config.reverse_lookup();
     let quit_keys = lookup.get(&Action::Quit).expect("Quit should have keys");
     assert!(quit_keys.contains(&"q".to_string()));
-    assert!(quit_keys.contains(&"Ctrl+c".to_string()));
+    assert!(quit_keys.contains(&"Esc".to_string()));
   }
 
   #[test]
