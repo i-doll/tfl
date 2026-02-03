@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::app::App;
+use crate::icons::{file_icon, file_name_color};
 
 pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
   let entries = app.visible_entries();
@@ -20,38 +21,27 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
     let is_selected = start + view_idx == app.cursor;
 
     let indent = "  ".repeat(entry.depth);
-    let icon = if entry.is_dir {
-      if entry.expanded { "v " } else { "> " }
-    } else {
-      "  "
-    };
-
+    let icon = file_icon(&entry.name, entry.is_dir, entry.expanded, entry.is_symlink);
+    let name_color = file_name_color(&entry.name, entry.is_dir, entry.is_symlink);
     let symlink_indicator = if entry.is_symlink { " → " } else { "" };
 
-    let name_color = if entry.is_dir {
-      Color::Indexed(75) // blue
-    } else if entry.name.ends_with(".rs") {
-      Color::Indexed(208) // orange
-    } else if entry.name.ends_with(".toml") || entry.name.ends_with(".json") || entry.name.ends_with(".yaml") || entry.name.ends_with(".yml") {
-      Color::Indexed(150) // green-ish
-    } else if entry.is_symlink {
-      Color::Indexed(176) // purple
-    } else {
-      Color::Indexed(252) // light gray
-    };
-
-    let style = if is_selected {
-      Style::default()
+    let (icon_style, name_style) = if is_selected {
+      let sel = Style::default()
         .fg(Color::Indexed(234))
         .bg(Color::Indexed(75))
-        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::BOLD);
+      (sel, sel)
     } else {
-      Style::default().fg(name_color)
+      (
+        Style::default().fg(icon.color),
+        Style::default().fg(name_color),
+      )
     };
 
     let line = Line::from(vec![
-      Span::styled(format!("{indent}{icon}"), style),
-      Span::styled(entry.name.clone(), style),
+      Span::styled(indent, name_style),
+      Span::styled(icon.glyph, icon_style),
+      Span::styled(entry.name.clone(), name_style),
       Span::styled(symlink_indicator.to_string(), Style::default().fg(Color::DarkGray)),
     ]);
 

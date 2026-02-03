@@ -3,6 +3,8 @@ use std::path::Path;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
+use crate::icons::{file_icon, file_name_color};
+
 pub struct DirSummary {
   pub file_count: usize,
   pub dir_count: usize,
@@ -72,12 +74,8 @@ pub fn render_dir_summary<'a>(summary: &DirSummary) -> Vec<Line<'a>> {
   lines.push(Line::from(""));
 
   for entry in &summary.entries {
-    let icon = if entry.is_dir { "> " } else { "  " };
-    let color = if entry.is_dir {
-      Color::Indexed(75)
-    } else {
-      Color::Indexed(252)
-    };
+    let icon = file_icon(&entry.name, entry.is_dir, false, false);
+    let color = file_name_color(&entry.name, entry.is_dir, false);
     let size_str = if entry.is_dir {
       String::new()
     } else {
@@ -85,7 +83,9 @@ pub fn render_dir_summary<'a>(summary: &DirSummary) -> Vec<Line<'a>> {
     };
 
     lines.push(Line::from(vec![
-      Span::styled(format!(" {icon}{}", entry.name), Style::default().fg(color)),
+      Span::styled(" ", Style::default()),
+      Span::styled(icon.glyph, Style::default().fg(icon.color)),
+      Span::styled(entry.name.clone(), Style::default().fg(color)),
       Span::styled(size_str, Style::default().fg(Color::DarkGray)),
     ]));
   }
