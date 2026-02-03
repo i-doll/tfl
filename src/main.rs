@@ -25,6 +25,40 @@ use crate::app::{App, SuspendAction};
 use crate::event::{Event, EventLoop, map_key};
 
 fn main() -> Result<()> {
+  let args: Vec<String> = std::env::args().skip(1).collect();
+
+  if args.first().is_some_and(|a| a == "--init") {
+    let path = match config::Config::config_path() {
+      Ok(p) => p,
+      Err(e) => {
+        eprintln!("tfl: {e}");
+        std::process::exit(1);
+      }
+    };
+
+    if path.exists() {
+      eprint!("{} already exists. Overwrite? [y/N] ", path.display());
+      let mut answer = String::new();
+      io::stdin().read_line(&mut answer).unwrap_or(0);
+      if !answer.trim().eq_ignore_ascii_case("y") {
+        return Ok(());
+      }
+    }
+
+    match config::Config::dump_default_config(&path) {
+      Ok(()) => {
+        println!("{}", path.display());
+        return Ok(());
+      }
+      Err(e) => {
+        eprintln!("tfl: {e}");
+        std::process::exit(1);
+      }
+    }
+  }
+
+  let config = config::Config::load();
+
   // Detect Kitty protocol support BEFORE entering alternate screen
   let picker = Picker::from_query_stdio().ok();
 
@@ -35,8 +69,8 @@ fn main() -> Result<()> {
     original_hook(info);
   }));
 
-  let root = std::env::args()
-    .nth(1)
+  let root = args
+    .first()
     .map(PathBuf::from)
     .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -46,21 +80,21 @@ fn main() -> Result<()> {
   let backend = CrosstermBackend::new(io::stdout());
   let mut terminal = Terminal::new(backend)?;
 
-  let mut app = App::new(root, picker)?;
+  let mut app = App::new(root, picker, &config)?;
   // Trigger initial preview
   if !app.tree.entries.is_empty() {
     let path = app.tree.entries[0].path.clone();
     app.preview.request_preview(&path, app.picker.as_ref());
   }
 
-  let events = EventLoop::new(Duration::from_millis(config::TICK_RATE_MS));
+  let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms));
 
   loop {
     terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
     match events.next()? {
       Event::Key(key) => {
-        let action = map_key(key, app.input_mode);
+        let action = map_key(key, app.input_mode, &config);
         app.update(action)?;
       }
       Event::Resize(w, h) => {

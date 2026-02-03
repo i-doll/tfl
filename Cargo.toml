@@ -15,6 +15,9 @@ anyhow = "1"
 thiserror = "2"
 unicode-width = "0.2"
 clipboard-anywhere = "0.2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
 
 [profile.release]
 lto = true
