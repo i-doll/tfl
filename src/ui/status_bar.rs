@@ -6,7 +6,38 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use crate::app::App;
 use crate::event::InputMode;
+use crate::fs::{GitFileStatus, GitStatus};
 use crate::preview::directory::format_size;
+
+fn git_status_label(status: &GitStatus) -> Option<&'static str> {
+  if status.is_clean() {
+    return None;
+  }
+  if status.staged == Some(GitFileStatus::Conflicted)
+    || status.unstaged == Some(GitFileStatus::Conflicted)
+  {
+    return Some("conflicted");
+  }
+  if status.unstaged == Some(GitFileStatus::Untracked) {
+    return Some("untracked");
+  }
+  if status.staged.is_some() && status.unstaged.is_some() {
+    return Some("modified+staged");
+  }
+  if status.unstaged == Some(GitFileStatus::Modified) {
+    return Some("modified");
+  }
+  if status.unstaged == Some(GitFileStatus::Deleted) {
+    return Some("deleted");
+  }
+  match status.staged {
+    Some(GitFileStatus::Added) => Some("staged"),
+    Some(GitFileStatus::Modified) => Some("staged"),
+    Some(GitFileStatus::Deleted) => Some("staged:deleted"),
+    Some(GitFileStatus::Renamed) => Some("renamed"),
+    _ => Some("changed"),
+  }
+}
 
 pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
   let line = match app.input_mode {
@@ -40,6 +71,15 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           ),
         ];
 
+        // Per-file git status label
+        if let Some(label) = git_status_label(&entry.git_status) {
+          let color = entry.git_status.display_color().unwrap_or(Color::DarkGray);
+          spans.push(Span::styled(
+            format!(" [{label}]"),
+            Style::default().fg(color),
+          ));
+        }
+
         if let Some(content) = app.preview.get_content() {
           if content.file_size > 0 && content.file_size != entry.size {
             spans.push(Span::styled(
@@ -59,6 +99,43 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
               Style::default().fg(Color::DarkGray),
             ));
           }
+        }
+
+        // Git summary stats
+        let info = &app.tree.git_info;
+        let has_git_stats = info.staged_count > 0
+          || info.modified_count > 0
+          || info.untracked_count > 0;
+        if has_git_stats {
+          spans.push(Span::styled("  ", Style::default().fg(Color::DarkGray)));
+          if info.staged_count > 0 {
+            spans.push(Span::styled(
+              format!("+{}", info.staged_count),
+              Style::default().fg(Color::Indexed(114)),
+            ));
+            spans.push(Span::styled(" ", Style::default()));
+          }
+          if info.modified_count > 0 {
+            spans.push(Span::styled(
+              format!("~{}", info.modified_count),
+              Style::default().fg(Color::Indexed(214)),
+            ));
+            spans.push(Span::styled(" ", Style::default()));
+          }
+          if info.untracked_count > 0 {
+            spans.push(Span::styled(
+              format!("?{}", info.untracked_count),
+              Style::default().fg(Color::Indexed(167)),
+            ));
+          }
+        }
+
+        let has_upstream = info.branch.is_some() && (info.ahead > 0 || info.behind > 0);
+        if has_upstream {
+          spans.push(Span::styled(
+            format!(" \u{2191}{}\u{2193}{}", info.ahead, info.behind),
+            Style::default().fg(Color::Indexed(75)),
+          ));
         }
 
         // Position info on the right

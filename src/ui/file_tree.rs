@@ -40,6 +40,11 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
         Style::default().fg(icon.color).add_modifier(Modifier::DIM),
         Style::default().fg(name_color).add_modifier(Modifier::DIM),
       )
+    } else if let Some(status_color) = entry.git_status.display_color() {
+      (
+        Style::default().fg(status_color),
+        Style::default().fg(status_color),
+      )
     } else {
       (
         Style::default().fg(icon.color),
