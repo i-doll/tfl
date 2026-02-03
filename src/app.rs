@@ -397,6 +397,13 @@ impl App {
 
       let file_name = source.file_name().unwrap_or_default();
       let raw_dest = target_dir.join(file_name);
+
+      // Cut to same location is a no-op
+      if op == ClipboardOp::Cut && raw_dest == *source {
+        last_dest = Some(raw_dest);
+        continue;
+      }
+
       let dest = ops::unique_dest_path(&raw_dest);
 
       match op {
@@ -1206,6 +1213,23 @@ mod tests {
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.update(Action::Paste).unwrap();
     assert_eq!(app.status_message.as_deref(), Some("Nothing to paste"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_cut_paste_same_dir_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::CutFile).unwrap();
+    // Paste in same dir (cursor on bbb.txt, parent is root)
+    app.update(Action::Paste).unwrap();
+    // File should keep its original name, no _copy suffix
+    assert!(dir.join("bbb.txt").exists());
+    assert!(!dir.join("bbb_copy.txt").exists());
     cleanup_test_dir(&dir);
   }
 
