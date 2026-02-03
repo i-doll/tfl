@@ -59,6 +59,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `s` | Open `$SHELL` in current directory |
 | `ø` | Shrink tree pane |
 | `æ` | Grow tree pane |
+| `?` | Show help |
 | `q` / `Esc` | Quit |
 | `Ctrl+c` | Quit |
 
@@ -77,6 +78,13 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 |---|---|
 | `g` | Go to top (`gg`) |
 | Any other | Cancel |
+
+### Help mode
+
+| Key | Action |
+|---|---|
+| `?` | Close help |
+| `Esc` | Close help |
 
 ## Dependencies
 
@@ -157,6 +165,7 @@ q = "quit"
 esc = "quit"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
+"?" = "toggle_help"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -171,7 +180,7 @@ g = "go_to_top"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -200,4 +209,5 @@ src/
     file_tree.rs   Tree pane rendering with indent/icons
     preview.rs     Preview pane rendering (text, image, hex)
     status_bar.rs  Status bar: search input, file info, position
+    help.rs        Floating help overlay with keybinding reference
 ```

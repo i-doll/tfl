@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
   Quit,
   MoveUp,
@@ -24,6 +24,7 @@ pub enum Action {
   ShrinkTree,
   GrowTree,
   GPress,
+  ToggleHelp,
   Resize(u16, u16),
   Tick,
   None,
@@ -52,6 +53,7 @@ impl Action {
       "shrink_tree" => Some(Action::ShrinkTree),
       "grow_tree" => Some(Action::GrowTree),
       "g_press" => Some(Action::GPress),
+      "toggle_help" => Some(Action::ToggleHelp),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -84,6 +86,7 @@ mod tests {
     assert_eq!(Action::from_name("shrink_tree"), Some(Action::ShrinkTree));
     assert_eq!(Action::from_name("grow_tree"), Some(Action::GrowTree));
     assert_eq!(Action::from_name("g_press"), Some(Action::GPress));
+    assert_eq!(Action::from_name("toggle_help"), Some(Action::ToggleHelp));
   }
 
   #[test]

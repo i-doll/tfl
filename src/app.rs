@@ -21,6 +21,7 @@ pub struct App {
   pub min_tree_ratio: u16,
   pub max_tree_ratio: u16,
   pub ratio_step: u16,
+  pub show_help: bool,
   pub should_quit: bool,
   pub should_suspend: Option<SuspendAction>,
   pub status_message: Option<String>,
@@ -49,6 +50,7 @@ impl App {
       min_tree_ratio: config.min_tree_ratio,
       max_tree_ratio: config.max_tree_ratio,
       ratio_step: config.ratio_step,
+      show_help: false,
       should_quit: false,
       should_suspend: None,
       status_message: None,
@@ -128,6 +130,10 @@ impl App {
       }
       Action::GrowTree => {
         self.tree_ratio = (self.tree_ratio + self.ratio_step).min(self.max_tree_ratio);
+      }
+      Action::ToggleHelp => {
+        self.show_help = !self.show_help;
+        self.input_mode = if self.show_help { InputMode::Help } else { InputMode::Normal };
       }
       Action::Resize(_, h) => {
         self.viewport_height = h.saturating_sub(4) as usize;
@@ -712,6 +718,24 @@ mod tests {
     assert!(app.search_query.is_empty());
     // Root should not change for a file
     assert_eq!(app.tree.root, root_before);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_help() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.show_help);
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    app.update(Action::ToggleHelp).unwrap();
+    assert!(app.show_help);
+    assert_eq!(app.input_mode, InputMode::Help);
+
+    app.update(Action::ToggleHelp).unwrap();
+    assert!(!app.show_help);
+    assert_eq!(app.input_mode, InputMode::Normal);
+
     cleanup_test_dir(&dir);
   }
 
