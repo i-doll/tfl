@@ -43,7 +43,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `k` / `↑` | Move up |
 | `h` / `←` | Collapse directory / go to parent |
 | `l` / `→` | Expand directory / select file |
-| `Space` / `Enter` | Toggle expand directory |
+| `Space` | Toggle expand/collapse directory |
+| `Enter` | Enter directory |
 | `J` | Scroll preview down |
 | `K` | Scroll preview up |
 | `gg` | Go to top |
@@ -131,7 +132,7 @@ up = "move_up"
 left = "move_left"
 right = "move_right"
 space = "toggle_expand"
-enter = "toggle_expand"
+enter = "enter_dir"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
 "." = "toggle_hidden"
@@ -161,7 +162,7 @@ g = "go_to_top"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 

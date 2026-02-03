@@ -155,7 +155,6 @@ impl FileTree {
     Ok(())
   }
 
-  #[allow(dead_code)]
   pub fn enter_dir(&mut self, index: usize) -> Result<()> {
     if index >= self.entries.len() || !self.entries[index].is_dir {
       return Ok(());

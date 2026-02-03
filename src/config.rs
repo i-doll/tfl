@@ -207,7 +207,7 @@ up = "move_up"
 left = "move_left"
 right = "move_right"
 space = "toggle_expand"
-enter = "toggle_expand"
+enter = "enter_dir"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
 "." = "toggle_hidden"
@@ -394,7 +394,7 @@ mod tests {
       (KeyCode::Char('l'), n, Action::MoveRight),
       (KeyCode::Right, n, Action::MoveRight),
       (KeyCode::Char(' '), n, Action::ToggleExpand),
-      (KeyCode::Enter, n, Action::ToggleExpand),
+      (KeyCode::Enter, n, Action::EnterDir),
       (KeyCode::Char('J'), n, Action::ScrollPreviewDown),
       (KeyCode::Char('K'), n, Action::ScrollPreviewUp),
       (KeyCode::Char('.'), n, Action::ToggleHidden),
