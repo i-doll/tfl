@@ -43,6 +43,7 @@ pub struct App {
   pub clipboard: Clipboard,
   pub prompt_kind: Option<PromptKind>,
   pub prompt_input: String,
+  pub prompt_cursor: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +76,7 @@ impl App {
       clipboard: Clipboard { paths: Vec::new(), op: None },
       prompt_kind: None,
       prompt_input: String::new(),
+      prompt_cursor: 0,
     })
   }
 
@@ -162,6 +164,7 @@ impl App {
           let name = entry.name.clone();
           self.prompt_kind = Some(PromptKind::ConfirmDelete);
           self.prompt_input.clear();
+          self.prompt_cursor = 0;
           self.input_mode = InputMode::Prompt;
           self.status_message = Some(format!("Delete {name}? (y/N)"));
         }
@@ -169,17 +172,20 @@ impl App {
       Action::RenameStart => {
         if let Some(entry) = self.selected_entry() {
           self.prompt_input = entry.name.clone();
+          self.prompt_cursor = self.prompt_input.chars().count();
           self.prompt_kind = Some(PromptKind::Rename);
           self.input_mode = InputMode::Prompt;
         }
       }
       Action::NewFileStart => {
         self.prompt_input.clear();
+        self.prompt_cursor = 0;
         self.prompt_kind = Some(PromptKind::NewFile);
         self.input_mode = InputMode::Prompt;
       }
       Action::NewDirStart => {
         self.prompt_input.clear();
+        self.prompt_cursor = 0;
         self.prompt_kind = Some(PromptKind::NewDir);
         self.input_mode = InputMode::Prompt;
       }
@@ -194,15 +200,51 @@ impl App {
             }
           }
           Some(_) => {
-            self.prompt_input.push(c);
+            let byte_pos = self.prompt_input.char_indices()
+              .nth(self.prompt_cursor)
+              .map(|(i, _)| i)
+              .unwrap_or(self.prompt_input.len());
+            self.prompt_input.insert(byte_pos, c);
+            self.prompt_cursor += 1;
           }
           None => {}
         }
       }
       Action::PromptBackspace => {
-        if self.prompt_kind != Some(PromptKind::ConfirmDelete) {
-          self.prompt_input.pop();
+        if self.prompt_kind != Some(PromptKind::ConfirmDelete) && self.prompt_cursor > 0 {
+          let byte_pos = self.prompt_input.char_indices()
+            .nth(self.prompt_cursor - 1)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+          self.prompt_input.remove(byte_pos);
+          self.prompt_cursor -= 1;
         }
+      }
+      Action::PromptDelete => {
+        if self.prompt_kind != Some(PromptKind::ConfirmDelete)
+          && self.prompt_cursor < self.prompt_input.chars().count()
+        {
+          let byte_pos = self.prompt_input.char_indices()
+            .nth(self.prompt_cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.prompt_input.len());
+          self.prompt_input.remove(byte_pos);
+        }
+      }
+      Action::PromptLeft => {
+        self.prompt_cursor = self.prompt_cursor.saturating_sub(1);
+      }
+      Action::PromptRight => {
+        let len = self.prompt_input.chars().count();
+        if self.prompt_cursor < len {
+          self.prompt_cursor += 1;
+        }
+      }
+      Action::PromptHome => {
+        self.prompt_cursor = 0;
+      }
+      Action::PromptEnd => {
+        self.prompt_cursor = self.prompt_input.chars().count();
       }
       Action::PromptConfirm => {
         match self.prompt_kind {
@@ -619,6 +661,7 @@ impl App {
     self.input_mode = InputMode::Normal;
     self.prompt_kind = None;
     self.prompt_input.clear();
+    self.prompt_cursor = 0;
   }
 
   fn yank_path(&mut self) {

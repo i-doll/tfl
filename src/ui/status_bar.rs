@@ -39,6 +39,34 @@ fn git_status_label(status: &GitStatus) -> Option<&'static str> {
   }
 }
 
+fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color) -> Vec<Span<'static>> {
+  let text_style = Style::default().fg(Color::Indexed(252));
+  let cursor_style = Style::default().fg(Color::Indexed(234)).bg(cursor_color);
+
+  let char_count = input.chars().count();
+  let byte_at = |pos: usize| -> usize {
+    input.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(input.len())
+  };
+
+  let before = &input[..byte_at(cursor)];
+  if cursor < char_count {
+    let cur_start = byte_at(cursor);
+    let cur_end = byte_at(cursor + 1);
+    let cur_ch = &input[cur_start..cur_end];
+    let after = &input[cur_end..];
+    vec![
+      Span::styled(before.to_string(), text_style),
+      Span::styled(cur_ch.to_string(), cursor_style),
+      Span::styled(after.to_string(), text_style),
+    ]
+  } else {
+    vec![
+      Span::styled(before.to_string(), text_style),
+      Span::styled(" ".to_string(), cursor_style),
+    ]
+  }
+}
+
 pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
   let line = match app.input_mode {
     InputMode::Search => {
@@ -63,25 +91,25 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
     InputMode::Prompt => {
       match app.prompt_kind {
         Some(PromptKind::Rename) => {
-          Line::from(vec![
+          let mut spans = vec![
             Span::styled(" Rename: ", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
-            Span::styled(&app.prompt_input, Style::default().fg(Color::Indexed(252))),
-            Span::styled("▌", Style::default().fg(Color::Indexed(208))),
-          ])
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(208)));
+          Line::from(spans)
         }
         Some(PromptKind::NewFile) => {
-          Line::from(vec![
+          let mut spans = vec![
             Span::styled(" New file: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
-            Span::styled(&app.prompt_input, Style::default().fg(Color::Indexed(252))),
-            Span::styled("▌", Style::default().fg(Color::Indexed(114))),
-          ])
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          Line::from(spans)
         }
         Some(PromptKind::NewDir) => {
-          Line::from(vec![
+          let mut spans = vec![
             Span::styled(" New dir: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
-            Span::styled(&app.prompt_input, Style::default().fg(Color::Indexed(252))),
-            Span::styled("▌", Style::default().fg(Color::Indexed(114))),
-          ])
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          Line::from(spans)
         }
         Some(PromptKind::ConfirmDelete) => {
           let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
