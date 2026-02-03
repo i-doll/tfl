@@ -24,6 +24,21 @@ use crate::app::{App, SuspendAction};
 use crate::event::{Event, EventLoop, map_key};
 
 fn main() -> Result<()> {
+  let args: Vec<String> = std::env::args().skip(1).collect();
+
+  if args.first().is_some_and(|a| a == "--init") {
+    match config::Config::dump_default_config() {
+      Ok(path) => {
+        println!("{}", path.display());
+        return Ok(());
+      }
+      Err(e) => {
+        eprintln!("tfl: {e}");
+        std::process::exit(1);
+      }
+    }
+  }
+
   let config = config::Config::load();
 
   // Detect Kitty protocol support BEFORE entering alternate screen
@@ -36,8 +51,8 @@ fn main() -> Result<()> {
     original_hook(info);
   }));
 
-  let root = std::env::args()
-    .nth(1)
+  let root = args
+    .first()
     .map(PathBuf::from)
     .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 

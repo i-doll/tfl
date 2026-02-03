@@ -105,9 +105,12 @@ The binary will be at `target/release/tfl`.
 
 ```sh
 tfl [path]
+tfl --init
 ```
 
 If no path is given, opens the current directory.
+
+`--init` writes the default configuration to `$XDG_CONFIG_HOME/tfl/config.toml` (creating the directory if needed) and prints the path.
 
 ## Configuration
 
@@ -142,8 +145,8 @@ c = "open_claude"
 s = "open_shell"
 q = "quit"
 esc = "quit"
-ø = "shrink_tree"
-æ = "grow_tree"
+"ø" = "shrink_tree"
+"æ" = "grow_tree"
 
 [keys.g_prefix]
 g = "go_to_top"

@@ -173,6 +173,58 @@ impl Default for Config {
 }
 
 impl Config {
+  pub fn default_toml() -> &'static str {
+    r#"[general]
+tree_ratio = 30       # initial tree pane width (percentage)
+tick_rate_ms = 100    # event loop tick rate in ms
+
+[keys.normal]
+j = "move_down"
+k = "move_up"
+h = "move_left"
+l = "move_right"
+down = "move_down"
+up = "move_up"
+left = "move_left"
+right = "move_right"
+space = "toggle_expand"
+enter = "toggle_expand"
+"shift+j" = "scroll_preview_down"
+"shift+k" = "scroll_preview_up"
+"." = "toggle_hidden"
+"shift+g" = "go_to_bottom"
+g = "g_press"
+"/" = "search_start"
+y = "yank_path"
+e = "open_editor"
+c = "open_claude"
+"ctrl+c" = "quit"
+s = "open_shell"
+q = "quit"
+esc = "quit"
+"ø" = "shrink_tree"
+"æ" = "grow_tree"
+
+[keys.g_prefix]
+g = "go_to_top"
+"#
+  }
+
+  pub fn dump_default_config() -> Result<std::path::PathBuf, String> {
+    let config_dir = dirs::config_dir()
+      .map(|d| d.join("tfl"))
+      .ok_or("could not determine config directory")?;
+
+    std::fs::create_dir_all(&config_dir)
+      .map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
+
+    let config_path = config_dir.join("config.toml");
+    std::fs::write(&config_path, Self::default_toml())
+      .map_err(|e| format!("failed to write {}: {e}", config_path.display()))?;
+
+    Ok(config_path)
+  }
+
   pub fn load() -> Config {
     let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
     let config_path = config_dir.map(|d| d.join("config.toml"));
@@ -493,6 +545,36 @@ g = "quit"
     let config = Config::load_from_str(toml);
     let kb = KeyBinding { code: KeyCode::Char('g'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.g_prefix_keys.get(&kb), Some(&Action::Quit));
+  }
+
+  #[test]
+  fn test_default_toml_parses_to_defaults() {
+    let config = Config::load_from_str(Config::default_toml());
+    let default = Config::default();
+    assert_eq!(config.tree_ratio, default.tree_ratio);
+    assert_eq!(config.tick_rate_ms, default.tick_rate_ms);
+    assert_eq!(config.normal_keys.len(), default.normal_keys.len());
+    assert_eq!(config.g_prefix_keys.len(), default.g_prefix_keys.len());
+    for (kb, action) in &default.normal_keys {
+      assert_eq!(
+        config.normal_keys.get(kb),
+        Some(action),
+        "default_toml mismatch for {kb:?}"
+      );
+    }
+    for (kb, action) in &default.g_prefix_keys {
+      assert_eq!(
+        config.g_prefix_keys.get(kb),
+        Some(action),
+        "default_toml g_prefix mismatch for {kb:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_default_toml_is_valid_toml() {
+    let result: Result<TomlConfig, _> = toml::from_str(Config::default_toml());
+    assert!(result.is_ok(), "default_toml() is not valid TOML: {:?}", result.err());
   }
 
   #[test]
