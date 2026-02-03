@@ -27,7 +27,51 @@ use crate::event::{Event, EventLoop, map_key};
 fn main() -> Result<()> {
   let args: Vec<String> = std::env::args().skip(1).collect();
 
-  if args.first().is_some_and(|a| a == "--init") {
+  // Parse flags and positional path in a single pass
+  let mut show_help = false;
+  let mut show_version = false;
+  let mut show_init = false;
+  let mut show_hidden = false;
+  let mut path_arg: Option<String> = None;
+
+  for arg in &args {
+    match arg.as_str() {
+      "--help" | "-h" => show_help = true,
+      "--version" | "-V" => show_version = true,
+      "--init" => show_init = true,
+      "--all" | "-a" => show_hidden = true,
+      a if !a.starts_with('-') => path_arg = Some(a.to_string()),
+      _ => {
+        eprintln!("tfl: unknown option '{arg}'");
+        std::process::exit(1);
+      }
+    }
+  }
+
+  if show_help {
+    println!(
+      "\
+tfl - terminal file explorer
+
+Usage: tfl [options] [path]
+
+Options:
+  -a, --all      Show hidden files
+  --init         Write default config to ~/.config/tfl/config.toml
+  -h, --help     Print this help message
+  -V, --version  Print version
+
+If no path is given, opens the current directory."
+    );
+    return Ok(());
+  }
+
+  if show_version {
+    println!("tfl {}", env!("CARGO_PKG_VERSION"));
+    return Ok(());
+  }
+
+  if show_init {
     let path = match config::Config::config_path() {
       Ok(p) => p,
       Err(e) => {
@@ -69,8 +113,7 @@ fn main() -> Result<()> {
     original_hook(info);
   }));
 
-  let root = args
-    .first()
+  let root = path_arg
     .map(PathBuf::from)
     .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -81,6 +124,12 @@ fn main() -> Result<()> {
   let mut terminal = Terminal::new(backend)?;
 
   let mut app = App::new(root, picker, &config)?;
+
+  if show_hidden {
+    app.tree.show_hidden = true;
+    app.tree.reload()?;
+  }
+
   // Trigger initial preview
   if !app.tree.entries.is_empty() {
     let path = app.tree.entries[0].path.clone();
