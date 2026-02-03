@@ -3,6 +3,7 @@ mod app;
 mod config;
 mod event;
 mod fs;
+mod icons;
 mod preview;
 mod ui;
 
