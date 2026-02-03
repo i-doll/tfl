@@ -23,7 +23,11 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
     let indent = "  ".repeat(entry.depth);
     let icon = file_icon(&entry.name, entry.is_dir, entry.expanded, entry.is_symlink);
     let name_color = file_name_color(&entry.name, entry.is_dir, entry.is_symlink);
-    let symlink_indicator = if entry.is_symlink { " → " } else { "" };
+    let symlink_indicator = if let Some(ref target) = entry.symlink_target {
+      format!(" → {target}")
+    } else {
+      String::new()
+    };
 
     let (icon_style, name_style) = if is_selected {
       let sel = Style::default()
@@ -42,7 +46,7 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
       Span::styled(indent, name_style),
       Span::styled(icon.glyph, icon_style),
       Span::styled(entry.name.clone(), name_style),
-      Span::styled(symlink_indicator.to_string(), Style::default().fg(Color::DarkGray)),
+      Span::styled(symlink_indicator, Style::default().fg(Color::DarkGray)),
     ]);
 
     lines.push(line);

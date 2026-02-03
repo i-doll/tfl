@@ -7,6 +7,7 @@ pub struct FileEntry {
   pub depth: usize,
   pub is_dir: bool,
   pub is_symlink: bool,
+  pub symlink_target: Option<String>,
   pub expanded: bool,
   pub size: u64,
 }
@@ -15,6 +16,13 @@ impl FileEntry {
   pub fn from_path(path: PathBuf, depth: usize) -> Self {
     let metadata = path.symlink_metadata();
     let is_symlink = metadata.as_ref().is_ok_and(|m| m.is_symlink());
+    let symlink_target = if is_symlink {
+      std::fs::read_link(&path)
+        .ok()
+        .map(|t| t.to_string_lossy().to_string())
+    } else {
+      None
+    };
     let metadata = path.metadata();
     let is_dir = metadata.as_ref().is_ok_and(|m| m.is_dir());
     let size = metadata.as_ref().map_or(0, |m| m.len());
@@ -29,6 +37,7 @@ impl FileEntry {
       depth,
       is_dir,
       is_symlink,
+      symlink_target,
       expanded: false,
       size,
     }
@@ -85,6 +94,7 @@ mod tests {
       depth: 0,
       is_dir: false,
       is_symlink: false,
+      symlink_target: None,
       expanded: false,
       size: 0,
     };
@@ -96,10 +106,43 @@ mod tests {
       depth: 0,
       is_dir: false,
       is_symlink: false,
+      symlink_target: None,
       expanded: false,
       size: 0,
     };
     assert!(!entry.is_hidden());
+  }
+
+  #[test]
+  fn test_symlink_target_resolved() {
+    let dir = std::env::temp_dir().join("tfl_test_symlink_target");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("real.txt");
+    fs::write(&file, "content").unwrap();
+    let link = dir.join("link.txt");
+    std::os::unix::fs::symlink(&file, &link).unwrap();
+
+    let entry = FileEntry::from_path(link.clone(), 0);
+    assert!(entry.is_symlink);
+    assert_eq!(entry.symlink_target, Some(file.to_string_lossy().to_string()));
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_non_symlink_has_no_target() {
+    let dir = std::env::temp_dir().join("tfl_test_no_symlink_target");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("regular.txt");
+    fs::write(&file, "content").unwrap();
+
+    let entry = FileEntry::from_path(file.clone(), 0);
+    assert!(!entry.is_symlink);
+    assert_eq!(entry.symlink_target, None);
+
+    let _ = fs::remove_dir_all(&dir);
   }
 
   #[test]
