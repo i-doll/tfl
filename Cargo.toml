@@ -1,0 +1,21 @@
+[package]
+name = "tui-file-explorer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+ratatui-image = { version = "10.0", default-features = false, features = ["image-defaults", "crossterm"] }
+image = "0.25"
+syntect = "5.3"
+infer = "0.16"
+ignore = "0.4"
+anyhow = "1"
+thiserror = "2"
+unicode-width = "0.2"
+clipboard-anywhere = "0.2"
+
+[profile.release]
+lto = true
+strip = true
