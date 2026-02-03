@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::app::App;
-use crate::event::InputMode;
+use crate::event::{InputMode, PromptKind};
 use crate::fs::{GitFileStatus, GitStatus};
 use crate::preview::directory::format_size;
 
@@ -59,6 +59,45 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled(" ? ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
         Span::styled("Help — press ? or Esc to close", Style::default().fg(Color::DarkGray)),
       ])
+    }
+    InputMode::Prompt => {
+      match app.prompt_kind {
+        Some(PromptKind::Rename) => {
+          Line::from(vec![
+            Span::styled(" Rename: ", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
+            Span::styled(&app.prompt_input, Style::default().fg(Color::Indexed(252))),
+            Span::styled("▌", Style::default().fg(Color::Indexed(208))),
+          ])
+        }
+        Some(PromptKind::NewFile) => {
+          Line::from(vec![
+            Span::styled(" New file: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+            Span::styled(&app.prompt_input, Style::default().fg(Color::Indexed(252))),
+            Span::styled("▌", Style::default().fg(Color::Indexed(114))),
+          ])
+        }
+        Some(PromptKind::NewDir) => {
+          Line::from(vec![
+            Span::styled(" New dir: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+            Span::styled(&app.prompt_input, Style::default().fg(Color::Indexed(252))),
+            Span::styled("▌", Style::default().fg(Color::Indexed(114))),
+          ])
+        }
+        Some(PromptKind::ConfirmDelete) => {
+          let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
+          Line::from(vec![
+            Span::styled(
+              format!(" Delete {name}? (y/N)"),
+              Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD),
+            ),
+          ])
+        }
+        None => {
+          Line::from(vec![
+            Span::styled(" ...", Style::default().fg(Color::DarkGray)),
+          ])
+        }
+      }
     }
     InputMode::Normal => {
       if let Some(ref msg) = app.status_message {

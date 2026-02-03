@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::app::App;
+use crate::app::{App, ClipboardOp};
 use crate::icons::{file_icon, file_name_color};
 
 pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
@@ -29,12 +29,20 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
       String::new()
     };
 
+    let is_cut = app.clipboard.op == Some(ClipboardOp::Cut)
+      && app.clipboard.paths.contains(&entry.path);
+
     let (icon_style, name_style) = if is_selected {
       let sel = Style::default()
         .fg(Color::Indexed(234))
         .bg(Color::Indexed(75))
         .add_modifier(Modifier::BOLD);
       (sel, sel)
+    } else if is_cut {
+      (
+        Style::default().fg(icon.color).add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
+        Style::default().fg(name_color).add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
+      )
     } else if entry.is_git_ignored {
       (
         Style::default().fg(icon.color).add_modifier(Modifier::DIM),

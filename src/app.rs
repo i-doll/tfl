@@ -6,9 +6,22 @@ use ratatui_image::picker::Picker;
 
 use crate::action::Action;
 use crate::config::Config;
-use crate::event::InputMode;
+use crate::event::{InputMode, PromptKind};
 use crate::fs::FileTree;
+use crate::fs::ops;
 use crate::preview::PreviewState;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardOp {
+  Cut,
+  Copy,
+}
+
+#[derive(Debug, Clone)]
+pub struct Clipboard {
+  pub paths: Vec<PathBuf>,
+  pub op: Option<ClipboardOp>,
+}
 
 pub struct App {
   pub tree: FileTree,
@@ -27,6 +40,9 @@ pub struct App {
   pub status_message: Option<String>,
   pub viewport_height: usize,
   pub tree_scroll_offset: usize,
+  pub clipboard: Clipboard,
+  pub prompt_kind: Option<PromptKind>,
+  pub prompt_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +72,9 @@ impl App {
       status_message: None,
       viewport_height: 20,
       tree_scroll_offset: 0,
+      clipboard: Clipboard { paths: Vec::new(), op: None },
+      prompt_kind: None,
+      prompt_input: String::new(),
     })
   }
 
@@ -134,6 +153,71 @@ impl App {
       Action::ToggleHelp => {
         self.show_help = !self.show_help;
         self.input_mode = if self.show_help { InputMode::Help } else { InputMode::Normal };
+      }
+      Action::CutFile => self.cut_file(),
+      Action::CopyFile => self.copy_file(),
+      Action::Paste => self.paste_clipboard()?,
+      Action::DeleteFile => {
+        if let Some(entry) = self.selected_entry() {
+          let name = entry.name.clone();
+          self.prompt_kind = Some(PromptKind::ConfirmDelete);
+          self.prompt_input.clear();
+          self.input_mode = InputMode::Prompt;
+          self.status_message = Some(format!("Delete {name}? (y/N)"));
+        }
+      }
+      Action::RenameStart => {
+        if let Some(entry) = self.selected_entry() {
+          self.prompt_input = entry.name.clone();
+          self.prompt_kind = Some(PromptKind::Rename);
+          self.input_mode = InputMode::Prompt;
+        }
+      }
+      Action::NewFileStart => {
+        self.prompt_input.clear();
+        self.prompt_kind = Some(PromptKind::NewFile);
+        self.input_mode = InputMode::Prompt;
+      }
+      Action::NewDirStart => {
+        self.prompt_input.clear();
+        self.prompt_kind = Some(PromptKind::NewDir);
+        self.input_mode = InputMode::Prompt;
+      }
+      Action::PromptInput(c) => {
+        match self.prompt_kind {
+          Some(PromptKind::ConfirmDelete) => {
+            if c == 'y' {
+              self.execute_delete()?;
+            } else {
+              self.cancel_prompt();
+              self.status_message = Some("Delete cancelled".to_string());
+            }
+          }
+          Some(_) => {
+            self.prompt_input.push(c);
+          }
+          None => {}
+        }
+      }
+      Action::PromptBackspace => {
+        if self.prompt_kind != Some(PromptKind::ConfirmDelete) {
+          self.prompt_input.pop();
+        }
+      }
+      Action::PromptConfirm => {
+        match self.prompt_kind {
+          Some(PromptKind::Rename) => self.execute_rename()?,
+          Some(PromptKind::NewFile) => self.execute_new_file()?,
+          Some(PromptKind::NewDir) => self.execute_new_dir()?,
+          Some(PromptKind::ConfirmDelete) => {
+            self.cancel_prompt();
+            self.status_message = Some("Delete cancelled".to_string());
+          }
+          None => {}
+        }
+      }
+      Action::PromptCancel => {
+        self.cancel_prompt();
       }
       Action::Resize(_, h) => {
         self.viewport_height = h.saturating_sub(4) as usize;
@@ -264,6 +348,270 @@ impl App {
         }
       }
     }
+  }
+
+  fn cut_file(&mut self) {
+    if let Some(entry) = self.selected_entry() {
+      let path = entry.path.clone();
+      let name = entry.name.clone();
+      self.clipboard = Clipboard {
+        paths: vec![path],
+        op: Some(ClipboardOp::Cut),
+      };
+      self.status_message = Some(format!("Cut: {name}"));
+    }
+  }
+
+  fn copy_file(&mut self) {
+    if let Some(entry) = self.selected_entry() {
+      let path = entry.path.clone();
+      let name = entry.name.clone();
+      self.clipboard = Clipboard {
+        paths: vec![path],
+        op: Some(ClipboardOp::Copy),
+      };
+      self.status_message = Some(format!("Copied: {name}"));
+    }
+  }
+
+  fn paste_clipboard(&mut self) -> Result<()> {
+    let Some(op) = self.clipboard.op else {
+      self.status_message = Some("Nothing to paste".to_string());
+      return Ok(());
+    };
+
+    let paths = self.clipboard.paths.clone();
+    if paths.is_empty() {
+      self.status_message = Some("Nothing to paste".to_string());
+      return Ok(());
+    }
+
+    let target_dir = self.current_dir();
+    let mut last_dest = None;
+
+    for source in &paths {
+      if !source.exists() {
+        self.status_message = Some(format!("Source no longer exists: {}", source.display()));
+        continue;
+      }
+
+      let file_name = source.file_name().unwrap_or_default();
+      let raw_dest = target_dir.join(file_name);
+      let dest = ops::unique_dest_path(&raw_dest);
+
+      match op {
+        ClipboardOp::Cut => {
+          // Try rename first (same filesystem), fallback to copy+delete
+          if std::fs::rename(source, &dest).is_err() {
+            match ops::copy_path(source, &dest) {
+              Ok(()) => {
+                if source.is_dir() {
+                  let _ = std::fs::remove_dir_all(source);
+                } else {
+                  let _ = std::fs::remove_file(source);
+                }
+              }
+              Err(e) => {
+                self.status_message = Some(format!("Paste failed: {e}"));
+                self.tree.reload()?;
+                return Ok(());
+              }
+            }
+          }
+        }
+        ClipboardOp::Copy => {
+          if let Err(e) = ops::copy_path(source, &dest) {
+            self.status_message = Some(format!("Paste failed: {e}"));
+            self.tree.reload()?;
+            return Ok(());
+          }
+        }
+      }
+      last_dest = Some(dest);
+    }
+
+    if op == ClipboardOp::Cut {
+      self.clipboard = Clipboard { paths: Vec::new(), op: None };
+    }
+
+    self.tree.reload()?;
+
+    if let Some(dest) = last_dest {
+      self.reposition_cursor_to(&dest);
+    }
+
+    self.status_message = Some("Pasted".to_string());
+    self.preview.invalidate();
+    self.update_preview();
+    Ok(())
+  }
+
+  fn execute_delete(&mut self) -> Result<()> {
+    let entry = self.selected_entry().cloned();
+    let Some(entry) = entry else {
+      self.cancel_prompt();
+      return Ok(());
+    };
+
+    let result = if entry.is_dir {
+      std::fs::remove_dir_all(&entry.path)
+    } else {
+      std::fs::remove_file(&entry.path)
+    };
+
+    match result {
+      Ok(()) => {
+        // Clean clipboard if deleted path was in it
+        self.clipboard.paths.retain(|p| !p.starts_with(&entry.path));
+        if self.clipboard.paths.is_empty() {
+          self.clipboard.op = None;
+        }
+        self.cancel_prompt();
+        self.tree.reload()?;
+        let len = self.visible_entries().len();
+        if len == 0 {
+          self.cursor = 0;
+        } else {
+          self.cursor = self.cursor.min(len - 1);
+        }
+        self.status_message = Some(format!("Deleted: {}", entry.name));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.status_message = Some(format!("Delete failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn execute_rename(&mut self) -> Result<()> {
+    let new_name = self.prompt_input.trim().to_string();
+    if new_name.is_empty() {
+      self.cancel_prompt();
+      self.status_message = Some("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let entry = self.selected_entry().cloned();
+    let Some(entry) = entry else {
+      self.cancel_prompt();
+      return Ok(());
+    };
+
+    let parent = entry.path.parent().unwrap_or(&self.tree.root);
+    let new_path = parent.join(&new_name);
+
+    if new_path.exists() && new_path != entry.path {
+      self.cancel_prompt();
+      self.status_message = Some(format!("{new_name} already exists"));
+      return Ok(());
+    }
+
+    match std::fs::rename(&entry.path, &new_path) {
+      Ok(()) => {
+        // Update clipboard if renamed path was in it
+        for p in &mut self.clipboard.paths {
+          if *p == entry.path {
+            *p = new_path.clone();
+          }
+        }
+        self.cancel_prompt();
+        self.tree.reload()?;
+        self.reposition_cursor_to(&new_path);
+        self.status_message = Some(format!("Renamed to {new_name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.status_message = Some(format!("Rename failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn execute_new_file(&mut self) -> Result<()> {
+    let name = self.prompt_input.trim().to_string();
+    if name.is_empty() {
+      self.cancel_prompt();
+      self.status_message = Some("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let dir = self.current_dir();
+    let new_path = dir.join(&name);
+
+    if new_path.exists() {
+      self.cancel_prompt();
+      self.status_message = Some(format!("{name} already exists"));
+      return Ok(());
+    }
+
+    match std::fs::File::create(&new_path) {
+      Ok(_) => {
+        self.cancel_prompt();
+        self.tree.reload()?;
+        self.reposition_cursor_to(&new_path);
+        self.status_message = Some(format!("Created: {name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.status_message = Some(format!("Create failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn execute_new_dir(&mut self) -> Result<()> {
+    let name = self.prompt_input.trim().to_string();
+    if name.is_empty() {
+      self.cancel_prompt();
+      self.status_message = Some("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let dir = self.current_dir();
+    let new_path = dir.join(&name);
+
+    if new_path.exists() {
+      self.cancel_prompt();
+      self.status_message = Some(format!("{name} already exists"));
+      return Ok(());
+    }
+
+    match std::fs::create_dir_all(&new_path) {
+      Ok(()) => {
+        self.cancel_prompt();
+        self.tree.reload()?;
+        self.reposition_cursor_to(&new_path);
+        self.status_message = Some(format!("Created dir: {name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.status_message = Some(format!("Create dir failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn reposition_cursor_to(&mut self, path: &PathBuf) {
+    let entries = self.visible_entries();
+    if let Some(pos) = entries.iter().position(|&idx| self.tree.entries[idx].path == *path) {
+      self.cursor = pos;
+      self.adjust_scroll();
+    }
+  }
+
+  fn cancel_prompt(&mut self) {
+    self.input_mode = InputMode::Normal;
+    self.prompt_kind = None;
+    self.prompt_input.clear();
   }
 
   fn yank_path(&mut self) {
@@ -753,6 +1101,282 @@ mod tests {
     // ToggleExpand again should collapse
     app.update(Action::ToggleExpand).unwrap();
     assert!(!app.tree.entries[0].expanded);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_cut_stores_path_in_clipboard() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::CutFile).unwrap();
+    assert_eq!(app.clipboard.op, Some(ClipboardOp::Cut));
+    assert_eq!(app.clipboard.paths, vec![path]);
+    assert!(app.status_message.as_ref().unwrap().starts_with("Cut:"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_copy_stores_path_in_clipboard() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::CopyFile).unwrap();
+    assert_eq!(app.clipboard.op, Some(ClipboardOp::Copy));
+    assert_eq!(app.clipboard.paths, vec![path]);
+    assert!(app.status_message.as_ref().unwrap().starts_with("Copied:"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_paste_copy_creates_new_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::CopyFile).unwrap();
+
+    // Move cursor to root (a dir) so paste goes into that dir
+    app.cursor = 0; // aaa_dir
+    app.update(Action::Paste).unwrap();
+
+    // bbb.txt should now exist in aaa_dir
+    assert!(dir.join("aaa_dir").join("bbb.txt").exists());
+    // Original should still exist
+    assert!(dir.join("bbb.txt").exists());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_paste_cut_moves_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::CutFile).unwrap();
+
+    // Paste into aaa_dir
+    app.cursor = 0;
+    app.update(Action::Paste).unwrap();
+
+    assert!(dir.join("aaa_dir").join("bbb.txt").exists());
+    assert!(!dir.join("bbb.txt").exists());
+    // Clipboard should be cleared after cut+paste
+    assert!(app.clipboard.op.is_none());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_paste_conflict_appends_suffix() {
+    let dir = setup_test_dir();
+    // Create bbb.txt inside aaa_dir to cause conflict
+    fs::write(dir.join("aaa_dir").join("bbb.txt"), "existing").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Copy bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::CopyFile).unwrap();
+
+    // Paste into aaa_dir
+    app.cursor = 0;
+    app.update(Action::Paste).unwrap();
+
+    // Should have created bbb_copy.txt
+    assert!(dir.join("aaa_dir").join("bbb_copy.txt").exists());
+    // Original in aaa_dir should be untouched
+    assert_eq!(fs::read_to_string(dir.join("aaa_dir").join("bbb.txt")).unwrap(), "existing");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_paste_empty_clipboard_shows_message() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::Paste).unwrap();
+    assert_eq!(app.status_message.as_deref(), Some("Nothing to paste"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_with_y_confirmation() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    assert!(dir.join("bbb.txt").exists());
+
+    app.update(Action::DeleteFile).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmDelete));
+
+    // Confirm with 'y'
+    app.update(Action::PromptInput('y')).unwrap();
+    assert!(!dir.join("bbb.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_cancel_does_not_remove() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DeleteFile).unwrap();
+    // Cancel with 'n'
+    app.update(Action::PromptInput('n')).unwrap();
+    assert!(dir.join("bbb.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_cancel_with_esc() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DeleteFile).unwrap();
+    app.update(Action::PromptCancel).unwrap();
+    assert!(dir.join("bbb.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_rename_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::RenameStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_input, "bbb.txt");
+
+    // Clear and type new name
+    app.prompt_input.clear();
+    app.prompt_input.push_str("renamed.txt");
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(!dir.join("bbb.txt").exists());
+    assert!(dir.join("renamed.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_rename_to_existing_shows_error() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::RenameStart).unwrap();
+    app.prompt_input = "ccc.rs".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // Should still exist as bbb.txt
+    assert!(dir.join("bbb.txt").exists());
+    assert!(app.status_message.as_ref().unwrap().contains("already exists"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_file_creation() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file so current_dir() returns the root
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewFileStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::NewFile));
+
+    app.prompt_input = "new_file.txt".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(dir.join("new_file.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_dir_creation() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file so current_dir() returns the root
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewDirStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::NewDir));
+
+    app.prompt_input = "new_dir".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(dir.join("new_dir").is_dir());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_empty_name_rejected() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::NewFileStart).unwrap();
+    app.prompt_input = "  ".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+    assert_eq!(app.status_message.as_deref(), Some("Name cannot be empty"));
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_prompt_cancel_returns_to_normal() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::NewFileStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    app.update(Action::PromptCancel).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.prompt_kind.is_none());
+    assert!(app.prompt_input.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_cursor_repositions_after_rename() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::RenameStart).unwrap();
+    app.prompt_input = "zzz_renamed.txt".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // Cursor should be on the renamed file
+    let entry = app.selected_entry().unwrap();
+    assert_eq!(entry.name, "zzz_renamed.txt");
     cleanup_test_dir(&dir);
   }
 }

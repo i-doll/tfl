@@ -46,7 +46,7 @@ fn hardcoded_line(key: &str, desc: &str) -> Line<'static> {
 
 pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
   let width = 44.min(area.width.saturating_sub(4));
-  let height = 28.min(area.height.saturating_sub(2));
+  let height = 36.min(area.height.saturating_sub(2));
 
   if width < 10 || height < 5 {
     return;
@@ -85,6 +85,14 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::OpenShell, "Open $SHELL"),
     entry_line(&lookup, Action::YankPath, "Yank path"),
     entry_line(&lookup, Action::ToggleHidden, "Toggle hidden files"),
+    section_line("File Operations"),
+    entry_line(&lookup, Action::RenameStart, "Rename"),
+    entry_line(&lookup, Action::DeleteFile, "Delete"),
+    entry_line(&lookup, Action::CopyFile, "Copy"),
+    entry_line(&lookup, Action::CutFile, "Cut"),
+    entry_line(&lookup, Action::Paste, "Paste"),
+    entry_line(&lookup, Action::NewFileStart, "New file"),
+    entry_line(&lookup, Action::NewDirStart, "New directory"),
     section_line("Quit"),
     entry_line(&lookup, Action::Quit, "Quit"),
     Line::from(""),

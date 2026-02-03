@@ -24,6 +24,7 @@ impl KeyBinding {
       KeyCode::Down => "Down".to_string(),
       KeyCode::Left => "Left".to_string(),
       KeyCode::Right => "Right".to_string(),
+      KeyCode::F(n) => format!("F{n}"),
       _ => format!("{:?}", self.code),
     };
 
@@ -133,6 +134,9 @@ fn named_key(s: &str) -> Option<KeyCode> {
     "right" => Some(KeyCode::Right),
     "backspace" => Some(KeyCode::Backspace),
     "tab" => Some(KeyCode::Tab),
+    s if s.starts_with('f') && s.len() > 1 => {
+      s[1..].parse::<u8>().ok().filter(|&n| (1..=24).contains(&n)).map(KeyCode::F)
+    }
     _ => None,
   }
 }
@@ -243,10 +247,17 @@ g = "g_press"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
-"ctrl+c" = "quit"
 s = "open_shell"
 q = "quit"
 esc = "quit"
+d = "delete_file"
+"ctrl+x" = "cut_file"
+"ctrl+v" = "paste"
+"ctrl+c" = "copy_file"
+r = "rename_start"
+f2 = "rename_start"
+a = "new_file_start"
+"shift+a" = "new_dir_start"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
 "?" = "toggle_help"
@@ -447,8 +458,15 @@ mod tests {
       (KeyCode::Char('y'), n, Action::YankPath),
       (KeyCode::Char('e'), n, Action::OpenEditor),
       (KeyCode::Char('c'), n, Action::OpenClaude),
-      (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::Quit),
       (KeyCode::Char('s'), n, Action::OpenShell),
+      (KeyCode::Char('d'), n, Action::DeleteFile),
+      (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
+      (KeyCode::Char('v'), KeyModifiers::CONTROL, Action::Paste),
+      (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::CopyFile),
+      (KeyCode::Char('r'), n, Action::RenameStart),
+      (KeyCode::F(2), n, Action::RenameStart),
+      (KeyCode::Char('a'), n, Action::NewFileStart),
+      (KeyCode::Char('A'), n, Action::NewDirStart),
       (KeyCode::Char('ø'), n, Action::ShrinkTree),
       (KeyCode::Char('æ'), n, Action::GrowTree),
       (KeyCode::Char('?'), n, Action::ToggleHelp),
@@ -730,7 +748,7 @@ tree_ratio = 40
     let lookup = config.reverse_lookup();
     let quit_keys = lookup.get(&Action::Quit).expect("Quit should have keys");
     assert!(quit_keys.contains(&"q".to_string()));
-    assert!(quit_keys.contains(&"Ctrl+c".to_string()));
+    assert!(quit_keys.contains(&"Esc".to_string()));
   }
 
   #[test]

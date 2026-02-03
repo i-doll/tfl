@@ -151,8 +151,10 @@ If no path is given, opens the current directory."
       }
       Event::Tick => {
         app.update(crate::action::Action::Tick)?;
-        // Clear status message after a tick
-        app.status_message = None;
+        // Clear status message after a tick (but not during prompts)
+        if app.input_mode == crate::event::InputMode::Normal {
+          app.status_message = None;
+        }
       }
     }
 
