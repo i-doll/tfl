@@ -58,7 +58,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Ctrl+c` | Copy file/dir to clipboard |
 | `Ctrl+x` | Cut file/dir to clipboard |
 | `Ctrl+v` | Paste from clipboard |
-| `d` | Delete file/dir (y/N confirm) |
+| `Delete` | Delete file/dir (y/N confirm) |
 | `r` / `F2` | Rename file/dir |
 | `a` | Create new file |
 | `A` | Create new directory |
@@ -185,7 +185,7 @@ c = "open_claude"
 s = "open_shell"
 q = "quit"
 esc = "quit"
-d = "delete_file"
+delete = "delete_file"
 "ctrl+x" = "cut_file"
 "ctrl+v" = "paste"
 "ctrl+c" = "copy_file"
@@ -206,7 +206,7 @@ g = "go_to_top"
 - Single characters: `j`, `q`, `.`, `/`, `ø`
 - Uppercase / shift: `"shift+j"` or `"J"` (equivalent)
 - Ctrl combos: `"ctrl+c"`
-- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `tab`
+- Named keys: `enter`, `space`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `delete`, `tab`
 - Function keys: `f1` through `f24`
 
 ### Available actions

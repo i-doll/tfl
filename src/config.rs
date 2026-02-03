@@ -19,6 +19,7 @@ impl KeyBinding {
       KeyCode::Enter => "Enter".to_string(),
       KeyCode::Esc => "Esc".to_string(),
       KeyCode::Backspace => "Backspace".to_string(),
+      KeyCode::Delete => "Delete".to_string(),
       KeyCode::Tab => "Tab".to_string(),
       KeyCode::Up => "Up".to_string(),
       KeyCode::Down => "Down".to_string(),
@@ -133,6 +134,7 @@ fn named_key(s: &str) -> Option<KeyCode> {
     "left" => Some(KeyCode::Left),
     "right" => Some(KeyCode::Right),
     "backspace" => Some(KeyCode::Backspace),
+    "delete" => Some(KeyCode::Delete),
     "tab" => Some(KeyCode::Tab),
     s if s.starts_with('f') && s.len() > 1 => {
       s[1..].parse::<u8>().ok().filter(|&n| (1..=24).contains(&n)).map(KeyCode::F)
@@ -250,7 +252,7 @@ c = "open_claude"
 s = "open_shell"
 q = "quit"
 esc = "quit"
-d = "delete_file"
+delete = "delete_file"
 "ctrl+x" = "cut_file"
 "ctrl+v" = "paste"
 "ctrl+c" = "copy_file"
@@ -459,7 +461,7 @@ mod tests {
       (KeyCode::Char('e'), n, Action::OpenEditor),
       (KeyCode::Char('c'), n, Action::OpenClaude),
       (KeyCode::Char('s'), n, Action::OpenShell),
-      (KeyCode::Char('d'), n, Action::DeleteFile),
+      (KeyCode::Delete, n, Action::DeleteFile),
       (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
       (KeyCode::Char('v'), KeyModifiers::CONTROL, Action::Paste),
       (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::CopyFile),
