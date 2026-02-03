@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -16,13 +18,20 @@ pub enum Event {
 
 pub struct EventLoop {
   rx: mpsc::Receiver<Event>,
+  paused: Arc<AtomicBool>,
 }
 
 impl EventLoop {
   pub fn new(tick_rate: Duration) -> Self {
     let (tx, rx) = mpsc::channel();
+    let paused = Arc::new(AtomicBool::new(false));
+    let thread_paused = paused.clone();
 
     thread::spawn(move || loop {
+      if thread_paused.load(Ordering::Relaxed) {
+        thread::sleep(tick_rate);
+        continue;
+      }
       if event::poll(tick_rate).unwrap_or(false) {
         match event::read() {
           Ok(CrosstermEvent::Key(key)) => {
@@ -42,7 +51,16 @@ impl EventLoop {
       }
     });
 
-    Self { rx }
+    Self { rx, paused }
+  }
+
+  pub fn pause(&self) {
+    self.paused.store(true, Ordering::Relaxed);
+  }
+
+  pub fn resume(&self) {
+    self.paused.store(false, Ordering::Relaxed);
+    while self.rx.try_recv().is_ok() {}
   }
 
   pub fn next(&self) -> Result<Event> {
