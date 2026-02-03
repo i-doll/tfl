@@ -97,11 +97,16 @@ impl App {
         self.search_query.pop();
         self.apply_search_filter();
       }
-      Action::SearchConfirm | Action::SearchCancel => {
+      Action::SearchConfirm => {
         self.input_mode = InputMode::Normal;
-        if action == Action::SearchCancel {
-          self.search_query.clear();
-        }
+        // Enter directory while filter is still active so cursor resolves correctly
+        self.enter_directory()?;
+        // Clear query for non-dir entries (enter_directory already clears for dirs)
+        self.search_query.clear();
+      }
+      Action::SearchCancel => {
+        self.input_mode = InputMode::Normal;
+        self.search_query.clear();
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -192,6 +197,7 @@ impl App {
     if let Some(idx) = entries.get(self.cursor).copied() {
       if self.tree.entries[idx].is_dir {
         self.tree.enter_dir(idx)?;
+        self.search_query.clear();
         self.cursor = 0;
         self.tree_scroll_offset = 0;
         self.preview.invalidate();
@@ -214,6 +220,7 @@ impl App {
 
     // Go to parent directory
     if let Some(old_root) = self.tree.go_parent()? {
+      self.search_query.clear();
       // Try to position cursor on the old root dir
       self.cursor = self
         .tree
@@ -624,6 +631,87 @@ mod tests {
     // Second MoveRight should NOT collapse
     app.update(Action::MoveRight).unwrap();
     assert!(app.tree.entries[0].expanded);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_go_parent_clears_search_query() {
+    let dir = setup_test_dir();
+    let child_dir = dir.join("aaa_dir");
+    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+
+    // Set a search filter
+    app.search_query = "nonexistent".to_string();
+    assert_eq!(app.visible_entries().len(), 0);
+
+    // Go to parent — search should be cleared
+    app.update(Action::MoveLeft).unwrap();
+    assert!(app.search_query.is_empty());
+    assert_eq!(app.tree.root, dir);
+    // cursor and scroll_offset must be valid for visible_entries
+    assert!(app.cursor < app.visible_entries().len());
+    assert!(app.tree_scroll_offset <= app.cursor);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_enter_dir_clears_search_query() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Search for "aaa" to filter to the dir
+    app.search_query = "aaa".to_string();
+    let visible = app.visible_entries();
+    assert_eq!(visible.len(), 1);
+    app.cursor = 0;
+
+    // Enter the directory
+    app.update(Action::EnterDir).unwrap();
+    assert!(app.search_query.is_empty());
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_confirm_enters_directory() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Search for "aaa" — should filter to just aaa_dir
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchInput('a')).unwrap();
+    app.update(Action::SearchInput('a')).unwrap();
+    app.update(Action::SearchInput('a')).unwrap();
+    assert_eq!(app.visible_entries().len(), 1);
+
+    // Confirm search — should enter the directory
+    app.update(Action::SearchConfirm).unwrap();
+    assert!(app.search_query.is_empty());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+    assert_eq!(app.cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_confirm_on_file_clears_query() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Search for "bbb" — should filter to just bbb.txt
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchInput('b')).unwrap();
+    app.update(Action::SearchInput('b')).unwrap();
+    app.update(Action::SearchInput('b')).unwrap();
+    assert_eq!(app.visible_entries().len(), 1);
+
+    let root_before = app.tree.root.clone();
+    app.update(Action::SearchConfirm).unwrap();
+    assert!(app.search_query.is_empty());
+    // Root should not change for a file
+    assert_eq!(app.tree.root, root_before);
     cleanup_test_dir(&dir);
   }
 

@@ -13,7 +13,7 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
 
   let mut lines: Vec<Line> = Vec::with_capacity(inner_height);
 
-  let start = app.tree_scroll_offset;
+  let start = app.tree_scroll_offset.min(entries.len());
   let end = (start + inner_height).min(entries.len());
 
   for (view_idx, &entry_idx) in entries[start..end].iter().enumerate() {
