@@ -162,6 +162,7 @@ impl Config {
 
     if let Some(keys) = toml_config.keys {
       if let Some(normal) = keys.normal {
+        self.normal_keys.clear();
         for (key_str, action_str) in &normal {
           let Some(kb) = parse_key_binding(key_str) else {
             eprintln!("tfl: invalid key binding: {key_str:?}");
@@ -175,6 +176,7 @@ impl Config {
         }
       }
       if let Some(g_prefix) = keys.g_prefix {
+        self.g_prefix_keys.clear();
         for (key_str, action_str) in &g_prefix {
           let Some(kb) = parse_key_binding(key_str) else {
             eprintln!("tfl: invalid key binding: {key_str:?}");
@@ -432,7 +434,7 @@ mod tests {
   }
 
   #[test]
-  fn test_load_partial_key_override() {
+  fn test_load_keys_section_replaces_all_defaults() {
     let toml = r#"
 [keys.normal]
 j = "move_up"
@@ -440,9 +442,11 @@ j = "move_up"
     let config = Config::load_from_str(toml);
     let kb = KeyBinding { code: KeyCode::Char('j'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::MoveUp));
-    // Other keys should still be at defaults
+    // Only the user-specified key should exist
+    assert_eq!(config.normal_keys.len(), 1);
+    // Default keys not in user config should be gone
     let kb_k = KeyBinding { code: KeyCode::Char('k'), modifiers: KeyModifiers::NONE };
-    assert_eq!(config.normal_keys.get(&kb_k), Some(&Action::MoveUp));
+    assert_eq!(config.normal_keys.get(&kb_k), None);
   }
 
   #[test]
@@ -465,12 +469,13 @@ j = "invalid_action"
 k = "quit"
 "#;
     let config = Config::load_from_str(toml);
-    // j should remain at default (MoveDown) because invalid_action was skipped
+    // j should be absent because invalid_action was skipped
     let kb_j = KeyBinding { code: KeyCode::Char('j'), modifiers: KeyModifiers::NONE };
-    assert_eq!(config.normal_keys.get(&kb_j), Some(&Action::MoveDown));
-    // k should be overridden to Quit
+    assert_eq!(config.normal_keys.get(&kb_j), None);
+    // k should be bound to Quit
     let kb_k = KeyBinding { code: KeyCode::Char('k'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb_k), Some(&Action::Quit));
+    assert_eq!(config.normal_keys.len(), 1);
   }
 
   #[test]
@@ -570,6 +575,63 @@ j = "quit"
       .collect();
     assert_eq!(j_actions.len(), 1);
     assert_eq!(j_actions[0].1, &Action::Quit);
+  }
+
+  #[test]
+  fn test_user_keys_section_replaces_defaults() {
+    // When the user provides [keys.normal], it replaces all default
+    // normal bindings. Old defaults like ø/æ must not survive.
+    let toml = r#"
+[keys.normal]
+o = "shrink_tree"
+p = "grow_tree"
+j = "move_down"
+"#;
+    let config = Config::load_from_str(toml);
+    // User-specified keys exist
+    let kb_o = KeyBinding { code: KeyCode::Char('o'), modifiers: KeyModifiers::NONE };
+    let kb_p = KeyBinding { code: KeyCode::Char('p'), modifiers: KeyModifiers::NONE };
+    let kb_j = KeyBinding { code: KeyCode::Char('j'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb_o), Some(&Action::ShrinkTree));
+    assert_eq!(config.normal_keys.get(&kb_p), Some(&Action::GrowTree));
+    assert_eq!(config.normal_keys.get(&kb_j), Some(&Action::MoveDown));
+    // Old defaults that were NOT in the user config must be gone
+    let kb_oe = KeyBinding { code: KeyCode::Char('ø'), modifiers: KeyModifiers::NONE };
+    let kb_ae = KeyBinding { code: KeyCode::Char('æ'), modifiers: KeyModifiers::NONE };
+    let kb_q = KeyBinding { code: KeyCode::Char('q'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb_oe), None, "ø should not survive when [keys.normal] is provided");
+    assert_eq!(config.normal_keys.get(&kb_ae), None, "æ should not survive when [keys.normal] is provided");
+    assert_eq!(config.normal_keys.get(&kb_q), None, "q should not survive when [keys.normal] is provided");
+    // Only user-specified keys should be present
+    assert_eq!(config.normal_keys.len(), 3);
+  }
+
+  #[test]
+  fn test_user_g_prefix_section_replaces_defaults() {
+    let toml = r#"
+[keys.g_prefix]
+t = "go_to_top"
+"#;
+    let config = Config::load_from_str(toml);
+    let kb_t = KeyBinding { code: KeyCode::Char('t'), modifiers: KeyModifiers::NONE };
+    let kb_g = KeyBinding { code: KeyCode::Char('g'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.g_prefix_keys.get(&kb_t), Some(&Action::GoToTop));
+    assert_eq!(config.g_prefix_keys.get(&kb_g), None, "default g should not survive when [keys.g_prefix] is provided");
+    assert_eq!(config.g_prefix_keys.len(), 1);
+  }
+
+  #[test]
+  fn test_no_keys_section_keeps_all_defaults() {
+    // When no [keys] section is provided, all defaults remain
+    let toml = r#"
+[general]
+tree_ratio = 40
+"#;
+    let config = Config::load_from_str(toml);
+    assert_eq!(config.tree_ratio, 40);
+    let default = Config::default();
+    assert_eq!(config.normal_keys.len(), default.normal_keys.len());
+    assert_eq!(config.g_prefix_keys.len(), default.g_prefix_keys.len());
   }
 
   #[test]

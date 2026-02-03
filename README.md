@@ -114,7 +114,7 @@ If no path is given, opens the current directory.
 
 ## Configuration
 
-tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/.config/tfl/config.toml`). All fields are optional — unspecified values keep their defaults.
+tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/.config/tfl/config.toml`). General settings are optional — unspecified values keep their defaults. Key sections (`[keys.normal]`, `[keys.g_prefix]`) **replace** the defaults entirely when present, so include all bindings you want. Use `tfl --init` to get a starting config with all defaults.
 
 ```toml
 [general]
