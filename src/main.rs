@@ -109,9 +109,10 @@ fn main() -> Result<()> {
 
     // Handle suspend actions (editor, claude, shell)
     if let Some(suspend) = app.handle_suspend() {
+      events.pause();
       restore_terminal()?;
       terminal = suspend_and_resume(terminal, &suspend)?;
-      // Reload tree after returning
+      events.resume();
       app.tree.reload()?;
       app.preview.invalidate();
     }
