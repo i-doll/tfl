@@ -123,56 +123,73 @@ pub fn normalize_key_event(key: KeyEvent) -> KeyBinding {
 
 impl Default for Config {
   fn default() -> Self {
-    let mut normal_keys = HashMap::new();
-    let mut g_prefix_keys = HashMap::new();
+    let mut config = Config::empty();
+    config.apply_toml_str(Config::default_toml());
+    config
+  }
+}
 
-    let bind = |map: &mut HashMap<KeyBinding, Action>, code: KeyCode, mods: KeyModifiers, action: Action| {
-      map.insert(KeyBinding { code, modifiers: mods }, action);
-    };
-
-    let n = KeyModifiers::NONE;
-
-    bind(&mut normal_keys, KeyCode::Char('q'), n, Action::Quit);
-    bind(&mut normal_keys, KeyCode::Esc, n, Action::Quit);
-    bind(&mut normal_keys, KeyCode::Char('j'), n, Action::MoveDown);
-    bind(&mut normal_keys, KeyCode::Down, n, Action::MoveDown);
-    bind(&mut normal_keys, KeyCode::Char('k'), n, Action::MoveUp);
-    bind(&mut normal_keys, KeyCode::Up, n, Action::MoveUp);
-    bind(&mut normal_keys, KeyCode::Char('h'), n, Action::MoveLeft);
-    bind(&mut normal_keys, KeyCode::Left, n, Action::MoveLeft);
-    bind(&mut normal_keys, KeyCode::Char('l'), n, Action::MoveRight);
-    bind(&mut normal_keys, KeyCode::Right, n, Action::MoveRight);
-    bind(&mut normal_keys, KeyCode::Char(' '), n, Action::ToggleExpand);
-    bind(&mut normal_keys, KeyCode::Enter, n, Action::ToggleExpand);
-    bind(&mut normal_keys, KeyCode::Char('J'), n, Action::ScrollPreviewDown);
-    bind(&mut normal_keys, KeyCode::Char('K'), n, Action::ScrollPreviewUp);
-    bind(&mut normal_keys, KeyCode::Char('.'), n, Action::ToggleHidden);
-    bind(&mut normal_keys, KeyCode::Char('g'), n, Action::GPress);
-    bind(&mut normal_keys, KeyCode::Char('G'), n, Action::GoToBottom);
-    bind(&mut normal_keys, KeyCode::Char('/'), n, Action::SearchStart);
-    bind(&mut normal_keys, KeyCode::Char('y'), n, Action::YankPath);
-    bind(&mut normal_keys, KeyCode::Char('e'), n, Action::OpenEditor);
-    bind(&mut normal_keys, KeyCode::Char('c'), n, Action::OpenClaude);
-    bind(&mut normal_keys, KeyCode::Char('c'), KeyModifiers::CONTROL, Action::Quit);
-    bind(&mut normal_keys, KeyCode::Char('s'), n, Action::OpenShell);
-    bind(&mut normal_keys, KeyCode::Char('ø'), n, Action::ShrinkTree);
-    bind(&mut normal_keys, KeyCode::Char('æ'), n, Action::GrowTree);
-
-    bind(&mut g_prefix_keys, KeyCode::Char('g'), n, Action::GoToTop);
-
+impl Config {
+  fn empty() -> Self {
     Config {
       tree_ratio: 30,
       min_tree_ratio: 15,
       max_tree_ratio: 60,
       ratio_step: 5,
       tick_rate_ms: 100,
-      normal_keys,
-      g_prefix_keys,
+      normal_keys: HashMap::new(),
+      g_prefix_keys: HashMap::new(),
     }
   }
-}
 
-impl Config {
+  fn apply_toml_str(&mut self, s: &str) {
+    let toml_config: TomlConfig = match toml::from_str(s) {
+      Ok(c) => c,
+      Err(e) => {
+        eprintln!("tfl: failed to parse config.toml: {e}");
+        return;
+      }
+    };
+
+    if let Some(general) = toml_config.general {
+      if let Some(ratio) = general.tree_ratio {
+        self.tree_ratio = ratio;
+      }
+      if let Some(tick) = general.tick_rate_ms {
+        self.tick_rate_ms = tick;
+      }
+    }
+
+    if let Some(keys) = toml_config.keys {
+      if let Some(normal) = keys.normal {
+        for (key_str, action_str) in &normal {
+          let Some(kb) = parse_key_binding(key_str) else {
+            eprintln!("tfl: invalid key binding: {key_str:?}");
+            continue;
+          };
+          let Some(action) = Action::from_name(action_str) else {
+            eprintln!("tfl: invalid action: {action_str:?}");
+            continue;
+          };
+          self.normal_keys.insert(kb, action);
+        }
+      }
+      if let Some(g_prefix) = keys.g_prefix {
+        for (key_str, action_str) in &g_prefix {
+          let Some(kb) = parse_key_binding(key_str) else {
+            eprintln!("tfl: invalid key binding: {key_str:?}");
+            continue;
+          };
+          let Some(action) = Action::from_name(action_str) else {
+            eprintln!("tfl: invalid action: {action_str:?}");
+            continue;
+          };
+          self.g_prefix_keys.insert(kb, action);
+        }
+      }
+    }
+  }
+
   pub fn default_toml() -> &'static str {
     r#"[general]
 tree_ratio = 30       # initial tree pane width (percentage)
@@ -238,54 +255,8 @@ g = "go_to_top"
   }
 
   pub fn load_from_str(s: &str) -> Config {
-    let toml_config: TomlConfig = match toml::from_str(s) {
-      Ok(c) => c,
-      Err(e) => {
-        eprintln!("tfl: failed to parse config.toml: {e}");
-        return Config::default();
-      }
-    };
-
     let mut config = Config::default();
-
-    if let Some(general) = toml_config.general {
-      if let Some(ratio) = general.tree_ratio {
-        config.tree_ratio = ratio;
-      }
-      if let Some(tick) = general.tick_rate_ms {
-        config.tick_rate_ms = tick;
-      }
-    }
-
-    if let Some(keys) = toml_config.keys {
-      if let Some(normal) = keys.normal {
-        for (key_str, action_str) in &normal {
-          let Some(kb) = parse_key_binding(key_str) else {
-            eprintln!("tfl: invalid key binding: {key_str:?}");
-            continue;
-          };
-          let Some(action) = Action::from_name(action_str) else {
-            eprintln!("tfl: invalid action: {action_str:?}");
-            continue;
-          };
-          config.normal_keys.insert(kb, action);
-        }
-      }
-      if let Some(g_prefix) = keys.g_prefix {
-        for (key_str, action_str) in &g_prefix {
-          let Some(kb) = parse_key_binding(key_str) else {
-            eprintln!("tfl: invalid key binding: {key_str:?}");
-            continue;
-          };
-          let Some(action) = Action::from_name(action_str) else {
-            eprintln!("tfl: invalid action: {action_str:?}");
-            continue;
-          };
-          config.g_prefix_keys.insert(kb, action);
-        }
-      }
-    }
-
+    config.apply_toml_str(s);
     config
   }
 }
@@ -548,33 +519,57 @@ g = "quit"
   }
 
   #[test]
-  fn test_default_toml_parses_to_defaults() {
-    let config = Config::load_from_str(Config::default_toml());
+  fn test_default_toml_is_valid_toml() {
+    let result: Result<TomlConfig, _> = toml::from_str(Config::default_toml());
+    assert!(result.is_ok(), "default_toml() is not valid TOML: {:?}", result.err());
+  }
+
+  #[test]
+  fn test_default_derives_from_toml_not_hardcoded() {
+    // Config::default() must derive bindings from default_toml().
+    // An empty() config has no bindings; default() should have them.
+    let empty = Config::empty();
     let default = Config::default();
-    assert_eq!(config.tree_ratio, default.tree_ratio);
-    assert_eq!(config.tick_rate_ms, default.tick_rate_ms);
-    assert_eq!(config.normal_keys.len(), default.normal_keys.len());
-    assert_eq!(config.g_prefix_keys.len(), default.g_prefix_keys.len());
+    assert!(empty.normal_keys.is_empty());
+    assert!(empty.g_prefix_keys.is_empty());
+    assert!(!default.normal_keys.is_empty());
+    assert!(!default.g_prefix_keys.is_empty());
+  }
+
+  #[test]
+  fn test_default_and_load_from_default_toml_are_identical() {
+    // Parsing default_toml() on top of defaults should be idempotent
+    let default = Config::default();
+    let reloaded = Config::load_from_str(Config::default_toml());
+    assert_eq!(default.tree_ratio, reloaded.tree_ratio);
+    assert_eq!(default.tick_rate_ms, reloaded.tick_rate_ms);
+    assert_eq!(default.normal_keys.len(), reloaded.normal_keys.len());
+    assert_eq!(default.g_prefix_keys.len(), reloaded.g_prefix_keys.len());
     for (kb, action) in &default.normal_keys {
-      assert_eq!(
-        config.normal_keys.get(kb),
-        Some(action),
-        "default_toml mismatch for {kb:?}"
-      );
+      assert_eq!(reloaded.normal_keys.get(kb), Some(action), "mismatch for {kb:?}");
     }
     for (kb, action) in &default.g_prefix_keys {
-      assert_eq!(
-        config.g_prefix_keys.get(kb),
-        Some(action),
-        "default_toml g_prefix mismatch for {kb:?}"
-      );
+      assert_eq!(reloaded.g_prefix_keys.get(kb), Some(action), "g_prefix mismatch for {kb:?}");
     }
   }
 
   #[test]
-  fn test_default_toml_is_valid_toml() {
-    let result: Result<TomlConfig, _> = toml::from_str(Config::default_toml());
-    assert!(result.is_ok(), "default_toml() is not valid TOML: {:?}", result.err());
+  fn test_user_override_does_not_keep_stale_defaults() {
+    // If a user overrides j to a different action, the old action
+    // should not also appear on j — only the override should apply.
+    let toml = r#"
+[keys.normal]
+j = "quit"
+"#;
+    let config = Config::load_from_str(toml);
+    let kb_j = KeyBinding { code: KeyCode::Char('j'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb_j), Some(&Action::Quit));
+    // j must not also map to the old default (MoveDown)
+    let j_actions: Vec<_> = config.normal_keys.iter()
+      .filter(|(k, _)| k.code == KeyCode::Char('j') && k.modifiers == KeyModifiers::NONE)
+      .collect();
+    assert_eq!(j_actions.len(), 1);
+    assert_eq!(j_actions[0].1, &Action::Quit);
   }
 
   #[test]
