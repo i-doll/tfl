@@ -39,6 +39,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Preview cache** with LRU eviction and debounced loading
 - **Favorites** — save directories, jump to them from a picker overlay
 - **Home shortcut** — jump to home directory with `~` or `gh`
+- **Directory history** — back/forward navigation through visited directories with `-`/`+`
 - **Configurable keybindings** via TOML config file
 - **Live config reload** — changes to `config.toml`, `apps.toml`, and `favorites` are picked up automatically without restarting
 - **File metadata panel** — size, modified time, permissions, line count, git commit history
@@ -86,6 +87,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `x` | Extract archive to current directory |
 | `X` | Extract archive and delete after success |
 | `Ctrl+p` | Change file permissions (chmod) |
+| `-` | Go back in directory history |
+| `+` | Go forward in directory history |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
@@ -280,6 +283,8 @@ f = "favorites_open"
 "shift+f" = "favorite_add"
 "ctrl+p" = "chmod"
 "shift+i" = "toggle_custom_ignore"
+"-" = "history_back"
+"+" = "history_forward"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -317,7 +322,7 @@ Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option co
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 

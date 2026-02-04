@@ -69,6 +69,8 @@ pub enum Action {
   ChmodApply,
   ChmodClose,
   ToggleCustomIgnore,
+  HistoryBack,
+  HistoryForward,
   Resize(u16, u16),
   Tick,
   None,
@@ -115,6 +117,8 @@ impl Action {
       "extract_and_delete" => Some(Action::ExtractAndDelete),
       "chmod" => Some(Action::ChmodStart),
       "toggle_custom_ignore" => Some(Action::ToggleCustomIgnore),
+      "history_back" => Some(Action::HistoryBack),
+      "history_forward" => Some(Action::HistoryForward),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -163,6 +167,8 @@ mod tests {
     assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
     assert_eq!(Action::from_name("chmod"), Some(Action::ChmodStart));
     assert_eq!(Action::from_name("toggle_custom_ignore"), Some(Action::ToggleCustomIgnore));
+    assert_eq!(Action::from_name("history_back"), Some(Action::HistoryBack));
+    assert_eq!(Action::from_name("history_forward"), Some(Action::HistoryForward));
   }
 
   #[test]
