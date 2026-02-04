@@ -363,6 +363,7 @@ f6 = "toggle_dual_pane"
 d = "show_diff"
 n = "next_hunk"
 "shift+n" = "prev_hunk"
+i = "show_properties"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -652,6 +653,7 @@ mod tests {
       (KeyCode::Char('+'), n, Action::HistoryForward),  // shift+= produces '+'
       (KeyCode::Tab, n, Action::SwitchPane),
       (KeyCode::F(6), n, Action::ToggleDualPane),
+      (KeyCode::Char('i'), n, Action::ShowProperties),
     ];
 
     for (code, mods, action) in expected {
@@ -1161,5 +1163,12 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('P'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleFormatted));
+  }
+
+  #[test]
+  fn test_default_i_binds_show_properties() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('i'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::ShowProperties));
   }
 }

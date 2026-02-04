@@ -6,6 +6,7 @@ pub mod file_tree;
 pub mod help;
 pub mod open_with;
 pub mod preview;
+pub mod properties;
 pub mod status_bar;
 
 use ratatui::buffer::Buffer;
@@ -95,6 +96,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   }
   if app.input_mode == crate::event::InputMode::Chmod {
     chmod::render_chmod(app, area, frame.buffer_mut());
+  }
+  if app.input_mode == crate::event::InputMode::Properties
+    && let Some(ref props) = app.file_properties
+  {
+    properties::render_properties(props, area, frame.buffer_mut());
   }
   if !app.error_messages.is_empty() {
     error::render_error(&app.error_messages, area, frame.buffer_mut());

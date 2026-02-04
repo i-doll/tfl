@@ -85,6 +85,7 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     section_line("Actions"),
     entry_line(&lookup, Action::OpenDefault, "Open file / enter dir"),
     entry_line(&lookup, Action::OpenWithStart, "Open with..."),
+    entry_line(&lookup, Action::ShowProperties, "Show properties"),
     entry_line(&lookup, Action::OpenEditor, "Open in $EDITOR"),
     entry_line(&lookup, Action::OpenClaude, "Open Claude Code"),
     entry_line(&lookup, Action::OpenShell, "Open $SHELL"),

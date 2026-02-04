@@ -10,7 +10,7 @@ use crate::action::Action;
 use crate::config::Config;
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
-use crate::fs::FileTree;
+use crate::fs::{FileProperties, FileTree};
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::{PreviewState, archive};
@@ -161,6 +161,7 @@ pub struct App {
   pub right_pane: Option<Pane>,
   pub dual_left_ratio: u16,
   pub dual_right_ratio: u16,
+  pub file_properties: Option<FileProperties>,
 }
 
 #[derive(Debug, Clone)]
@@ -218,6 +219,7 @@ impl App {
       right_pane: None,
       dual_left_ratio: config.tree_ratio,
       dual_right_ratio: config.tree_ratio,
+      file_properties: None,
     })
   }
 
@@ -571,6 +573,18 @@ impl App {
         if self.preview.prev_hunk() {
           self.set_status("Previous hunk".to_string());
         }
+      }
+      Action::ShowProperties => {
+        if let Some(entry) = self.selected_entry()
+          && let Some(props) = FileProperties::from_path(&entry.path)
+        {
+          self.file_properties = Some(props);
+          self.input_mode = InputMode::Properties;
+        }
+      }
+      Action::PropertiesClose => {
+        self.file_properties = None;
+        self.input_mode = InputMode::Normal;
       }
       Action::Tick => {
         self.preview.check_image_loaded();
@@ -2940,6 +2954,20 @@ mod tests {
   }
 
   #[test]
+  fn test_show_properties_opens_properties_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ShowProperties).unwrap();
+    assert_eq!(app.input_mode, InputMode::Properties);
+    assert!(app.file_properties.is_some());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_toggle_dual_pane_twice_disables_mode() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3051,6 +3079,19 @@ mod tests {
     app.update(Action::ChmodStart).unwrap();
     assert_eq!(app.input_mode, InputMode::Chmod);
     assert!(app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_show_properties_for_directory() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry should be a directory
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::ShowProperties).unwrap();
+    assert_eq!(app.input_mode, InputMode::Properties);
+    assert!(app.file_properties.is_some());
+    assert!(app.file_properties.as_ref().unwrap().is_dir);
     cleanup_test_dir(&dir);
   }
 
@@ -3695,6 +3736,18 @@ mod tests {
     // Disable dual-pane
     app.update(Action::ToggleDualPane).unwrap();
     assert_eq!(app.cursor, cursor_before);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_properties_close() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ShowProperties).unwrap();
+    assert_eq!(app.input_mode, InputMode::Properties);
+    app.update(Action::PropertiesClose).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.file_properties.is_none());
     cleanup_test_dir(&dir);
   }
 }
