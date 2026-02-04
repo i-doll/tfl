@@ -156,6 +156,7 @@ If no path is given, opens the current directory."
       Event::ConfigChanged => {
         if app.wrote_config {
           app.wrote_config = false;
+          last_reload = Instant::now();
         } else if last_reload.elapsed() > Duration::from_millis(500) {
           reload_config(&mut config, &mut app);
           last_reload = Instant::now();
