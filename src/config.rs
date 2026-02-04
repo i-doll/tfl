@@ -57,8 +57,6 @@ pub struct Config {
 struct TomlConfig {
   general: Option<GeneralConfig>,
   keys: Option<KeysConfig>,
-  #[serde(default)]
-  apps: Vec<AppEntry>,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +65,12 @@ struct AppEntry {
   command: Option<String>,
   macos_app: Option<String>,
   tui: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct AppsFile {
+  #[serde(default)]
+  apps: Vec<AppEntry>,
 }
 
 #[derive(Deserialize, Default)]
@@ -240,18 +244,6 @@ impl Config {
       }
     }
 
-    for entry in toml_config.apps {
-      if entry.command.is_none() && entry.macos_app.is_none() {
-        eprintln!("tfl: app {:?} needs command or macos_app", entry.name);
-        continue;
-      }
-      self.custom_apps.push(OpenApp {
-        name: entry.name,
-        command: entry.command.unwrap_or_default(),
-        is_tui: entry.tui.unwrap_or(false),
-        macos_app: entry.macos_app,
-      });
-    }
   }
 
   pub fn default_toml() -> &'static str {
@@ -342,13 +334,48 @@ h = "go_home"
 
   pub fn load() -> Config {
     let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
-    let config_path = config_dir.map(|d| d.join("config.toml"));
 
-    let content = config_path.and_then(|p| std::fs::read_to_string(p).ok());
+    let content = config_dir
+      .as_ref()
+      .map(|d| d.join("config.toml"))
+      .and_then(|p| std::fs::read_to_string(p).ok());
 
-    match content {
+    let mut config = match content {
       Some(s) => Self::load_from_str(&s),
       None => Config::default(),
+    };
+
+    let apps_content = config_dir
+      .map(|d| d.join("apps.toml"))
+      .and_then(|p| std::fs::read_to_string(p).ok());
+
+    if let Some(s) = apps_content {
+      config.load_apps_str(&s);
+    }
+
+    config
+  }
+
+  fn load_apps_str(&mut self, s: &str) {
+    let apps_file: AppsFile = match toml::from_str(s) {
+      Ok(f) => f,
+      Err(e) => {
+        eprintln!("tfl: failed to parse apps.toml: {e}");
+        return;
+      }
+    };
+
+    for entry in apps_file.apps {
+      if entry.command.is_none() && entry.macos_app.is_none() {
+        eprintln!("tfl: app {:?} needs command or macos_app", entry.name);
+        continue;
+      }
+      self.custom_apps.push(OpenApp {
+        name: entry.name,
+        command: entry.command.unwrap_or_default(),
+        is_tui: entry.tui.unwrap_or(false),
+        macos_app: entry.macos_app,
+      });
     }
   }
 
@@ -822,7 +849,7 @@ tree_ratio = 40
 
   #[test]
   fn test_load_custom_apps() {
-    let toml = r#"
+    let apps_toml = r#"
 [[apps]]
 name = "Kakoune"
 command = "kak"
@@ -832,7 +859,8 @@ tui = true
 name = "Lite XL"
 command = "lite-xl"
 "#;
-    let config = Config::load_from_str(toml);
+    let mut config = Config::default();
+    config.load_apps_str(apps_toml);
     assert_eq!(config.custom_apps.len(), 2);
     assert_eq!(config.custom_apps[0].name, "Kakoune");
     assert_eq!(config.custom_apps[0].command, "kak");
@@ -844,28 +872,42 @@ command = "lite-xl"
 
   #[test]
   fn test_custom_apps_default_tui_false() {
-    let toml = r#"
+    let apps_toml = r#"
 [[apps]]
 name = "MyApp"
 command = "myapp"
 "#;
-    let config = Config::load_from_str(toml);
+    let mut config = Config::default();
+    config.load_apps_str(apps_toml);
     assert_eq!(config.custom_apps.len(), 1);
     assert!(!config.custom_apps[0].is_tui);
   }
 
   #[test]
   fn test_custom_apps_macos_only() {
-    let toml = r#"
+    let apps_toml = r#"
 [[apps]]
 name = "Pages"
 macos_app = "Pages"
 "#;
-    let config = Config::load_from_str(toml);
+    let mut config = Config::default();
+    config.load_apps_str(apps_toml);
     assert_eq!(config.custom_apps.len(), 1);
     assert_eq!(config.custom_apps[0].name, "Pages");
     assert_eq!(config.custom_apps[0].macos_app, Some("Pages".into()));
     assert!(config.custom_apps[0].command.is_empty());
+  }
+
+  #[test]
+  fn test_apps_in_config_toml_ignored() {
+    // [[apps]] in config.toml should be silently ignored (unknown field)
+    let toml = r#"
+[[apps]]
+name = "Kakoune"
+command = "kak"
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(config.custom_apps.is_empty());
   }
 
   #[test]

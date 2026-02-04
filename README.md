@@ -254,9 +254,9 @@ Use `"none"` to unbind a key (e.g., `q = "none"`).
 
 Search and prompt mode keys are not configurable (they handle text input).
 
-### Custom apps
+### Custom apps (`apps.toml`)
 
-Add `[[apps]]` entries to register custom apps for the open-with picker:
+Custom apps for the open-with picker live in a separate file at `~/.config/tfl/apps.toml`:
 
 ```toml
 [[apps]]
@@ -273,7 +273,7 @@ name = "Pages"
 macos_app = "Pages"    # macOS only — opens via `open -a "Pages"`
 ```
 
-Each entry needs at least `command` or `macos_app`. The `tui` flag (default `false`) enables suspend/resume for terminal editors. Custom apps appear before built-in apps in the picker.
+Each entry needs at least `command` or `macos_app`. The `tui` flag (default `false`) enables suspend/resume for terminal editors. Custom apps appear before built-in apps in the picker. Keeping apps separate from `config.toml` means `tfl --init` can update default keybindings without touching your app list.
 
 ## Module structure
 
