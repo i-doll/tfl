@@ -139,6 +139,12 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("Enter:open  Esc:close", Style::default().fg(Color::DarkGray)),
       ])
     }
+    InputMode::Error => {
+      Line::from(vec![
+        Span::styled(" Error ", Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD)),
+        Span::styled("Esc:dismiss", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::Normal => {
       if let Some(ref msg) = app.status_message {
         Line::from(vec![

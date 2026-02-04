@@ -56,6 +56,7 @@ pub enum Action {
   OpenWithUp,
   OpenWithSelect,
   OpenWithClose,
+  ErrorClose,
   Resize(u16, u16),
   Tick,
   None,

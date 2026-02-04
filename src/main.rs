@@ -103,7 +103,7 @@ If no path is given, opens the current directory."
     }
   }
 
-  let mut config = config::Config::load();
+  let (mut config, config_errors) = config::Config::load();
   let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
 
   // Detect Kitty protocol support BEFORE entering alternate screen
@@ -137,6 +137,10 @@ If no path is given, opens the current directory."
   if !app.tree.entries.is_empty() {
     let path = app.tree.entries[0].path.clone();
     app.preview.request_preview(&path, app.picker.as_ref());
+  }
+
+  if !config_errors.is_empty() {
+    app.show_error(config_errors);
   }
 
   let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms), config_dir.as_deref());
@@ -216,13 +220,17 @@ fn restore_terminal() -> Result<()> {
 }
 
 fn reload_config(config: &mut config::Config, app: &mut App) {
-  let new = config::Config::load();
+  let (new, errors) = config::Config::load();
   config.normal_keys = new.normal_keys;
   config.g_prefix_keys = new.g_prefix_keys;
   config.custom_apps = new.custom_apps;
   app.apply_config(config);
   app.reload_favorites();
-  app.set_status("Config reloaded".to_string());
+  if errors.is_empty() {
+    app.set_status("Config reloaded".to_string());
+  } else {
+    app.show_error(errors);
+  }
 }
 
 fn suspend_and_resume(

@@ -52,6 +52,7 @@ pub struct App {
   pub open_with_apps: Vec<OpenApp>,
   pub open_with_cursor: usize,
   pub custom_apps: Vec<OpenApp>,
+  pub error_messages: Vec<String>,
   pub wrote_config: bool,
 }
 
@@ -93,6 +94,7 @@ impl App {
       open_with_apps: Vec::new(),
       open_with_cursor: 0,
       custom_apps: config.custom_apps.clone(),
+      error_messages: Vec::new(),
       wrote_config: false,
     })
   }
@@ -296,6 +298,10 @@ impl App {
       Action::OpenWithUp => self.open_with_move(-1),
       Action::OpenWithSelect => self.open_with_select()?,
       Action::OpenWithClose => {
+        self.input_mode = InputMode::Normal;
+      }
+      Action::ErrorClose => {
+        self.error_messages.clear();
         self.input_mode = InputMode::Normal;
       }
       Action::Tick => {
@@ -927,6 +933,11 @@ impl App {
   pub fn set_status(&mut self, msg: String) {
     self.status_message = Some(msg);
     self.status_ticks = 20; // visible for ~2s at 100ms tick rate
+  }
+
+  pub fn show_error(&mut self, errors: Vec<String>) {
+    self.error_messages = errors;
+    self.input_mode = InputMode::Error;
   }
 
   pub fn apply_config(&mut self, config: &Config) {

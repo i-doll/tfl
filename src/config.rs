@@ -176,7 +176,8 @@ pub fn normalize_key_event(key: KeyEvent) -> KeyBinding {
 impl Default for Config {
   fn default() -> Self {
     let mut config = Config::empty();
-    config.apply_toml_str(Config::default_toml());
+    let mut errors = Vec::new();
+    config.apply_toml_str(Config::default_toml(), &mut errors);
     config
   }
 }
@@ -195,11 +196,11 @@ impl Config {
     }
   }
 
-  fn apply_toml_str(&mut self, s: &str) {
+  fn apply_toml_str(&mut self, s: &str, errors: &mut Vec<String>) {
     let toml_config: TomlConfig = match toml::from_str(s) {
       Ok(c) => c,
       Err(e) => {
-        eprintln!("tfl: failed to parse config.toml: {e}");
+        errors.push(format!("failed to parse config.toml: {e}"));
         return;
       }
     };
@@ -218,11 +219,11 @@ impl Config {
         self.normal_keys.clear();
         for (key_str, action_str) in &normal {
           let Some(kb) = parse_key_binding(key_str) else {
-            eprintln!("tfl: invalid key binding: {key_str:?}");
+            errors.push(format!("invalid key binding: {key_str:?}"));
             continue;
           };
           let Some(action) = Action::from_name(action_str) else {
-            eprintln!("tfl: invalid action: {action_str:?}");
+            errors.push(format!("invalid action: {action_str:?}"));
             continue;
           };
           self.normal_keys.insert(kb, action);
@@ -232,11 +233,11 @@ impl Config {
         self.g_prefix_keys.clear();
         for (key_str, action_str) in &g_prefix {
           let Some(kb) = parse_key_binding(key_str) else {
-            eprintln!("tfl: invalid key binding: {key_str:?}");
+            errors.push(format!("invalid key binding: {key_str:?}"));
             continue;
           };
           let Some(action) = Action::from_name(action_str) else {
-            eprintln!("tfl: invalid action: {action_str:?}");
+            errors.push(format!("invalid action: {action_str:?}"));
             continue;
           };
           self.g_prefix_keys.insert(kb, action);
@@ -332,8 +333,9 @@ h = "go_home"
     Ok(())
   }
 
-  pub fn load() -> Config {
+  pub fn load() -> (Config, Vec<String>) {
     let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
+    let mut errors = Vec::new();
 
     let content = config_dir
       .as_ref()
@@ -341,7 +343,7 @@ h = "go_home"
       .and_then(|p| std::fs::read_to_string(p).ok());
 
     let mut config = match content {
-      Some(s) => Self::load_from_str(&s),
+      Some(s) => Self::load_from_str_with_errors(&s, &mut errors),
       None => Config::default(),
     };
 
@@ -350,24 +352,24 @@ h = "go_home"
       .and_then(|p| std::fs::read_to_string(p).ok());
 
     if let Some(s) = apps_content {
-      config.load_apps_str(&s);
+      config.load_apps_str(&s, &mut errors);
     }
 
-    config
+    (config, errors)
   }
 
-  fn load_apps_str(&mut self, s: &str) {
+  fn load_apps_str(&mut self, s: &str, errors: &mut Vec<String>) {
     let apps_file: AppsFile = match toml::from_str(s) {
       Ok(f) => f,
       Err(e) => {
-        eprintln!("tfl: failed to parse apps.toml: {e}");
+        errors.push(format!("failed to parse apps.toml: {e}"));
         return;
       }
     };
 
     for entry in apps_file.apps {
       if entry.command.is_none() && entry.macos_app.is_none() {
-        eprintln!("tfl: app {:?} needs command or macos_app", entry.name);
+        errors.push(format!("app {:?} needs command or macos_app", entry.name));
         continue;
       }
       self.custom_apps.push(OpenApp {
@@ -380,8 +382,13 @@ h = "go_home"
   }
 
   pub fn load_from_str(s: &str) -> Config {
+    let mut errors = Vec::new();
+    Self::load_from_str_with_errors(s, &mut errors)
+  }
+
+  fn load_from_str_with_errors(s: &str, errors: &mut Vec<String>) -> Config {
     let mut config = Config::default();
-    config.apply_toml_str(s);
+    config.apply_toml_str(s, errors);
     config
   }
 }
@@ -860,7 +867,7 @@ name = "Lite XL"
 command = "lite-xl"
 "#;
     let mut config = Config::default();
-    config.load_apps_str(apps_toml);
+    config.load_apps_str(apps_toml, &mut Vec::new());
     assert_eq!(config.custom_apps.len(), 2);
     assert_eq!(config.custom_apps[0].name, "Kakoune");
     assert_eq!(config.custom_apps[0].command, "kak");
@@ -878,7 +885,7 @@ name = "MyApp"
 command = "myapp"
 "#;
     let mut config = Config::default();
-    config.load_apps_str(apps_toml);
+    config.load_apps_str(apps_toml, &mut Vec::new());
     assert_eq!(config.custom_apps.len(), 1);
     assert!(!config.custom_apps[0].is_tui);
   }
@@ -891,7 +898,7 @@ name = "Pages"
 macos_app = "Pages"
 "#;
     let mut config = Config::default();
-    config.load_apps_str(apps_toml);
+    config.load_apps_str(apps_toml, &mut Vec::new());
     assert_eq!(config.custom_apps.len(), 1);
     assert_eq!(config.custom_apps[0].name, "Pages");
     assert_eq!(config.custom_apps[0].macos_app, Some("Pages".into()));

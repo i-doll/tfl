@@ -121,6 +121,7 @@ pub enum InputMode {
   Prompt,
   Favorites,
   OpenWith,
+  Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +176,10 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Char('k') | KeyCode::Up => Action::OpenWithUp,
       KeyCode::Enter => Action::OpenWithSelect,
       KeyCode::Esc | KeyCode::Char('q') => Action::OpenWithClose,
+      _ => Action::None,
+    },
+    InputMode::Error => match key.code {
+      KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Action::ErrorClose,
       _ => Action::None,
     },
     InputMode::Normal => {
