@@ -113,10 +113,24 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         }
         Some(PromptKind::ConfirmDelete) => {
           let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
+          let msg = if app.use_trash {
+            format!(" Move {name} to trash? (y/N)")
+          } else {
+            format!(" Delete {name}? (y/N)")
+          };
           Line::from(vec![
             Span::styled(
-              format!(" Delete {name}? (y/N)"),
+              msg,
               Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD),
+            ),
+          ])
+        }
+        Some(PromptKind::ConfirmPermanentDelete) => {
+          let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
+          Line::from(vec![
+            Span::styled(
+              format!(" PERMANENTLY delete {name}? (y/N)"),
+              Style::default().fg(Color::Indexed(196)).add_modifier(Modifier::BOLD),
             ),
           ])
         }
