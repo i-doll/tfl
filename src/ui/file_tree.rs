@@ -18,7 +18,7 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
 
   for (view_idx, &entry_idx) in entries[start..end].iter().enumerate() {
     let entry = &app.tree.entries[entry_idx];
-    let is_selected = start + view_idx == app.cursor;
+    let is_cursor = start + view_idx == app.cursor;
 
     let indent = "  ".repeat(entry.depth);
     let icon = file_icon(&entry.name, entry.is_dir, entry.expanded, entry.is_symlink);
@@ -32,12 +32,25 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
     let is_cut = app.clipboard.op == Some(ClipboardOp::Cut)
       && app.clipboard.paths.contains(&entry.path);
 
-    let (icon_style, name_style) = if is_selected {
+    // Selection marker: show a colored marker for selected entries
+    let selection_marker = if entry.selected {
+      Span::styled("* ", Style::default().fg(Color::Indexed(208)))
+    } else {
+      Span::styled("  ", Style::default())
+    };
+
+    let (icon_style, name_style) = if is_cursor {
       let sel = Style::default()
         .fg(Color::Indexed(234))
         .bg(Color::Indexed(75))
         .add_modifier(Modifier::BOLD);
       (sel, sel)
+    } else if entry.selected {
+      // Selected but not cursor: highlight with orange background
+      (
+        Style::default().fg(icon.color).bg(Color::Indexed(236)),
+        Style::default().fg(Color::Indexed(208)).bg(Color::Indexed(236)),
+      )
     } else if is_cut {
       (
         Style::default().fg(icon.color).add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
@@ -61,6 +74,7 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
     };
 
     let line = Line::from(vec![
+      selection_marker,
       Span::styled(indent, name_style),
       Span::styled(icon.glyph, icon_style),
       Span::styled(entry.name.clone(), name_style),

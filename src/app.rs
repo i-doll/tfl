@@ -55,6 +55,7 @@ pub struct App {
   pub error_messages: Vec<String>,
   pub wrote_config: bool,
   pub claude_yolo: bool,
+  pub visual_anchor: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +99,7 @@ impl App {
       error_messages: Vec::new(),
       wrote_config: false,
       claude_yolo: config.claude_yolo,
+      visual_anchor: None,
     })
   }
 
@@ -185,7 +187,15 @@ impl App {
       Action::CopyFile => self.copy_file(),
       Action::Paste => self.paste_clipboard()?,
       Action::DeleteFile => {
-        if let Some(entry) = self.selected_entry() {
+        let selection_count = self.selection_count();
+        if selection_count > 0 {
+          // Batch delete selected entries
+          self.prompt_kind = Some(PromptKind::ConfirmDelete);
+          self.prompt_input.clear();
+          self.prompt_cursor = 0;
+          self.input_mode = InputMode::Prompt;
+          self.set_status(format!("Delete {selection_count} selected items? (y/N)"));
+        } else if let Some(entry) = self.selected_entry() {
           let name = entry.name.clone();
           self.prompt_kind = Some(PromptKind::ConfirmDelete);
           self.prompt_input.clear();
@@ -310,6 +320,11 @@ impl App {
         self.error_messages.clear();
         self.input_mode = InputMode::Normal;
       }
+      Action::ToggleSelection => self.toggle_selection(),
+      Action::VisualModeStart => self.visual_mode_start(),
+      Action::VisualModeUp => self.visual_mode_move(-1),
+      Action::VisualModeDown => self.visual_mode_move(1),
+      Action::ClearSelection => self.clear_selection(),
       Action::Tick => {
         self.preview.check_image_loaded();
       }
@@ -626,7 +641,16 @@ impl App {
   }
 
   fn cut_file(&mut self) {
-    if let Some(entry) = self.selected_entry() {
+    let selected = self.selected_paths();
+    if !selected.is_empty() {
+      let count = selected.len();
+      self.clipboard = Clipboard {
+        paths: selected,
+        op: Some(ClipboardOp::Cut),
+      };
+      self.set_status(format!("Cut {count} items"));
+      self.clear_selection();
+    } else if let Some(entry) = self.selected_entry() {
       let path = entry.path.clone();
       let name = entry.name.clone();
       self.clipboard = Clipboard {
@@ -638,7 +662,16 @@ impl App {
   }
 
   fn copy_file(&mut self) {
-    if let Some(entry) = self.selected_entry() {
+    let selected = self.selected_paths();
+    if !selected.is_empty() {
+      let count = selected.len();
+      self.clipboard = Clipboard {
+        paths: selected,
+        op: Some(ClipboardOp::Copy),
+      };
+      self.set_status(format!("Copied {count} items"));
+      self.clear_selection();
+    } else if let Some(entry) = self.selected_entry() {
       let path = entry.path.clone();
       let name = entry.name.clone();
       self.clipboard = Clipboard {
@@ -729,6 +762,57 @@ impl App {
   }
 
   fn execute_delete(&mut self) -> Result<()> {
+    let selected_paths = self.selected_paths();
+
+    if !selected_paths.is_empty() {
+      // Batch delete selected entries
+      let mut deleted_count = 0;
+      let mut last_error: Option<String> = None;
+
+      for path in &selected_paths {
+        let result = if path.is_dir() {
+          std::fs::remove_dir_all(path)
+        } else {
+          std::fs::remove_file(path)
+        };
+
+        match result {
+          Ok(()) => {
+            deleted_count += 1;
+            // Clean clipboard if deleted path was in it
+            self.clipboard.paths.retain(|p| !p.starts_with(path));
+          }
+          Err(e) => {
+            last_error = Some(format!("{}: {}", path.display(), e));
+          }
+        }
+      }
+
+      if self.clipboard.paths.is_empty() {
+        self.clipboard.op = None;
+      }
+
+      self.cancel_prompt();
+      self.clear_selection();
+      self.tree.reload()?;
+      let len = self.visible_entries().len();
+      if len == 0 {
+        self.cursor = 0;
+      } else {
+        self.cursor = self.cursor.min(len - 1);
+      }
+
+      if let Some(err) = last_error {
+        self.set_status(format!("Deleted {deleted_count}, error: {err}"));
+      } else {
+        self.set_status(format!("Deleted {deleted_count} items"));
+      }
+      self.preview.invalidate();
+      self.update_preview();
+      return Ok(());
+    }
+
+    // Single entry delete (no selection)
     let entry = self.selected_entry().cloned();
     let Some(entry) = entry else {
       self.cancel_prompt();
@@ -898,7 +982,22 @@ impl App {
   }
 
   fn yank_path(&mut self) {
-    if let Some(entry) = self.selected_entry() {
+    let selected = self.selected_paths();
+    if !selected.is_empty() {
+      // Yank all selected paths, one per line
+      let paths_str = selected.iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+      let count = selected.len();
+      match clipboard_anywhere::set_clipboard(&paths_str) {
+        Ok(_) => {
+          self.set_status(format!("Yanked {count} paths"));
+          self.clear_selection();
+        }
+        Err(e) => self.set_status(format!("Yank failed: {e}")),
+      }
+    } else if let Some(entry) = self.selected_entry() {
       let path_str = entry.path.to_string_lossy().to_string();
       match clipboard_anywhere::set_clipboard(&path_str) {
         Ok(_) => self.set_status(format!("Yanked: {path_str}")),
@@ -972,6 +1071,81 @@ impl App {
     } else {
       self.favorites_cursor = self.favorites_cursor.min(self.favorites.len() - 1);
     }
+  }
+
+  fn toggle_selection(&mut self) {
+    let entries = self.visible_entries();
+    if let Some(&idx) = entries.get(self.cursor) {
+      self.tree.entries[idx].selected = !self.tree.entries[idx].selected;
+    }
+  }
+
+  fn visual_mode_start(&mut self) {
+    let entries = self.visible_entries();
+    if let Some(&idx) = entries.get(self.cursor) {
+      self.visual_anchor = Some(idx);
+      self.tree.entries[idx].selected = true;
+      self.input_mode = InputMode::Visual;
+    }
+  }
+
+  fn visual_mode_move(&mut self, delta: i32) {
+    let entries = self.visible_entries();
+    if entries.is_empty() {
+      return;
+    }
+    let len = entries.len();
+    let old_cursor = self.cursor;
+    if delta > 0 {
+      self.cursor = (self.cursor + delta as usize).min(len - 1);
+    } else {
+      self.cursor = self.cursor.saturating_sub((-delta) as usize);
+    }
+    self.adjust_scroll();
+    self.update_preview();
+
+    // Select/deselect range between anchor and cursor
+    if let Some(anchor) = self.visual_anchor {
+      let anchor_visible_pos = entries.iter().position(|&i| i == anchor);
+      if let Some(anchor_pos) = anchor_visible_pos {
+        let (start, end) = if anchor_pos <= self.cursor {
+          (anchor_pos, self.cursor)
+        } else {
+          (self.cursor, anchor_pos)
+        };
+        // Deselect entries outside range, select entries inside range
+        for (pos, &idx) in entries.iter().enumerate() {
+          if pos >= start && pos <= end {
+            self.tree.entries[idx].selected = true;
+          } else if pos < start.min(old_cursor) || pos > end.max(old_cursor) {
+            // Only deselect entries that were outside both old and new range
+          } else {
+            self.tree.entries[idx].selected = false;
+          }
+        }
+      }
+    }
+  }
+
+  fn clear_selection(&mut self) {
+    for entry in &mut self.tree.entries {
+      entry.selected = false;
+    }
+    self.visual_anchor = None;
+    self.input_mode = InputMode::Normal;
+  }
+
+  /// Returns the count of selected entries
+  pub fn selection_count(&self) -> usize {
+    self.tree.entries.iter().filter(|e| e.selected).count()
+  }
+
+  /// Returns paths of all selected entries
+  pub fn selected_paths(&self) -> Vec<PathBuf> {
+    self.tree.entries.iter()
+      .filter(|e| e.selected)
+      .map(|e| e.path.clone())
+      .collect()
   }
 
   pub fn handle_suspend(&mut self) -> Option<SuspendAction> {
@@ -2017,6 +2191,218 @@ mod tests {
     assert!(subdir_entry.expanded);
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_selection() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.selection_count(), 0);
+
+    // Toggle selection on first entry
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 1);
+    assert!(app.tree.entries[0].selected);
+
+    // Toggle again should deselect
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 0);
+    assert!(!app.tree.entries[0].selected);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_visual_mode_start() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.visual_anchor.is_none());
+
+    app.update(Action::VisualModeStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Visual);
+    assert!(app.visual_anchor.is_some());
+    assert_eq!(app.selection_count(), 1);
+    assert!(app.tree.entries[0].selected);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_visual_mode_range_selection() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start visual mode at cursor 0
+    app.update(Action::VisualModeStart).unwrap();
+    assert_eq!(app.selection_count(), 1);
+
+    // Move down to extend selection
+    app.update(Action::VisualModeDown).unwrap();
+    assert_eq!(app.selection_count(), 2);
+    assert!(app.tree.entries[0].selected);
+    assert!(app.tree.entries[1].selected);
+
+    // Move down again
+    app.update(Action::VisualModeDown).unwrap();
+    assert_eq!(app.selection_count(), 3);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_clear_selection() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select multiple entries
+    app.update(Action::ToggleSelection).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 2);
+
+    // Clear all
+    app.update(Action::ClearSelection).unwrap();
+    assert_eq!(app.selection_count(), 0);
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.visual_anchor.is_none());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_selection_persists_across_navigation() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select first entry
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 1);
+
+    // Move cursor around
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveUp).unwrap();
+
+    // Selection should persist
+    assert_eq!(app.selection_count(), 1);
+    assert!(app.tree.entries[0].selected);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_selection_count() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.selection_count(), 0);
+
+    // Select multiple entries manually
+    app.tree.entries[0].selected = true;
+    app.tree.entries[1].selected = true;
+    app.tree.entries[2].selected = true;
+    assert_eq!(app.selection_count(), 3);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_selected_paths() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select two entries
+    let path0 = app.tree.entries[0].path.clone();
+    let path1 = app.tree.entries[1].path.clone();
+    app.tree.entries[0].selected = true;
+    app.tree.entries[1].selected = true;
+
+    let paths = app.selected_paths();
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&path0));
+    assert!(paths.contains(&path1));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_batch_delete_selected() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select two files
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let file1_path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleSelection).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    let file2_path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 2);
+
+    // Start delete
+    app.update(Action::DeleteFile).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmDelete));
+
+    // Confirm with 'y'
+    app.update(Action::PromptInput('y')).unwrap();
+
+    // Both files should be deleted
+    assert!(!file1_path.exists());
+    assert!(!file2_path.exists());
+    assert_eq!(app.selection_count(), 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_batch_copy_selected() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select two files
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ToggleSelection).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 2);
+
+    // Copy selected
+    app.update(Action::CopyFile).unwrap();
+    assert_eq!(app.clipboard.paths.len(), 2);
+    assert_eq!(app.clipboard.op, Some(ClipboardOp::Copy));
+    // Selection should be cleared after copy
+    assert_eq!(app.selection_count(), 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_batch_cut_selected() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select two files
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ToggleSelection).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::ToggleSelection).unwrap();
+    assert_eq!(app.selection_count(), 2);
+
+    // Cut selected
+    app.update(Action::CutFile).unwrap();
+    assert_eq!(app.clipboard.paths.len(), 2);
+    assert_eq!(app.clipboard.op, Some(ClipboardOp::Cut));
+    // Selection should be cleared after cut
+    assert_eq!(app.selection_count(), 0);
 
     cleanup_test_dir(&dir);
   }

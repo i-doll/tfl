@@ -81,6 +81,7 @@ pub struct FileEntry {
   pub size: u64,
   pub is_git_ignored: bool,
   pub git_status: GitStatus,
+  pub selected: bool,
 }
 
 impl FileEntry {
@@ -113,6 +114,7 @@ impl FileEntry {
       size,
       is_git_ignored: false,
       git_status: GitStatus::default(),
+      selected: false,
     }
   }
 
@@ -172,6 +174,7 @@ mod tests {
       size: 0,
       is_git_ignored: false,
       git_status: GitStatus::default(),
+      selected: false,
     };
     assert!(entry.is_hidden());
 
@@ -186,6 +189,7 @@ mod tests {
       size: 0,
       is_git_ignored: false,
       git_status: GitStatus::default(),
+      selected: false,
     };
     assert!(!entry.is_hidden());
   }
@@ -332,5 +336,19 @@ mod tests {
     };
     parent.merge(&child2);
     assert_eq!(parent.staged, Some(GitFileStatus::Conflicted));
+  }
+
+  #[test]
+  fn test_entry_default_not_selected() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_not_selected");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.txt");
+    fs::write(&file, "hello").unwrap();
+
+    let entry = FileEntry::from_path(file, 0);
+    assert!(!entry.selected);
+
+    let _ = fs::remove_dir_all(&dir);
   }
 }

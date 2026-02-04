@@ -267,9 +267,11 @@ down = "move_down"
 up = "move_up"
 left = "move_left"
 right = "move_right"
-space = "toggle_expand"
+space = "toggle_selection"
+tab = "toggle_expand"
 enter = "open_default"
 o = "open_with"
+"shift+v" = "visual_mode"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
 pagedown = "scroll_preview_down"
@@ -528,9 +530,11 @@ mod tests {
       (KeyCode::Left, n, Action::MoveLeft),
       (KeyCode::Char('l'), n, Action::MoveRight),
       (KeyCode::Right, n, Action::MoveRight),
-      (KeyCode::Char(' '), n, Action::ToggleExpand),
+      (KeyCode::Char(' '), n, Action::ToggleSelection),
+      (KeyCode::Tab, n, Action::ToggleExpand),
       (KeyCode::Enter, n, Action::OpenDefault),
       (KeyCode::Char('o'), n, Action::OpenWithStart),
+      (KeyCode::Char('V'), n, Action::VisualModeStart),
       (KeyCode::Char('J'), n, Action::ScrollPreviewDown),
       (KeyCode::Char('K'), n, Action::ScrollPreviewUp),
       (KeyCode::PageDown, n, Action::ScrollPreviewDown),
