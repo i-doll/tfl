@@ -1,6 +1,7 @@
 pub mod directory;
 pub mod hex;
 pub mod image;
+pub mod metadata;
 pub mod text;
 
 use std::collections::HashMap;
@@ -12,7 +13,9 @@ use ratatui::text::Line;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 
+use self::metadata::{FileMetadata, ImageMetadata, get_file_metadata, get_file_metadata_with_lines, get_image_metadata, get_git_commits};
 use self::text::SyntaxHighlighter;
+use crate::git::{GitCommit, GitRepo};
 
 const MAX_TEXT_BYTES: u64 = 1024 * 1024; // 1MB
 const MAX_TEXT_LINES: usize = 1000;
@@ -37,6 +40,9 @@ pub struct PreviewContent {
   pub line_count: usize,
   pub file_size: u64,
   pub extension: String,
+  pub metadata: Option<FileMetadata>,
+  pub image_metadata: Option<ImageMetadata>,
+  pub git_commits: Vec<GitCommit>,
 }
 
 pub struct PreviewState {
@@ -66,7 +72,7 @@ impl PreviewState {
     }
   }
 
-  pub fn request_preview(&mut self, path: &Path, picker: Option<&Picker>) {
+  pub fn request_preview(&mut self, path: &Path, picker: Option<&Picker>, git_repo: Option<&GitRepo>) {
     // Debounce: only load if enough time has passed since last request
     if let Some((ref last_path, last_time)) = self.last_request
       && last_path == path && last_time.elapsed().as_millis() < DEBOUNCE_MS {
@@ -91,40 +97,56 @@ impl PreviewState {
       return;
     }
 
-    self.load_preview(path, picker);
+    self.load_preview(path, picker, git_repo);
   }
 
-  fn load_preview(&mut self, path: &Path, picker: Option<&Picker>) {
+  fn load_preview(&mut self, path: &Path, picker: Option<&Picker>, git_repo: Option<&GitRepo>) {
     let preview_type = detect_preview_type(path);
+    let git_commits = get_git_commits(git_repo, path, 3);
     let content = match preview_type {
-      PreviewType::Text => self.load_text(path),
+      PreviewType::Text => self.load_text(path, git_repo),
       PreviewType::Image => {
         if let Some(picker) = picker {
           self.image_rx = Some(self::image::load_image_async(path, picker));
         }
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let metadata = get_file_metadata(path);
+        let image_metadata = get_image_metadata(path);
         Some(PreviewContent {
           lines: vec![Line::from(" Loading image...")],
           preview_type: PreviewType::Image,
           line_count: 0,
-          file_size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+          file_size,
           extension: get_extension(path),
+          metadata,
+          image_metadata,
+          git_commits,
         })
       }
-      PreviewType::Binary => self.load_hex(path),
+      PreviewType::Binary => self.load_hex(path, git_repo),
       PreviewType::Directory => self.load_directory(path),
-      PreviewType::TooLarge => Some(PreviewContent {
-        lines: vec![Line::from(" File too large to preview")],
-        preview_type: PreviewType::TooLarge,
-        line_count: 0,
-        file_size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
-        extension: get_extension(path),
-      }),
+      PreviewType::TooLarge => {
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        Some(PreviewContent {
+          lines: vec![Line::from(" File too large to preview")],
+          preview_type: PreviewType::TooLarge,
+          line_count: 0,
+          file_size,
+          extension: get_extension(path),
+          metadata: get_file_metadata(path),
+          image_metadata: None,
+          git_commits,
+        })
+      }
       PreviewType::Empty => Some(PreviewContent {
         lines: vec![Line::from(" Empty file")],
         preview_type: PreviewType::Empty,
         line_count: 0,
         file_size: 0,
         extension: String::new(),
+        metadata: get_file_metadata(path),
+        image_metadata: None,
+        git_commits,
       }),
       PreviewType::Error(ref msg) => Some(PreviewContent {
         lines: vec![Line::from(format!(" Error: {msg}"))],
@@ -132,6 +154,9 @@ impl PreviewState {
         line_count: 0,
         file_size: 0,
         extension: String::new(),
+        metadata: None,
+        image_metadata: None,
+        git_commits: Vec::new(),
       }),
     };
 
@@ -140,7 +165,7 @@ impl PreviewState {
     }
   }
 
-  fn load_text(&self, path: &Path) -> Option<PreviewContent> {
+  fn load_text(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
     let content = match std::fs::read_to_string(path) {
       Ok(c) => c,
       Err(e) => {
@@ -150,6 +175,9 @@ impl PreviewState {
           line_count: 0,
           file_size: 0,
           extension: String::new(),
+          metadata: None,
+          image_metadata: None,
+          git_commits: Vec::new(),
         });
       }
     };
@@ -159,6 +187,8 @@ impl PreviewState {
     let ext = get_extension(path);
     let lines = self.highlighter.highlight(&truncated, &ext);
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let metadata = get_file_metadata_with_lines(path, line_count);
+    let git_commits = get_git_commits(git_repo, path, 3);
 
     Some(PreviewContent {
       lines,
@@ -166,10 +196,13 @@ impl PreviewState {
       line_count,
       file_size,
       extension: ext,
+      metadata,
+      image_metadata: None,
+      git_commits,
     })
   }
 
-  fn load_hex(&self, path: &Path) -> Option<PreviewContent> {
+  fn load_hex(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
     let data = match std::fs::read(path) {
       Ok(d) => d,
       Err(e) => {
@@ -179,6 +212,9 @@ impl PreviewState {
           line_count: 0,
           file_size: 0,
           extension: String::new(),
+          metadata: None,
+          image_metadata: None,
+          git_commits: Vec::new(),
         });
       }
     };
@@ -186,6 +222,8 @@ impl PreviewState {
     let file_size = data.len() as u64;
     let truncated = &data[..data.len().min(MAX_HEX_BYTES)];
     let lines = hex::hex_dump(truncated);
+    let metadata = get_file_metadata(path);
+    let git_commits = get_git_commits(git_repo, path, 3);
 
     Some(PreviewContent {
       lines,
@@ -193,6 +231,9 @@ impl PreviewState {
       line_count: data.len().div_ceil(16),
       file_size,
       extension: get_extension(path),
+      metadata,
+      image_metadata: None,
+      git_commits,
     })
   }
 
@@ -206,6 +247,9 @@ impl PreviewState {
       line_count: summary.file_count + summary.dir_count,
       file_size: summary.total_size,
       extension: String::new(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
     })
   }
 
@@ -238,6 +282,9 @@ impl PreviewState {
                 line_count: 0,
                 file_size: 0,
                 extension: String::new(),
+                metadata: None,
+                image_metadata: None,
+                git_commits: Vec::new(),
               };
               self.insert_cache(path.clone(), content);
             }
@@ -418,6 +465,9 @@ mod tests {
         line_count: 0,
         file_size: 0,
         extension: String::new(),
+        metadata: None,
+        image_metadata: None,
+        git_commits: Vec::new(),
       };
       state.insert_cache(path, content);
     }

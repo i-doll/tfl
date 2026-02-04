@@ -40,6 +40,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Home shortcut** — jump to home directory with `~` or `gh`
 - **Configurable keybindings** via TOML config file
 - **Live config reload** — changes to `config.toml`, `apps.toml`, and `favorites` are picked up automatically without restarting
+- **File metadata panel** — size, modified time, permissions, line count, git commit history
+- **Image EXIF data** — camera model, ISO, exposure for photos with embedded metadata
 
 ## Keybindings
 
@@ -159,6 +161,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `dirs` | XDG config directory resolution |
 | `open` | Open files with system default application |
 | `notify` | OS-native file watching for live config reload |
+| `git2` | Native Git repository operations (status, commits, branch info) |
+| `kamadak-exif` | EXIF metadata extraction from images |
 
 ## Installation
 
@@ -303,6 +307,7 @@ src/
   config.rs        Config loading, key binding parsing, defaults
   favorites.rs     Favorites persistence (load/save/add/remove)
   opener.rs        Open-with app detection and launching
+  git.rs           Git operations via libgit2 (status, branch, commits)
   fs/
     entry.rs       FileEntry struct (path, metadata, depth)
     ops.rs         Filesystem helpers (copy, unique path)
@@ -313,6 +318,7 @@ src/
     image.rs       Async image loading (Kitty protocol)
     hex.rs         Hex dump for binary files
     directory.rs   Directory summary (file counts, sizes)
+    metadata.rs    File/image metadata extraction, formatting
   ui/
     mod.rs         Layout: header, tree/preview split, status bar
     favorites.rs   Favorites picker floating overlay

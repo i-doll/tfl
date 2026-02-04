@@ -4,6 +4,7 @@ mod config;
 mod event;
 mod favorites;
 mod fs;
+mod git;
 mod icons;
 mod opener;
 mod preview;
@@ -136,7 +137,7 @@ If no path is given, opens the current directory."
   // Trigger initial preview
   if !app.tree.entries.is_empty() {
     let path = app.tree.entries[0].path.clone();
-    app.preview.request_preview(&path, app.picker.as_ref());
+    app.preview.request_preview(&path, app.picker.as_ref(), app.tree.git_repo());
   }
 
   if !config_errors.is_empty() {
@@ -194,7 +195,7 @@ If no path is given, opens the current directory."
       // Re-request preview for currently selected file
       if let Some(entry) = app.selected_entry() {
         let path = entry.path.clone();
-        app.preview.request_preview(&path, app.picker.as_ref());
+        app.preview.request_preview(&path, app.picker.as_ref(), app.tree.git_repo());
       }
     }
 
