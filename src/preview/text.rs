@@ -2,7 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, ThemeSet};
-use syntect::parsing::SyntaxSet;
+use syntect::parsing::{SyntaxDefinition, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
 pub struct SyntaxHighlighter {
@@ -12,8 +12,17 @@ pub struct SyntaxHighlighter {
 
 impl SyntaxHighlighter {
   pub fn new() -> Self {
+    let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+    let toml_syntax = SyntaxDefinition::load_from_str(
+      include_str!("syntaxes/TOML.sublime-syntax"),
+      true,
+      Some("TOML"),
+    )
+    .expect("valid TOML syntax definition");
+    builder.add(toml_syntax);
+
     Self {
-      syntax_set: SyntaxSet::load_defaults_newlines(),
+      syntax_set: builder.build(),
       theme_set: ThemeSet::load_defaults(),
     }
   }
@@ -85,6 +94,19 @@ mod tests {
     assert_eq!(lines.len(), 1);
     // First span is line number
     assert!(lines[0].spans[0].content.contains('1'));
+  }
+
+  #[test]
+  fn test_highlight_toml() {
+    let h = SyntaxHighlighter::new();
+    let toml_content = "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n";
+    let lines = h.highlight(toml_content, "toml");
+    assert_eq!(lines.len(), 3);
+    // Each line should have more than 2 spans (line number + multiple styled spans)
+    // Plain text fallback would produce exactly 2 spans per line (line number + raw text)
+    for line in &lines {
+      assert!(line.spans.len() > 2, "TOML should produce multiple styled spans, got: {:?}", line.spans);
+    }
   }
 
   #[test]
