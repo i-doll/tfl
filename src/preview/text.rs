@@ -19,9 +19,9 @@ impl SyntaxHighlighter {
   }
 
   pub fn highlight<'a>(&self, content: &str, extension: &str) -> Vec<Line<'a>> {
-    let syntax = self
-      .syntax_set
-      .find_syntax_by_extension(extension)
+    let syntax = parse_vim_modeline(content)
+      .and_then(|ft| self.syntax_set.find_syntax_by_token(&ft))
+      .or_else(|| self.syntax_set.find_syntax_by_extension(extension))
       .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
     let theme = &self.theme_set.themes["base16-ocean.dark"];
@@ -61,6 +61,43 @@ impl SyntaxHighlighter {
   }
 }
 
+fn extract_ft(line: &str) -> Option<String> {
+  let marker_pos = line.find("vim:").map(|p| (p, 4))
+    .or_else(|| line.find("vi:").map(|p| (p, 3)))?;
+  let after_marker = &line[marker_pos.0 + marker_pos.1..];
+  let trimmed = after_marker.trim_start();
+  let body = if trimmed.starts_with("set ") || trimmed.starts_with("set\t") {
+    trimmed[4..].trim_start()
+  } else {
+    trimmed
+  };
+  for token in body.split(|c: char| c.is_whitespace() || c == ':') {
+    if let Some(val) = token.strip_prefix("ft=").or_else(|| token.strip_prefix("filetype="))
+      && !val.is_empty()
+    {
+      return Some(val.to_string());
+    }
+  }
+  None
+}
+
+fn parse_vim_modeline(content: &str) -> Option<String> {
+  let lines: Vec<&str> = content.lines().collect();
+  let len = lines.len();
+  let first = lines.iter().take(5);
+  let last = if len > 5 {
+    lines[len.saturating_sub(5)..].iter()
+  } else {
+    [].iter()
+  };
+  for line in first.chain(last) {
+    if let Some(ft) = extract_ft(line) {
+      return Some(ft);
+    }
+  }
+  None
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -97,5 +134,65 @@ mod tests {
     assert!(lines[0].spans[0].content.trim().starts_with('1'));
     // Line 15 should have "  15 " prefix
     assert!(lines[14].spans[0].content.trim().starts_with("15"));
+  }
+
+  #[test]
+  fn test_parse_modeline_ft() {
+    let content = "#!/bin/bash\n# vim: ft=python\nprint('hello')\n";
+    assert_eq!(parse_vim_modeline(content), Some("python".to_string()));
+  }
+
+  #[test]
+  fn test_parse_modeline_set_ft() {
+    let content = "// vim: set ft=javascript:\nvar x = 1;\n";
+    assert_eq!(parse_vim_modeline(content), Some("javascript".to_string()));
+  }
+
+  #[test]
+  fn test_parse_modeline_vi_filetype() {
+    let content = "# vi: filetype=yaml\nkey: value\n";
+    assert_eq!(parse_vim_modeline(content), Some("yaml".to_string()));
+  }
+
+  #[test]
+  fn test_parse_modeline_no_spaces() {
+    let content = "# vim:ft=sh\necho hello\n";
+    assert_eq!(parse_vim_modeline(content), Some("sh".to_string()));
+  }
+
+  #[test]
+  fn test_parse_modeline_last_lines() {
+    let mut lines: Vec<String> = (1..=18).map(|i| format!("line {i}")).collect();
+    lines.push("# vim: ft=python".to_string());
+    lines.push("# end".to_string());
+    let content = lines.join("\n");
+    assert_eq!(parse_vim_modeline(&content), Some("python".to_string()));
+  }
+
+  #[test]
+  fn test_parse_modeline_none() {
+    let content = "just some text\nno modeline here\n";
+    assert_eq!(parse_vim_modeline(content), None);
+  }
+
+  #[test]
+  fn test_parse_modeline_middle_ignored() {
+    let mut lines: Vec<String> = (1..=6).map(|i| format!("line {i}")).collect();
+    lines.push("# vim: ft=python".to_string());
+    lines.extend((8..=14).map(|i| format!("line {i}")));
+    let content = lines.join("\n");
+    assert_eq!(parse_vim_modeline(&content), None);
+  }
+
+  #[test]
+  fn test_highlight_modeline_overrides_ext() {
+    let h = SyntaxHighlighter::new();
+    let content = "# vim: ft=python\ndef hello():\n  pass\n";
+    let lines_py = h.highlight(content, "txt");
+    let lines_txt = h.highlight("def hello():\n  pass\n", "txt");
+    // Python-highlighted version should have more spans (keywords colored)
+    let py_spans: usize = lines_py.iter().map(|l| l.spans.len()).sum();
+    let txt_spans: usize = lines_txt.iter().map(|l| l.spans.len()).sum();
+    assert!(py_spans > txt_spans, "modeline should trigger Python highlighting");
   }
 }
