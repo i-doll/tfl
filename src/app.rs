@@ -292,6 +292,7 @@ impl App {
       self.search_query.clear();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
+      self.input_mode = InputMode::Normal;
       self.preview.invalidate();
       self.update_preview();
     }
