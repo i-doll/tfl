@@ -406,9 +406,34 @@ impl FileTree {
     Ok(())
   }
 
+  /// Find the index of the parent directory for an entry at the given index.
+  pub fn find_parent_index(&self, index: usize) -> Option<usize> {
+    if index >= self.entries.len() {
+      return None;
+    }
+    let target_depth = self.entries[index].depth;
+    if target_depth == 0 {
+      return None;
+    }
+    (0..index)
+      .rev()
+      .find(|&i| self.entries[i].is_dir && self.entries[i].depth == target_depth - 1)
+  }
+
   pub fn go_parent(&mut self) -> Result<Option<PathBuf>> {
     if let Some(parent) = self.root.parent().map(|p| p.to_path_buf()) {
       let old_root = self.root.clone();
+
+      // Remember expanded dirs - they'll be re-expanded after we go up
+      let mut expanded: Vec<PathBuf> = self
+        .entries
+        .iter()
+        .filter(|e| e.expanded)
+        .map(|e| e.path.clone())
+        .collect();
+      // The old root itself should be expanded when we go up
+      expanded.push(old_root.clone());
+
       self.root = parent;
       let (statuses, info) = query_git_status(&self.root);
       self.git_statuses = statuses;
@@ -416,6 +441,16 @@ impl FileTree {
       let root = self.root.clone();
       self.entries.clear();
       self.load_dir(&root, 0)?;
+
+      // Re-expand old root and all previously expanded dirs
+      let mut i = 0;
+      while i < self.entries.len() {
+        if self.entries[i].is_dir && expanded.contains(&self.entries[i].path) {
+          self.expand(i)?;
+        }
+        i += 1;
+      }
+
       propagate_git_status(&mut self.entries);
       Ok(Some(old_root))
     } else {
@@ -537,6 +572,28 @@ mod tests {
     let old = tree.go_parent().unwrap();
     assert_eq!(old, Some(child));
     assert_eq!(tree.root, dir);
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_go_parent_preserves_expanded() {
+    let dir = setup_test_dir();
+    // Start inside alpha_dir which has inner.txt
+    let child = dir.join("alpha_dir");
+    let mut tree = FileTree::new(child.clone()).unwrap();
+    assert_eq!(tree.root, child);
+
+    // Go up to parent
+    tree.go_parent().unwrap();
+    assert_eq!(tree.root, dir);
+
+    // alpha_dir should now be expanded (since we came from there)
+    let alpha = tree.entries.iter().find(|e| e.name == "alpha_dir").unwrap();
+    assert!(alpha.expanded);
+
+    // inner.txt should be visible (child of expanded alpha_dir)
+    assert!(tree.entries.iter().any(|e| e.name == "inner.txt"));
+
     cleanup(&dir);
   }
 
@@ -860,5 +917,33 @@ mod tests {
     assert_eq!(file.git_status.unstaged, Some(GitFileStatus::Modified));
 
     let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_find_parent_index() {
+    let dir = setup_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+
+    // Expand alpha_dir (index 0)
+    tree.toggle_expand(0).unwrap();
+    // Tree structure now:
+    // 0: alpha_dir (depth 0)
+    // 1: inner.txt (depth 1)
+    // 2: beta_dir (depth 0)
+    // 3: charlie.txt (depth 0)
+    // 4: delta.rs (depth 0)
+
+    // inner.txt at index 1 should have parent alpha_dir at index 0
+    assert_eq!(tree.find_parent_index(1), Some(0));
+
+    // Root-level items should return None
+    assert_eq!(tree.find_parent_index(0), None);
+    assert_eq!(tree.find_parent_index(2), None);
+    assert_eq!(tree.find_parent_index(3), None);
+
+    // Out of bounds should return None
+    assert_eq!(tree.find_parent_index(100), None);
+
+    cleanup(&dir);
   }
 }

@@ -562,17 +562,31 @@ impl App {
 
   fn go_parent_or_collapse(&mut self) -> Result<()> {
     let entries = self.visible_entries();
-    if let Some(&idx) = entries.get(self.cursor)
-      && self.tree.entries[idx].is_dir && self.tree.entries[idx].expanded {
-        self.tree.toggle_expand(idx)?;
+    if let Some(&idx) = entries.get(self.cursor) {
+      let entry = &self.tree.entries[idx];
+
+      // Case 1: Nested item (depth > 0) -> move cursor to parent, keep tree expanded
+      if entry.depth > 0
+        && let Some(parent_idx) = self.tree.find_parent_index(idx)
+        && let Some(cursor_pos) = entries.iter().position(|&i| i == parent_idx)
+      {
+        self.cursor = cursor_pos;
+        self.adjust_scroll();
         self.update_preview();
         return Ok(());
       }
 
-    // Go to parent directory
+      // Case 2: Root-level expanded directory -> collapse it
+      if entry.is_dir && entry.expanded {
+        self.tree.toggle_expand(idx)?;
+        self.update_preview();
+        return Ok(());
+      }
+    }
+
+    // Case 3: At root level or parent not visible -> change tree root
     if let Some(old_root) = self.tree.go_parent()? {
       self.search_query.clear();
-      // Try to position cursor on the old root dir
       self.cursor = self
         .tree
         .entries
@@ -1886,6 +1900,124 @@ mod tests {
     if app.favorites.len() == 0 {
       assert_eq!(app.favorites_cursor, 0);
     }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_move_left_to_parent_in_tree() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Expand aaa_dir
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+    app.update(Action::MoveRight).unwrap();
+    assert!(app.tree.entries[0].expanded);
+
+    // Move cursor to inner.txt (depth 1)
+    app.update(Action::MoveDown).unwrap();
+    assert_eq!(app.cursor, 1);
+    assert_eq!(app.tree.entries[1].name, "inner.txt");
+    assert_eq!(app.tree.entries[1].depth, 1);
+
+    // Remember the root before MoveLeft
+    let root_before = app.tree.root.clone();
+
+    // MoveLeft should move cursor to parent dir (aaa_dir), NOT change root
+    app.update(Action::MoveLeft).unwrap();
+    assert_eq!(app.cursor, 0);
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+    assert_eq!(app.tree.root, root_before); // Root unchanged!
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_move_left_on_nested_collapsed_dir() {
+    let dir = setup_test_dir();
+    // Create nested structure: aaa_dir/subdir/file.txt
+    fs::create_dir_all(dir.join("aaa_dir").join("subdir")).unwrap();
+    fs::write(dir.join("aaa_dir").join("subdir").join("file.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Expand aaa_dir
+    app.update(Action::MoveRight).unwrap();
+    assert!(app.tree.entries[0].expanded);
+
+    // Move to subdir (depth 1, collapsed)
+    app.update(Action::MoveDown).unwrap();
+    assert_eq!(app.tree.entries[app.visible_entries()[app.cursor]].name, "subdir");
+    assert!(!app.tree.entries[app.visible_entries()[app.cursor]].expanded);
+
+    let root_before = app.tree.root.clone();
+
+    // MoveLeft on collapsed nested dir should move cursor to parent
+    app.update(Action::MoveLeft).unwrap();
+    assert_eq!(app.cursor, 0);
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+    assert_eq!(app.tree.root, root_before); // Root unchanged!
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_move_left_with_search_parent_hidden() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Expand aaa_dir
+    app.update(Action::MoveRight).unwrap();
+
+    // Set search filter that hides the parent dir but shows inner.txt
+    app.search_query = "inner".to_string();
+    let visible = app.visible_entries();
+    // Only inner.txt should be visible
+    assert_eq!(visible.len(), 1);
+    assert_eq!(app.tree.entries[visible[0]].name, "inner.txt");
+    app.cursor = 0;
+
+    // MoveLeft should fall through to go_parent since parent is not visible
+    app.update(Action::MoveLeft).unwrap();
+    // Search query should be cleared and root should change to parent
+    assert!(app.search_query.is_empty());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_move_left_on_expanded_nested_dir_keeps_expanded() {
+    let dir = setup_test_dir();
+    // Create nested structure: aaa_dir/subdir/file.txt
+    fs::create_dir_all(dir.join("aaa_dir").join("subdir")).unwrap();
+    fs::write(dir.join("aaa_dir").join("subdir").join("file.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Expand aaa_dir
+    app.update(Action::MoveRight).unwrap();
+    assert!(app.tree.entries[0].expanded);
+
+    // Move to subdir and expand it
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveRight).unwrap();
+    let subdir_idx = app.visible_entries()[app.cursor];
+    assert_eq!(app.tree.entries[subdir_idx].name, "subdir");
+    assert!(app.tree.entries[subdir_idx].expanded);
+
+    let root_before = app.tree.root.clone();
+
+    // MoveLeft on expanded nested dir should move cursor to parent, NOT collapse
+    app.update(Action::MoveLeft).unwrap();
+    assert_eq!(app.cursor, 0);
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+    assert_eq!(app.tree.root, root_before);
+
+    // subdir should still be expanded (context preserved)
+    let subdir_entry = app.tree.entries.iter().find(|e| e.name == "subdir").unwrap();
+    assert!(subdir_entry.expanded);
+    // file.txt should still be visible
+    assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
     cleanup_test_dir(&dir);
   }
 }
