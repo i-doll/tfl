@@ -43,6 +43,7 @@ When adding or changing features, keybinds, or preview types, update README.md:
 - **Action-based event system**: `Event` → `map_key()` → `Action` → `App::update()`. All key handling goes through the action enum.
 - **Preview cache/debounce**: `PreviewState` has an LRU cache (10 entries) and 80ms debounce. Images load asynchronously via `mpsc`.
 - **Suspend/resume**: Editor, Claude, and shell integrations drop the terminal, spawn the process, then restore.
+- **Config reload**: `reload_config()` in `main.rs` selectively copies fields from the new config into the old one. When adding a new config field, add it to both `Config::apply_toml_str()` and `reload_config()`; if `App` caches the value, also update `App::apply_config()`.
 
 ## Norwegian keyboard
 
