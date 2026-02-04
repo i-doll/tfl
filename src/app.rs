@@ -40,6 +40,7 @@ pub struct App {
   pub should_quit: bool,
   pub should_suspend: Option<SuspendAction>,
   pub status_message: Option<String>,
+  pub status_ticks: u8,
   pub viewport_height: usize,
   pub tree_scroll_offset: usize,
   pub clipboard: Clipboard,
@@ -51,6 +52,8 @@ pub struct App {
   pub open_with_apps: Vec<OpenApp>,
   pub open_with_cursor: usize,
   pub custom_apps: Vec<OpenApp>,
+  pub error_messages: Vec<String>,
+  pub wrote_config: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +82,7 @@ impl App {
       should_quit: false,
       should_suspend: None,
       status_message: None,
+      status_ticks: 0,
       viewport_height: 20,
       tree_scroll_offset: 0,
       clipboard: Clipboard { paths: Vec::new(), op: None },
@@ -90,6 +94,8 @@ impl App {
       open_with_apps: Vec::new(),
       open_with_cursor: 0,
       custom_apps: config.custom_apps.clone(),
+      error_messages: Vec::new(),
+      wrote_config: false,
     })
   }
 
@@ -179,7 +185,7 @@ impl App {
           self.prompt_input.clear();
           self.prompt_cursor = 0;
           self.input_mode = InputMode::Prompt;
-          self.status_message = Some(format!("Delete {name}? (y/N)"));
+          self.set_status(format!("Delete {name}? (y/N)"));
         }
       }
       Action::RenameStart => {
@@ -209,7 +215,7 @@ impl App {
               self.execute_delete()?;
             } else {
               self.cancel_prompt();
-              self.status_message = Some("Delete cancelled".to_string());
+              self.set_status("Delete cancelled".to_string());
             }
           }
           Some(_) => {
@@ -266,7 +272,7 @@ impl App {
           Some(PromptKind::NewDir) => self.execute_new_dir()?,
           Some(PromptKind::ConfirmDelete) => {
             self.cancel_prompt();
-            self.status_message = Some("Delete cancelled".to_string());
+            self.set_status("Delete cancelled".to_string());
           }
           None => {}
         }
@@ -294,6 +300,10 @@ impl App {
       Action::OpenWithClose => {
         self.input_mode = InputMode::Normal;
       }
+      Action::ErrorClose => {
+        self.error_messages.clear();
+        self.input_mode = InputMode::Normal;
+      }
       Action::Tick => {
         self.preview.check_image_loaded();
       }
@@ -318,15 +328,16 @@ impl App {
   fn favorites_add(&mut self) {
     let root = self.tree.root.clone();
     if self.favorites.contains(&root) {
-      self.status_message = Some("Already in favorites".to_string());
+      self.set_status("Already in favorites".to_string());
       return;
     }
     self.favorites.add(root);
     if let Err(e) = self.favorites.save() {
-      self.status_message = Some(format!("Save favorites failed: {e}"));
+      self.set_status(format!("Save favorites failed: {e}"));
       return;
     }
-    self.status_message = Some("Added to favorites".to_string());
+    self.wrote_config = true;
+    self.set_status("Added to favorites".to_string());
   }
 
   fn favorites_open(&mut self) {
@@ -361,7 +372,7 @@ impl App {
         self.update_preview();
         self.input_mode = InputMode::Normal;
       } else {
-        self.status_message = Some("Directory no longer exists".to_string());
+        self.set_status("Directory no longer exists".to_string());
       }
     }
     Ok(())
@@ -371,9 +382,10 @@ impl App {
     if self.favorites_cursor < self.favorites.len() {
       self.favorites.remove(self.favorites_cursor);
       if let Err(e) = self.favorites.save() {
-        self.status_message = Some(format!("Save favorites failed: {e}"));
+        self.set_status(format!("Save favorites failed: {e}"));
         return;
       }
+      self.wrote_config = true;
       if self.favorites.len() > 0 {
         self.favorites_cursor = self.favorites_cursor.min(self.favorites.len() - 1);
       } else {
@@ -385,15 +397,16 @@ impl App {
   fn favorites_add_current(&mut self) {
     let root = self.tree.root.clone();
     if self.favorites.contains(&root) {
-      self.status_message = Some("Already in favorites".to_string());
+      self.set_status("Already in favorites".to_string());
       return;
     }
     self.favorites.add(root);
     if let Err(e) = self.favorites.save() {
-      self.status_message = Some(format!("Save favorites failed: {e}"));
+      self.set_status(format!("Save favorites failed: {e}"));
       return;
     }
-    self.status_message = Some("Added to favorites".to_string());
+    self.wrote_config = true;
+    self.set_status("Added to favorites".to_string());
   }
 
   fn open_default_action(&mut self) -> Result<()> {
@@ -406,10 +419,10 @@ impl App {
       match opener::open_default(&path) {
         Ok(()) => {
           let name = &self.tree.entries[idx].name;
-          self.status_message = Some(format!("Opened: {name}"));
+          self.set_status(format!("Opened: {name}"));
         }
         Err(e) => {
-          self.status_message = Some(e);
+          self.set_status(e);
         }
       }
     }
@@ -452,7 +465,7 @@ impl App {
       // Default Application
       self.input_mode = InputMode::Normal;
       match opener::open_default(&path) {
-        Ok(()) => self.status_message = Some(format!("Opened: {name}")),
+        Ok(()) => self.set_status(format!("Opened: {name}")),
         Err(e) => self.status_message = Some(e),
       }
     } else {
@@ -463,7 +476,7 @@ impl App {
           self.should_suspend = Some(SuspendAction::OpenWith(app.command.clone(), path));
         } else {
           match opener::open_with_app(&path, &app) {
-            Ok(()) => self.status_message = Some(format!("Opened with {}", app.name)),
+            Ok(()) => self.set_status(format!("Opened with {}", app.name)),
             Err(e) => self.status_message = Some(e),
           }
         }
@@ -600,7 +613,7 @@ impl App {
         paths: vec![path],
         op: Some(ClipboardOp::Cut),
       };
-      self.status_message = Some(format!("Cut: {name}"));
+      self.set_status(format!("Cut: {name}"));
     }
   }
 
@@ -612,19 +625,19 @@ impl App {
         paths: vec![path],
         op: Some(ClipboardOp::Copy),
       };
-      self.status_message = Some(format!("Copied: {name}"));
+      self.set_status(format!("Copied: {name}"));
     }
   }
 
   fn paste_clipboard(&mut self) -> Result<()> {
     let Some(op) = self.clipboard.op else {
-      self.status_message = Some("Nothing to paste".to_string());
+      self.set_status("Nothing to paste".to_string());
       return Ok(());
     };
 
     let paths = self.clipboard.paths.clone();
     if paths.is_empty() {
-      self.status_message = Some("Nothing to paste".to_string());
+      self.set_status("Nothing to paste".to_string());
       return Ok(());
     }
 
@@ -633,7 +646,7 @@ impl App {
 
     for source in &paths {
       if !source.exists() {
-        self.status_message = Some(format!("Source no longer exists: {}", source.display()));
+        self.set_status(format!("Source no longer exists: {}", source.display()));
         continue;
       }
 
@@ -661,7 +674,7 @@ impl App {
                 }
               }
               Err(e) => {
-                self.status_message = Some(format!("Paste failed: {e}"));
+                self.set_status(format!("Paste failed: {e}"));
                 self.tree.reload()?;
                 return Ok(());
               }
@@ -670,7 +683,7 @@ impl App {
         }
         ClipboardOp::Copy => {
           if let Err(e) = ops::copy_path(source, &dest) {
-            self.status_message = Some(format!("Paste failed: {e}"));
+            self.set_status(format!("Paste failed: {e}"));
             self.tree.reload()?;
             return Ok(());
           }
@@ -689,7 +702,7 @@ impl App {
       self.reposition_cursor_to(&dest);
     }
 
-    self.status_message = Some("Pasted".to_string());
+    self.set_status("Pasted".to_string());
     self.preview.invalidate();
     self.update_preview();
     Ok(())
@@ -723,13 +736,13 @@ impl App {
         } else {
           self.cursor = self.cursor.min(len - 1);
         }
-        self.status_message = Some(format!("Deleted: {}", entry.name));
+        self.set_status(format!("Deleted: {}", entry.name));
         self.preview.invalidate();
         self.update_preview();
       }
       Err(e) => {
         self.cancel_prompt();
-        self.status_message = Some(format!("Delete failed: {e}"));
+        self.set_status(format!("Delete failed: {e}"));
       }
     }
     Ok(())
@@ -739,7 +752,7 @@ impl App {
     let new_name = self.prompt_input.trim().to_string();
     if new_name.is_empty() {
       self.cancel_prompt();
-      self.status_message = Some("Name cannot be empty".to_string());
+      self.set_status("Name cannot be empty".to_string());
       return Ok(());
     }
 
@@ -754,7 +767,7 @@ impl App {
 
     if new_path.exists() && new_path != entry.path {
       self.cancel_prompt();
-      self.status_message = Some(format!("{new_name} already exists"));
+      self.set_status(format!("{new_name} already exists"));
       return Ok(());
     }
 
@@ -769,13 +782,13 @@ impl App {
         self.cancel_prompt();
         self.tree.reload()?;
         self.reposition_cursor_to(&new_path);
-        self.status_message = Some(format!("Renamed to {new_name}"));
+        self.set_status(format!("Renamed to {new_name}"));
         self.preview.invalidate();
         self.update_preview();
       }
       Err(e) => {
         self.cancel_prompt();
-        self.status_message = Some(format!("Rename failed: {e}"));
+        self.set_status(format!("Rename failed: {e}"));
       }
     }
     Ok(())
@@ -785,7 +798,7 @@ impl App {
     let name = self.prompt_input.trim().to_string();
     if name.is_empty() {
       self.cancel_prompt();
-      self.status_message = Some("Name cannot be empty".to_string());
+      self.set_status("Name cannot be empty".to_string());
       return Ok(());
     }
 
@@ -794,7 +807,7 @@ impl App {
 
     if new_path.exists() {
       self.cancel_prompt();
-      self.status_message = Some(format!("{name} already exists"));
+      self.set_status(format!("{name} already exists"));
       return Ok(());
     }
 
@@ -803,13 +816,13 @@ impl App {
         self.cancel_prompt();
         self.tree.reload()?;
         self.reposition_cursor_to(&new_path);
-        self.status_message = Some(format!("Created: {name}"));
+        self.set_status(format!("Created: {name}"));
         self.preview.invalidate();
         self.update_preview();
       }
       Err(e) => {
         self.cancel_prompt();
-        self.status_message = Some(format!("Create failed: {e}"));
+        self.set_status(format!("Create failed: {e}"));
       }
     }
     Ok(())
@@ -819,7 +832,7 @@ impl App {
     let name = self.prompt_input.trim().to_string();
     if name.is_empty() {
       self.cancel_prompt();
-      self.status_message = Some("Name cannot be empty".to_string());
+      self.set_status("Name cannot be empty".to_string());
       return Ok(());
     }
 
@@ -828,7 +841,7 @@ impl App {
 
     if new_path.exists() {
       self.cancel_prompt();
-      self.status_message = Some(format!("{name} already exists"));
+      self.set_status(format!("{name} already exists"));
       return Ok(());
     }
 
@@ -837,13 +850,13 @@ impl App {
         self.cancel_prompt();
         self.tree.reload()?;
         self.reposition_cursor_to(&new_path);
-        self.status_message = Some(format!("Created dir: {name}"));
+        self.set_status(format!("Created dir: {name}"));
         self.preview.invalidate();
         self.update_preview();
       }
       Err(e) => {
         self.cancel_prompt();
-        self.status_message = Some(format!("Create dir failed: {e}"));
+        self.set_status(format!("Create dir failed: {e}"));
       }
     }
     Ok(())
@@ -868,8 +881,8 @@ impl App {
     if let Some(entry) = self.selected_entry() {
       let path_str = entry.path.to_string_lossy().to_string();
       match clipboard_anywhere::set_clipboard(&path_str) {
-        Ok(_) => self.status_message = Some(format!("Yanked: {path_str}")),
-        Err(e) => self.status_message = Some(format!("Yank failed: {e}")),
+        Ok(_) => self.set_status(format!("Yanked: {path_str}")),
+        Err(e) => self.set_status(format!("Yank failed: {e}")),
       }
     }
   }
@@ -915,6 +928,29 @@ impl App {
       .filter(|(_, e)| e.name.to_lowercase().contains(&query))
       .map(|(i, _)| i)
       .collect()
+  }
+
+  pub fn set_status(&mut self, msg: String) {
+    self.status_message = Some(msg);
+    self.status_ticks = 20; // visible for ~2s at 100ms tick rate
+  }
+
+  pub fn show_error(&mut self, errors: Vec<String>) {
+    self.error_messages = errors;
+    self.input_mode = InputMode::Error;
+  }
+
+  pub fn apply_config(&mut self, config: &Config) {
+    self.custom_apps = config.custom_apps.clone();
+  }
+
+  pub fn reload_favorites(&mut self) {
+    self.favorites = Favorites::load();
+    if self.favorites.len() == 0 {
+      self.favorites_cursor = 0;
+    } else {
+      self.favorites_cursor = self.favorites_cursor.min(self.favorites.len() - 1);
+    }
   }
 
   pub fn handle_suspend(&mut self) -> Option<SuspendAction> {
@@ -1749,6 +1785,54 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Normal);
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::OpenWith(_, _))));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_updates_custom_apps() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.custom_apps.is_empty());
+
+    let mut c = cfg();
+    c.custom_apps = vec![OpenApp {
+      name: "TestApp".into(),
+      command: "testcmd".into(),
+      is_tui: false,
+      macos_app: None,
+    }];
+    app.apply_config(&c);
+    assert_eq!(app.custom_apps.len(), 1);
+    assert_eq!(app.custom_apps[0].name, "TestApp");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_reload_favorites_clamps_cursor() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Manually set cursor past what reload will return
+    app.favorites_cursor = 100;
+    app.reload_favorites();
+    if app.favorites.len() == 0 {
+      assert_eq!(app.favorites_cursor, 0);
+    } else {
+      assert!(app.favorites_cursor < app.favorites.len());
+    }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_reload_favorites_empty() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Clear favorites and set cursor
+    app.favorites_cursor = 5;
+    app.reload_favorites();
+    // With default test env, favorites file likely doesn't exist
+    if app.favorites.len() == 0 {
+      assert_eq!(app.favorites_cursor, 0);
+    }
     cleanup_test_dir(&dir);
   }
 }

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -6,26 +7,62 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent};
+use notify::{RecommendedWatcher, Watcher};
 
 use crate::action::Action;
 use crate::config::{Config, normalize_key_event};
+
+const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites"];
 
 pub enum Event {
   Key(KeyEvent),
   Resize(u16, u16),
   Tick,
+  ConfigChanged,
 }
 
 pub struct EventLoop {
   rx: mpsc::Receiver<Event>,
   paused: Arc<AtomicBool>,
+  _watcher: Option<RecommendedWatcher>,
 }
 
 impl EventLoop {
-  pub fn new(tick_rate: Duration) -> Self {
+  pub fn new(tick_rate: Duration, config_dir: Option<&Path>) -> Self {
     let (tx, rx) = mpsc::channel();
     let paused = Arc::new(AtomicBool::new(false));
     let thread_paused = paused.clone();
+
+    let watcher = config_dir.and_then(|dir| {
+      if !dir.is_dir() {
+        eprintln!("tfl: config dir does not exist: {}", dir.display());
+        return None;
+      }
+      let watch_tx = tx.clone();
+      let mut watcher = match notify::recommended_watcher(move |res: std::result::Result<notify::Event, notify::Error>| {
+        if let Ok(ev) = res {
+          let dominated = ev.paths.iter().any(|p| {
+            p.file_name()
+              .and_then(|f| f.to_str())
+              .is_some_and(|name| WATCHED_FILES.contains(&name))
+          });
+          if dominated {
+            let _ = watch_tx.send(Event::ConfigChanged);
+          }
+        }
+      }) {
+        Ok(w) => w,
+        Err(e) => {
+          eprintln!("tfl: failed to create file watcher: {e}");
+          return None;
+        }
+      };
+      if let Err(e) = watcher.watch(dir, notify::RecursiveMode::NonRecursive) {
+        eprintln!("tfl: failed to watch {}: {e}", dir.display());
+        return None;
+      }
+      Some(watcher)
+    });
 
     thread::spawn(move || loop {
       if thread_paused.load(Ordering::Relaxed) {
@@ -51,16 +88,22 @@ impl EventLoop {
       }
     });
 
-    Self { rx, paused }
+    Self { rx, paused, _watcher: watcher }
   }
 
   pub fn pause(&self) {
     self.paused.store(true, Ordering::Relaxed);
   }
 
-  pub fn resume(&self) {
+  pub fn resume(&self) -> bool {
     self.paused.store(false, Ordering::Relaxed);
-    while self.rx.try_recv().is_ok() {}
+    let mut config_changed = false;
+    while let Ok(ev) = self.rx.try_recv() {
+      if matches!(ev, Event::ConfigChanged) {
+        config_changed = true;
+      }
+    }
+    config_changed
   }
 
   pub fn next(&self) -> Result<Event> {
@@ -78,6 +121,7 @@ pub enum InputMode {
   Prompt,
   Favorites,
   OpenWith,
+  Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +176,10 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Char('k') | KeyCode::Up => Action::OpenWithUp,
       KeyCode::Enter => Action::OpenWithSelect,
       KeyCode::Esc | KeyCode::Char('q') => Action::OpenWithClose,
+      _ => Action::None,
+    },
+    InputMode::Error => match key.code {
+      KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Action::ErrorClose,
       _ => Action::None,
     },
     InputMode::Normal => {
