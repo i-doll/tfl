@@ -70,6 +70,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `A` | Create new directory |
 | `e` | Open file in `$EDITOR` |
 | `c` | Open Claude Code in current directory |
+| `C` | Open Claude Code (alt mode — inverse of `claude_yolo` config) |
 | `s` | Open `$SHELL` in current directory |
 | `ø` | Shrink tree pane |
 | `æ` | Grow tree pane |
@@ -205,6 +206,7 @@ tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/
 [general]
 tree_ratio = 30       # initial tree pane width (percentage, default 30)
 tick_rate_ms = 100    # event loop tick rate in ms (default 100)
+claude_yolo = false   # if true, `c` launches Claude with --dangerously-skip-permissions (default false)
 
 [keys.normal]
 j = "move_down"
@@ -229,6 +231,7 @@ g = "g_press"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
+"shift+c" = "open_claude_alt"
 s = "open_shell"
 q = "quit"
 esc = "quit"
@@ -262,7 +265,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 

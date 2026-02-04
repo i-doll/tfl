@@ -48,6 +48,7 @@ pub struct Config {
   pub max_tree_ratio: u16,
   pub ratio_step: u16,
   pub tick_rate_ms: u64,
+  pub claude_yolo: bool,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
@@ -77,6 +78,7 @@ struct AppsFile {
 struct GeneralConfig {
   tree_ratio: Option<u16>,
   tick_rate_ms: Option<u64>,
+  claude_yolo: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -190,6 +192,7 @@ impl Config {
       max_tree_ratio: 60,
       ratio_step: 5,
       tick_rate_ms: 100,
+      claude_yolo: false,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       custom_apps: Vec::new(),
@@ -211,6 +214,9 @@ impl Config {
       }
       if let Some(tick) = general.tick_rate_ms {
         self.tick_rate_ms = tick;
+      }
+      if let Some(yolo) = general.claude_yolo {
+        self.claude_yolo = yolo;
       }
     }
 
@@ -275,6 +281,7 @@ g = "g_press"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
+"shift+c" = "open_claude_alt"
 s = "open_shell"
 q = "quit"
 esc = "quit"
@@ -535,6 +542,7 @@ mod tests {
       (KeyCode::Char('y'), n, Action::YankPath),
       (KeyCode::Char('e'), n, Action::OpenEditor),
       (KeyCode::Char('c'), n, Action::OpenClaude),
+      (KeyCode::Char('C'), n, Action::OpenClaudeAlt),
       (KeyCode::Char('s'), n, Action::OpenShell),
       (KeyCode::Delete, n, Action::DeleteFile),
       (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
@@ -916,6 +924,39 @@ command = "kak"
 "#;
     let config = Config::load_from_str(toml);
     assert!(config.custom_apps.is_empty());
+  }
+
+  #[test]
+  fn test_claude_yolo_default_false() {
+    let config = Config::default();
+    assert!(!config.claude_yolo);
+  }
+
+  #[test]
+  fn test_claude_yolo_parsed_true() {
+    let toml = r#"
+[general]
+claude_yolo = true
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(config.claude_yolo);
+  }
+
+  #[test]
+  fn test_claude_yolo_parsed_false() {
+    let toml = r#"
+[general]
+claude_yolo = false
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(!config.claude_yolo);
+  }
+
+  #[test]
+  fn test_default_c_binds_open_claude_alt() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('C'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::OpenClaudeAlt));
   }
 
   #[test]

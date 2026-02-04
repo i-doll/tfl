@@ -54,12 +54,13 @@ pub struct App {
   pub custom_apps: Vec<OpenApp>,
   pub error_messages: Vec<String>,
   pub wrote_config: bool,
+  pub claude_yolo: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum SuspendAction {
   Editor(PathBuf),
-  Claude(PathBuf),
+  Claude(PathBuf, bool),
   Shell(PathBuf),
   OpenWith(String, PathBuf),
 }
@@ -96,6 +97,7 @@ impl App {
       custom_apps: config.custom_apps.clone(),
       error_messages: Vec::new(),
       wrote_config: false,
+      claude_yolo: config.claude_yolo,
     })
   }
 
@@ -159,7 +161,11 @@ impl App {
       }
       Action::OpenClaude => {
         let dir = self.current_dir();
-        self.should_suspend = Some(SuspendAction::Claude(dir));
+        self.should_suspend = Some(SuspendAction::Claude(dir, self.claude_yolo));
+      }
+      Action::OpenClaudeAlt => {
+        let dir = self.current_dir();
+        self.should_suspend = Some(SuspendAction::Claude(dir, !self.claude_yolo));
       }
       Action::OpenShell => {
         let dir = self.current_dir();
@@ -942,6 +948,7 @@ impl App {
 
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
+    self.claude_yolo = config.claude_yolo;
   }
 
   pub fn reload_favorites(&mut self) {
@@ -963,8 +970,12 @@ impl App {
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
         Command::new(&editor).arg(path).status()?;
       }
-      SuspendAction::Claude(dir) => {
-        Command::new("claude").current_dir(dir).status()?;
+      SuspendAction::Claude(dir, yolo) => {
+        let mut cmd = Command::new("claude");
+        if *yolo {
+          cmd.arg("--dangerously-skip-permissions");
+        }
+        cmd.current_dir(dir).status()?;
       }
       SuspendAction::Shell(dir) => {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
@@ -1214,7 +1225,49 @@ mod tests {
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.update(Action::OpenClaude).unwrap();
     let suspend = app.handle_suspend();
-    assert!(matches!(suspend, Some(SuspendAction::Claude(_))));
+    assert!(matches!(suspend, Some(SuspendAction::Claude(_, false))));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_claude_alt_suspend() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::OpenClaudeAlt).unwrap();
+    let suspend = app.handle_suspend();
+    assert!(matches!(suspend, Some(SuspendAction::Claude(_, true))));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_claude_with_yolo_config() {
+    let dir = setup_test_dir();
+    let mut c = cfg();
+    c.claude_yolo = true;
+    let mut app = App::new(dir.clone(), None, &c).unwrap();
+
+    // OpenClaude should pass yolo=true when config is true
+    app.update(Action::OpenClaude).unwrap();
+    let suspend = app.handle_suspend();
+    assert!(matches!(suspend, Some(SuspendAction::Claude(_, true))));
+
+    // OpenClaudeAlt should pass yolo=false (inverse of config)
+    app.update(Action::OpenClaudeAlt).unwrap();
+    let suspend = app.handle_suspend();
+    assert!(matches!(suspend, Some(SuspendAction::Claude(_, false))));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_syncs_claude_yolo() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.claude_yolo);
+
+    let mut c = cfg();
+    c.claude_yolo = true;
+    app.apply_config(&c);
+    assert!(app.claude_yolo);
     cleanup_test_dir(&dir);
   }
 

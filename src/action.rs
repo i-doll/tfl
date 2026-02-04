@@ -20,6 +20,7 @@ pub enum Action {
   YankPath,
   OpenEditor,
   OpenClaude,
+  OpenClaudeAlt,
   OpenShell,
   ShrinkTree,
   GrowTree,
@@ -81,6 +82,7 @@ impl Action {
       "yank_path" => Some(Action::YankPath),
       "open_editor" => Some(Action::OpenEditor),
       "open_claude" => Some(Action::OpenClaude),
+      "open_claude_alt" => Some(Action::OpenClaudeAlt),
       "open_shell" => Some(Action::OpenShell),
       "shrink_tree" => Some(Action::ShrinkTree),
       "grow_tree" => Some(Action::GrowTree),
@@ -126,6 +128,7 @@ mod tests {
     assert_eq!(Action::from_name("yank_path"), Some(Action::YankPath));
     assert_eq!(Action::from_name("open_editor"), Some(Action::OpenEditor));
     assert_eq!(Action::from_name("open_claude"), Some(Action::OpenClaude));
+    assert_eq!(Action::from_name("open_claude_alt"), Some(Action::OpenClaudeAlt));
     assert_eq!(Action::from_name("open_shell"), Some(Action::OpenShell));
     assert_eq!(Action::from_name("shrink_tree"), Some(Action::ShrinkTree));
     assert_eq!(Action::from_name("grow_tree"), Some(Action::GrowTree));
