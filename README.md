@@ -39,6 +39,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Favorites** — save directories, jump to them from a picker overlay
 - **Home shortcut** — jump to home directory with `~` or `gh`
 - **Configurable keybindings** via TOML config file
+- **Live config reload** — changes to `config.toml`, `apps.toml`, and `favorites` are picked up automatically without restarting
 
 ## Keybindings
 
@@ -156,6 +157,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `toml` | TOML config file parsing |
 | `dirs` | XDG config directory resolution |
 | `open` | Open files with system default application |
+| `notify` | OS-native file watching for live config reload |
 
 ## Build
 
@@ -186,6 +188,8 @@ If no path is given, opens the current directory.
 ## Configuration
 
 tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/.config/tfl/config.toml`). General settings are optional — unspecified values keep their defaults. Key sections (`[keys.normal]`, `[keys.g_prefix]`) **replace** the defaults entirely when present, so include all bindings you want. Use `tfl --init` to get a starting config with all defaults.
+
+**Live reload:** Changes to `config.toml`, `apps.toml`, and `favorites` are detected automatically via OS-native file watchers (FSEvents on macOS, inotify on Linux). Keybindings, custom apps, and favorites update immediately — no restart required. Layout settings (`tree_ratio`, `tick_rate_ms`) are only applied at startup to preserve any manual adjustments during the session.
 
 ```toml
 [general]

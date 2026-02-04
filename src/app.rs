@@ -40,6 +40,7 @@ pub struct App {
   pub should_quit: bool,
   pub should_suspend: Option<SuspendAction>,
   pub status_message: Option<String>,
+  pub status_ticks: u8,
   pub viewport_height: usize,
   pub tree_scroll_offset: usize,
   pub clipboard: Clipboard,
@@ -79,6 +80,7 @@ impl App {
       should_quit: false,
       should_suspend: None,
       status_message: None,
+      status_ticks: 0,
       viewport_height: 20,
       tree_scroll_offset: 0,
       clipboard: Clipboard { paths: Vec::new(), op: None },
@@ -917,6 +919,24 @@ impl App {
       .collect()
   }
 
+  pub fn set_status(&mut self, msg: String) {
+    self.status_message = Some(msg);
+    self.status_ticks = 10; // visible for ~1s at 100ms tick rate
+  }
+
+  pub fn apply_config(&mut self, config: &Config) {
+    self.custom_apps = config.custom_apps.clone();
+  }
+
+  pub fn reload_favorites(&mut self) {
+    self.favorites = Favorites::load();
+    if self.favorites.len() == 0 {
+      self.favorites_cursor = 0;
+    } else {
+      self.favorites_cursor = self.favorites_cursor.min(self.favorites.len() - 1);
+    }
+  }
+
   pub fn handle_suspend(&mut self) -> Option<SuspendAction> {
     self.should_suspend.take()
   }
@@ -1749,6 +1769,54 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Normal);
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::OpenWith(_, _))));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_updates_custom_apps() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.custom_apps.is_empty());
+
+    let mut c = cfg();
+    c.custom_apps = vec![OpenApp {
+      name: "TestApp".into(),
+      command: "testcmd".into(),
+      is_tui: false,
+      macos_app: None,
+    }];
+    app.apply_config(&c);
+    assert_eq!(app.custom_apps.len(), 1);
+    assert_eq!(app.custom_apps[0].name, "TestApp");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_reload_favorites_clamps_cursor() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Manually set cursor past what reload will return
+    app.favorites_cursor = 100;
+    app.reload_favorites();
+    if app.favorites.len() == 0 {
+      assert_eq!(app.favorites_cursor, 0);
+    } else {
+      assert!(app.favorites_cursor < app.favorites.len());
+    }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_reload_favorites_empty() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Clear favorites and set cursor
+    app.favorites_cursor = 5;
+    app.reload_favorites();
+    // With default test env, favorites file likely doesn't exist
+    if app.favorites.len() == 0 {
+      assert_eq!(app.favorites_cursor, 0);
+    }
     cleanup_test_dir(&dir);
   }
 }

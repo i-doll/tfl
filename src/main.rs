@@ -103,7 +103,8 @@ If no path is given, opens the current directory."
     }
   }
 
-  let config = config::Config::load();
+  let mut config = config::Config::load();
+  let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
 
   // Detect Kitty protocol support BEFORE entering alternate screen
   let picker = Picker::from_query_stdio().ok();
@@ -138,7 +139,7 @@ If no path is given, opens the current directory."
     app.preview.request_preview(&path, app.picker.as_ref());
   }
 
-  let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms));
+  let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms), config_dir.as_deref());
 
   loop {
     terminal.draw(|frame| ui::draw(frame, &mut app, &config))?;
@@ -151,11 +152,18 @@ If no path is given, opens the current directory."
       Event::Resize(w, h) => {
         app.update(crate::action::Action::Resize(w, h))?;
       }
+      Event::ConfigChanged => {
+        reload_config(&mut config, &mut app);
+      }
       Event::Tick => {
         app.update(crate::action::Action::Tick)?;
-        // Clear status message after a tick (but not during prompts)
+        // Clear status message after it's been visible for a few ticks
         if app.input_mode == crate::event::InputMode::Normal {
-          app.status_message = None;
+          if app.status_ticks > 0 {
+            app.status_ticks -= 1;
+          } else {
+            app.status_message = None;
+          }
         }
       }
     }
@@ -165,7 +173,10 @@ If no path is given, opens the current directory."
       events.pause();
       restore_terminal()?;
       terminal = suspend_and_resume(terminal, &suspend)?;
-      events.resume();
+      let config_changed = events.resume();
+      if config_changed {
+        reload_config(&mut config, &mut app);
+      }
       app.tree.reload()?;
       app.preview.invalidate();
       // Re-request preview for currently selected file
@@ -194,6 +205,16 @@ fn restore_terminal() -> Result<()> {
   disable_raw_mode()?;
   execute!(io::stdout(), LeaveAlternateScreen)?;
   Ok(())
+}
+
+fn reload_config(config: &mut config::Config, app: &mut App) {
+  let new = config::Config::load();
+  config.normal_keys = new.normal_keys;
+  config.g_prefix_keys = new.g_prefix_keys;
+  config.custom_apps = new.custom_apps;
+  app.apply_config(config);
+  app.reload_favorites();
+  app.set_status("Config reloaded".to_string());
 }
 
 fn suspend_and_resume(
