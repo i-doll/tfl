@@ -5,13 +5,26 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer) {
-  let width = 60.min(area.width.saturating_sub(4));
+  let max_width = (area.width * 95 / 100).max(20);
+  let hint_len = " [Esc] dismiss".len() as u16;
+
+  // +3 = 1 leading space in content + 2 border columns
+  let content_width = messages
+    .iter()
+    .map(|m| m.len() as u16 + 1)
+    .max()
+    .unwrap_or(0)
+    .max(hint_len)
+    + 2;
+
+  let width = content_width.min(max_width);
   let inner_width = width.saturating_sub(2) as usize;
 
   // Estimate line count with word-wrapping
   let mut line_count: u16 = 0;
   for msg in messages {
-    line_count += ((msg.len() / inner_width.max(1)) as u16) + 1;
+    // +1 for the leading space we prepend
+    line_count += (((msg.len() + 1) / inner_width.max(1)) as u16) + 1;
   }
   // +2 for borders, +1 for hint line, +1 for blank line before hint
   let height = (line_count + 4).min(area.height.saturating_sub(2));
