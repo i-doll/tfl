@@ -1,3 +1,4 @@
+pub mod breadcrumb;
 pub mod chmod;
 pub mod error;
 pub mod favorites;
@@ -30,7 +31,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
     ])
     .split(area);
 
-  // Header
+  // Header with breadcrumb navigation
   render_header(app, chunks[0], frame.buffer_mut());
 
   // Main area: horizontal split
@@ -72,17 +73,55 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   }
 }
 
-fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
-  let path_str = app.tree.root.to_string_lossy();
-  let mut spans = vec![
-    Span::styled(" ", Style::default().fg(Color::Indexed(75))),
-    Span::styled(
-      path_str.to_string(),
+fn render_header(app: &mut App, area: Rect, buf: &mut Buffer) {
+  // Calculate available width for breadcrumbs (subtract git branch if present)
+  let git_branch_width = app.tree.git_info.branch.as_ref()
+    .map(|b| b.len() as u16 + 4) // "  " + branch
+    .unwrap_or(0);
+  let breadcrumb_width = area.width.saturating_sub(git_branch_width + 2); // +2 for padding
+
+  // Truncate breadcrumbs if needed
+  let (segments, truncated) = breadcrumb::truncate_breadcrumbs(
+    &app.breadcrumb_segments,
+    breadcrumb_width,
+  );
+  app.breadcrumb_truncated = truncated;
+
+  // Current segment is the last one (the current directory)
+  let current_segment = segments.len().saturating_sub(1);
+
+  let mut spans = vec![Span::styled(" ", Style::default().fg(Color::Indexed(75)))];
+
+  let separator = " > ";
+  let separator_style = Style::default().fg(Color::Indexed(240));
+  let ellipsis_style = Style::default().fg(Color::Indexed(240));
+
+  // Add ellipsis prefix if truncated and first segment doesn't start at 0
+  if truncated && segments.first().map(|s| s.start_col > 0).unwrap_or(false) {
+    spans.push(Span::styled("...", ellipsis_style));
+    spans.push(Span::styled(separator, separator_style));
+  }
+
+  for (i, segment) in segments.iter().enumerate() {
+    if i > 0 {
+      // Add ellipsis between first and last when truncated
+      if truncated && i == segments.len() - 1 && segments.len() == 2 {
+        spans.push(Span::styled(separator, separator_style));
+        spans.push(Span::styled("...", ellipsis_style));
+      }
+      spans.push(Span::styled(separator, separator_style));
+    }
+
+    let style = if i == current_segment {
       Style::default()
-        .fg(Color::Indexed(252))
-        .add_modifier(Modifier::BOLD),
-    ),
-  ];
+        .fg(Color::Indexed(75))
+        .add_modifier(Modifier::BOLD)
+    } else {
+      Style::default().fg(Color::Indexed(252))
+    };
+
+    spans.push(Span::styled(&segment.name, style));
+  }
 
   if let Some(ref branch) = app.tree.git_info.branch {
     spans.push(Span::styled("  ", Style::default().fg(Color::Indexed(114))));

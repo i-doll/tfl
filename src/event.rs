@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use notify::{RecommendedWatcher, Watcher};
 
 use crate::action::Action;
@@ -16,6 +16,7 @@ const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites"];
 
 pub enum Event {
   Key(KeyEvent),
+  Mouse(MouseEvent),
   Resize(u16, u16),
   Tick,
   ConfigChanged,
@@ -73,6 +74,14 @@ impl EventLoop {
         match event::read() {
           Ok(CrosstermEvent::Key(key)) => {
             if tx.send(Event::Key(key)).is_err() {
+              break;
+            }
+          }
+          Ok(CrosstermEvent::Mouse(mouse)) => {
+            // Only send mouse down events to avoid duplicates
+            if matches!(mouse.kind, MouseEventKind::Down(_))
+              && tx.send(Event::Mouse(mouse)).is_err()
+            {
               break;
             }
           }
@@ -144,6 +153,13 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       _ => Action::None,
     },
     InputMode::GPrefix => {
+      // Handle g + number for breadcrumb navigation (1-9)
+      if let KeyCode::Char(c) = key.code
+        && let Some(n) = c.to_digit(10)
+        && (1..=9).contains(&n)
+      {
+        return Action::BreadcrumbSelect((n - 1) as usize);
+      }
       let kb = normalize_key_event(key);
       config.g_prefix_keys.get(&kb).cloned().unwrap_or(Action::None)
     }
@@ -204,6 +220,14 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       config.normal_keys.get(&kb).cloned().unwrap_or(Action::None)
     }
   }
+}
+
+/// Maps a mouse click in the header row to a breadcrumb select action
+/// Returns None if the click is not on a breadcrumb segment
+pub fn map_breadcrumb_click(col: u16, segments: &[crate::ui::breadcrumb::BreadcrumbSegment]) -> Option<Action> {
+  // Account for the leading space in the header
+  let adjusted_col = col.saturating_sub(1);
+  crate::ui::breadcrumb::segment_at_column(segments, adjusted_col).map(Action::BreadcrumbSelect)
 }
 
 #[cfg(test)]
@@ -292,6 +316,16 @@ mod tests {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::GPrefix, &c), Action::GoToTop);
     assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::GPrefix, &c), Action::None);
+  }
+
+  #[test]
+  fn test_g_prefix_breadcrumb_numbers() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('1')), InputMode::GPrefix, &c), Action::BreadcrumbSelect(0));
+    assert_eq!(map_key(key(KeyCode::Char('2')), InputMode::GPrefix, &c), Action::BreadcrumbSelect(1));
+    assert_eq!(map_key(key(KeyCode::Char('9')), InputMode::GPrefix, &c), Action::BreadcrumbSelect(8));
+    // 0 should not trigger breadcrumb (it's not in 1-9 range)
+    assert_eq!(map_key(key(KeyCode::Char('0')), InputMode::GPrefix, &c), Action::None);
   }
 
   #[test]
