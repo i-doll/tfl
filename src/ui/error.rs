@@ -8,10 +8,19 @@ pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer) {
   let max_width = (area.width * 95 / 100).max(20);
   let hint_len = " [Esc] dismiss".len() as u16;
 
-  // +3 = 1 leading space in content + 2 border columns
-  let content_width = messages
+  // Split messages on newlines; each sub-line gets a leading space
+  let msg_style = Style::default().fg(Color::Indexed(252));
+  let mut lines: Vec<Line> = Vec::new();
+  for msg in messages {
+    for sub in msg.split('\n') {
+      lines.push(Line::from(Span::styled(format!(" {sub}"), msg_style)));
+    }
+  }
+
+  // +2 for border columns
+  let content_width = lines
     .iter()
-    .map(|m| m.len() as u16 + 1)
+    .map(|l| l.width() as u16)
     .max()
     .unwrap_or(0)
     .max(hint_len)
@@ -20,11 +29,11 @@ pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer) {
   let width = content_width.min(max_width);
   let inner_width = width.saturating_sub(2) as usize;
 
-  // Estimate line count with word-wrapping
+  // Estimate displayed line count accounting for word-wrapping
   let mut line_count: u16 = 0;
-  for msg in messages {
-    // +1 for the leading space we prepend
-    line_count += (((msg.len() + 1) / inner_width.max(1)) as u16) + 1;
+  for line in &lines {
+    let w = line.width();
+    line_count += ((w / inner_width.max(1)) as u16) + 1;
   }
   // +2 for borders, +1 for hint line, +1 for blank line before hint
   let height = (line_count + 4).min(area.height.saturating_sub(2));
@@ -38,16 +47,6 @@ pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer) {
   let popup = Rect::new(x, y, width, height);
 
   Clear.render(popup, buf);
-
-  let mut lines: Vec<Line> = messages
-    .iter()
-    .map(|msg| {
-      Line::from(Span::styled(
-        format!(" {msg}"),
-        Style::default().fg(Color::Indexed(252)),
-      ))
-    })
-    .collect();
 
   lines.push(Line::from(""));
   lines.push(Line::from(Span::styled(
