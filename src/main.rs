@@ -12,7 +12,7 @@ mod ui;
 use std::io;
 use std::panic;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::execute;
@@ -140,6 +140,7 @@ If no path is given, opens the current directory."
   }
 
   let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms), config_dir.as_deref());
+  let mut last_reload = Instant::now() - Duration::from_secs(1);
 
   loop {
     terminal.draw(|frame| ui::draw(frame, &mut app, &config))?;
@@ -153,7 +154,10 @@ If no path is given, opens the current directory."
         app.update(crate::action::Action::Resize(w, h))?;
       }
       Event::ConfigChanged => {
-        reload_config(&mut config, &mut app);
+        if last_reload.elapsed() > Duration::from_millis(500) {
+          reload_config(&mut config, &mut app);
+          last_reload = Instant::now();
+        }
       }
       Event::Tick => {
         app.update(crate::action::Action::Tick)?;
@@ -176,6 +180,7 @@ If no path is given, opens the current directory."
       let config_changed = events.resume();
       if config_changed {
         reload_config(&mut config, &mut app);
+        last_reload = Instant::now();
       }
       app.tree.reload()?;
       app.preview.invalidate();
