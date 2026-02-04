@@ -240,6 +240,10 @@ fn suspend_and_resume(
   drop(terminal);
   App::execute_suspend(action)?;
   setup_terminal()?;
+  // Drain stale keystrokes buffered in the TTY while the subprocess ran
+  while crossterm::event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+    let _ = crossterm::event::read();
+  }
   let backend = CrosstermBackend::new(io::stdout());
   let terminal = Terminal::new(backend)?;
   Ok(terminal)
