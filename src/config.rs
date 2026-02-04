@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::Deserialize;
 
 use crate::action::Action;
+use crate::opener::OpenApp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBinding {
@@ -49,12 +50,27 @@ pub struct Config {
   pub tick_rate_ms: u64,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
+  pub custom_apps: Vec<OpenApp>,
 }
 
 #[derive(Deserialize, Default)]
 struct TomlConfig {
   general: Option<GeneralConfig>,
   keys: Option<KeysConfig>,
+}
+
+#[derive(Deserialize)]
+struct AppEntry {
+  name: String,
+  command: Option<String>,
+  macos_app: Option<String>,
+  tui: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct AppsFile {
+  #[serde(default)]
+  apps: Vec<AppEntry>,
 }
 
 #[derive(Deserialize, Default)]
@@ -175,6 +191,7 @@ impl Config {
       tick_rate_ms: 100,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
+      custom_apps: Vec::new(),
     }
   }
 
@@ -226,6 +243,7 @@ impl Config {
         }
       }
     }
+
   }
 
   pub fn default_toml() -> &'static str {
@@ -243,7 +261,8 @@ up = "move_up"
 left = "move_left"
 right = "move_right"
 space = "toggle_expand"
-enter = "enter_dir"
+enter = "open_default"
+o = "open_with"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
 pagedown = "scroll_preview_down"
@@ -315,13 +334,48 @@ h = "go_home"
 
   pub fn load() -> Config {
     let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
-    let config_path = config_dir.map(|d| d.join("config.toml"));
 
-    let content = config_path.and_then(|p| std::fs::read_to_string(p).ok());
+    let content = config_dir
+      .as_ref()
+      .map(|d| d.join("config.toml"))
+      .and_then(|p| std::fs::read_to_string(p).ok());
 
-    match content {
+    let mut config = match content {
       Some(s) => Self::load_from_str(&s),
       None => Config::default(),
+    };
+
+    let apps_content = config_dir
+      .map(|d| d.join("apps.toml"))
+      .and_then(|p| std::fs::read_to_string(p).ok());
+
+    if let Some(s) = apps_content {
+      config.load_apps_str(&s);
+    }
+
+    config
+  }
+
+  fn load_apps_str(&mut self, s: &str) {
+    let apps_file: AppsFile = match toml::from_str(s) {
+      Ok(f) => f,
+      Err(e) => {
+        eprintln!("tfl: failed to parse apps.toml: {e}");
+        return;
+      }
+    };
+
+    for entry in apps_file.apps {
+      if entry.command.is_none() && entry.macos_app.is_none() {
+        eprintln!("tfl: app {:?} needs command or macos_app", entry.name);
+        continue;
+      }
+      self.custom_apps.push(OpenApp {
+        name: entry.name,
+        command: entry.command.unwrap_or_default(),
+        is_tui: entry.tui.unwrap_or(false),
+        macos_app: entry.macos_app,
+      });
     }
   }
 
@@ -460,7 +514,8 @@ mod tests {
       (KeyCode::Char('l'), n, Action::MoveRight),
       (KeyCode::Right, n, Action::MoveRight),
       (KeyCode::Char(' '), n, Action::ToggleExpand),
-      (KeyCode::Enter, n, Action::EnterDir),
+      (KeyCode::Enter, n, Action::OpenDefault),
+      (KeyCode::Char('o'), n, Action::OpenWithStart),
       (KeyCode::Char('J'), n, Action::ScrollPreviewDown),
       (KeyCode::Char('K'), n, Action::ScrollPreviewUp),
       (KeyCode::PageDown, n, Action::ScrollPreviewDown),
@@ -776,6 +831,83 @@ tree_ratio = 40
     let lookup = config.reverse_lookup();
     let top_keys = lookup.get(&Action::GoToTop).expect("GoToTop should have keys");
     assert!(top_keys.contains(&"gg".to_string()));
+  }
+
+  #[test]
+  fn test_default_enter_binds_open_default() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Enter, modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::OpenDefault));
+  }
+
+  #[test]
+  fn test_default_o_binds_open_with() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('o'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::OpenWithStart));
+  }
+
+  #[test]
+  fn test_load_custom_apps() {
+    let apps_toml = r#"
+[[apps]]
+name = "Kakoune"
+command = "kak"
+tui = true
+
+[[apps]]
+name = "Lite XL"
+command = "lite-xl"
+"#;
+    let mut config = Config::default();
+    config.load_apps_str(apps_toml);
+    assert_eq!(config.custom_apps.len(), 2);
+    assert_eq!(config.custom_apps[0].name, "Kakoune");
+    assert_eq!(config.custom_apps[0].command, "kak");
+    assert!(config.custom_apps[0].is_tui);
+    assert_eq!(config.custom_apps[1].name, "Lite XL");
+    assert_eq!(config.custom_apps[1].command, "lite-xl");
+    assert!(!config.custom_apps[1].is_tui);
+  }
+
+  #[test]
+  fn test_custom_apps_default_tui_false() {
+    let apps_toml = r#"
+[[apps]]
+name = "MyApp"
+command = "myapp"
+"#;
+    let mut config = Config::default();
+    config.load_apps_str(apps_toml);
+    assert_eq!(config.custom_apps.len(), 1);
+    assert!(!config.custom_apps[0].is_tui);
+  }
+
+  #[test]
+  fn test_custom_apps_macos_only() {
+    let apps_toml = r#"
+[[apps]]
+name = "Pages"
+macos_app = "Pages"
+"#;
+    let mut config = Config::default();
+    config.load_apps_str(apps_toml);
+    assert_eq!(config.custom_apps.len(), 1);
+    assert_eq!(config.custom_apps[0].name, "Pages");
+    assert_eq!(config.custom_apps[0].macos_app, Some("Pages".into()));
+    assert!(config.custom_apps[0].command.is_empty());
+  }
+
+  #[test]
+  fn test_apps_in_config_toml_ignored() {
+    // [[apps]] in config.toml should be silently ignored (unknown field)
+    let toml = r#"
+[[apps]]
+name = "Kakoune"
+command = "kak"
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(config.custom_apps.is_empty());
   }
 
   #[test]

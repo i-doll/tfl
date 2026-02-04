@@ -10,6 +10,7 @@ use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
 use crate::fs::FileTree;
 use crate::fs::ops;
+use crate::opener::{self, OpenApp};
 use crate::preview::PreviewState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +48,9 @@ pub struct App {
   pub prompt_cursor: usize,
   pub favorites: Favorites,
   pub favorites_cursor: usize,
+  pub open_with_apps: Vec<OpenApp>,
+  pub open_with_cursor: usize,
+  pub custom_apps: Vec<OpenApp>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +58,7 @@ pub enum SuspendAction {
   Editor(PathBuf),
   Claude(PathBuf),
   Shell(PathBuf),
+  OpenWith(String, PathBuf),
 }
 
 impl App {
@@ -82,6 +87,9 @@ impl App {
       prompt_cursor: 0,
       favorites: Favorites::load(),
       favorites_cursor: 0,
+      open_with_apps: Vec::new(),
+      open_with_cursor: 0,
+      custom_apps: config.custom_apps.clone(),
     })
   }
 
@@ -278,6 +286,14 @@ impl App {
       Action::FavoritesClose => self.favorites_close(),
       Action::FavoritesRemove => self.favorites_remove(),
       Action::FavoritesAddCurrent => self.favorites_add_current(),
+      Action::OpenDefault => self.open_default_action()?,
+      Action::OpenWithStart => self.open_with_start(),
+      Action::OpenWithDown => self.open_with_move(1),
+      Action::OpenWithUp => self.open_with_move(-1),
+      Action::OpenWithSelect => self.open_with_select()?,
+      Action::OpenWithClose => {
+        self.input_mode = InputMode::Normal;
+      }
       Action::Tick => {
         self.preview.check_image_loaded();
       }
@@ -378,6 +394,82 @@ impl App {
       return;
     }
     self.status_message = Some("Added to favorites".to_string());
+  }
+
+  fn open_default_action(&mut self) -> Result<()> {
+    let entries = self.visible_entries();
+    if let Some(idx) = entries.get(self.cursor).copied() {
+      if self.tree.entries[idx].is_dir {
+        return self.enter_directory();
+      }
+      let path = self.tree.entries[idx].path.clone();
+      match opener::open_default(&path) {
+        Ok(()) => {
+          let name = &self.tree.entries[idx].name;
+          self.status_message = Some(format!("Opened: {name}"));
+        }
+        Err(e) => {
+          self.status_message = Some(e);
+        }
+      }
+    }
+    Ok(())
+  }
+
+  fn open_with_start(&mut self) {
+    if let Some(entry) = self.selected_entry() {
+      if entry.is_dir {
+        return;
+      }
+      self.open_with_apps = opener::detect_apps(&self.custom_apps);
+      self.open_with_cursor = 0;
+      self.input_mode = InputMode::OpenWith;
+    }
+  }
+
+  fn open_with_move(&mut self, delta: i32) {
+    // Total items = 1 (Default Application) + detected apps
+    let total = 1 + self.open_with_apps.len();
+    if total == 0 {
+      return;
+    }
+    if delta > 0 {
+      self.open_with_cursor = (self.open_with_cursor + delta as usize).min(total - 1);
+    } else {
+      self.open_with_cursor = self.open_with_cursor.saturating_sub((-delta) as usize);
+    }
+  }
+
+  fn open_with_select(&mut self) -> Result<()> {
+    let Some(entry) = self.selected_entry() else {
+      self.input_mode = InputMode::Normal;
+      return Ok(());
+    };
+    let path = entry.path.clone();
+    let name = entry.name.clone();
+
+    if self.open_with_cursor == 0 {
+      // Default Application
+      self.input_mode = InputMode::Normal;
+      match opener::open_default(&path) {
+        Ok(()) => self.status_message = Some(format!("Opened: {name}")),
+        Err(e) => self.status_message = Some(e),
+      }
+    } else {
+      let app_idx = self.open_with_cursor - 1;
+      if let Some(app) = self.open_with_apps.get(app_idx).cloned() {
+        self.input_mode = InputMode::Normal;
+        if app.is_tui {
+          self.should_suspend = Some(SuspendAction::OpenWith(app.command.clone(), path));
+        } else {
+          match opener::open_with_app(&path, &app) {
+            Ok(()) => self.status_message = Some(format!("Opened with {}", app.name)),
+            Err(e) => self.status_message = Some(e),
+          }
+        }
+      }
+    }
+    Ok(())
   }
 
   fn move_cursor(&mut self, delta: i32) {
@@ -841,6 +933,9 @@ impl App {
       SuspendAction::Shell(dir) => {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         Command::new(&shell).current_dir(dir).status()?;
+      }
+      SuspendAction::OpenWith(cmd, path) => {
+        Command::new(cmd).arg(path).status()?;
       }
     }
     Ok(())
@@ -1552,6 +1647,108 @@ mod tests {
     // Cursor should be on the renamed file
     let entry = app.selected_entry().unwrap();
     assert_eq!(entry.name, "zzz_renamed.txt");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_default_on_dir_enters() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry is aaa_dir
+    assert!(app.tree.entries[0].is_dir);
+    let old_root = app.tree.root.clone();
+    app.update(Action::OpenDefault).unwrap();
+    // Should have entered the directory
+    assert_ne!(app.tree.root, old_root);
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_start_on_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::OpenWithStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::OpenWith);
+    assert_eq!(app.open_with_cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_start_on_dir_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry is a dir
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::OpenWithStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_cursor_movement() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::OpenWithStart).unwrap();
+    let total = 1 + app.open_with_apps.len();
+
+    // Move down
+    app.update(Action::OpenWithDown).unwrap();
+    if total > 1 {
+      assert_eq!(app.open_with_cursor, 1);
+    }
+    // Move up
+    app.update(Action::OpenWithUp).unwrap();
+    assert_eq!(app.open_with_cursor, 0);
+    // Move up from 0 stays at 0
+    app.update(Action::OpenWithUp).unwrap();
+    assert_eq!(app.open_with_cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_close() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::OpenWithStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::OpenWith);
+    app.update(Action::OpenWithClose).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_select_tui_suspends() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    // Inject a fake TUI app so we can test the suspend path
+    app.open_with_apps = vec![OpenApp {
+      name: "TestEditor".into(),
+      command: "testeditor".into(),
+      is_tui: true,
+      macos_app: None,
+    }];
+    app.open_with_cursor = 1; // Select the TUI app (0 is Default)
+    app.input_mode = InputMode::OpenWith;
+
+    app.update(Action::OpenWithSelect).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    let suspend = app.handle_suspend();
+    assert!(matches!(suspend, Some(SuspendAction::OpenWith(_, _))));
     cleanup_test_dir(&dir);
   }
 }

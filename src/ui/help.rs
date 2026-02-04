@@ -46,7 +46,7 @@ fn hardcoded_line(key: &str, desc: &str) -> Line<'static> {
 
 pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
   let width = 44.min(area.width.saturating_sub(4));
-  let height = 40.min(area.height.saturating_sub(2));
+  let height = 42.min(area.height.saturating_sub(2));
 
   if width < 10 || height < 5 {
     return;
@@ -83,6 +83,8 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::ShrinkTree, "Shrink tree pane"),
     entry_line(&lookup, Action::GrowTree, "Grow tree pane"),
     section_line("Actions"),
+    entry_line(&lookup, Action::OpenDefault, "Open file / enter dir"),
+    entry_line(&lookup, Action::OpenWithStart, "Open with..."),
     entry_line(&lookup, Action::OpenEditor, "Open in $EDITOR"),
     entry_line(&lookup, Action::OpenClaude, "Open Claude Code"),
     entry_line(&lookup, Action::OpenShell, "Open $SHELL"),

@@ -77,6 +77,7 @@ pub enum InputMode {
   Help,
   Prompt,
   Favorites,
+  OpenWith,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,13 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Esc | KeyCode::Char('q') => Action::FavoritesClose,
       KeyCode::Char('d') | KeyCode::Delete => Action::FavoritesRemove,
       KeyCode::Char('a') => Action::FavoritesAddCurrent,
+      _ => Action::None,
+    },
+    InputMode::OpenWith => match key.code {
+      KeyCode::Char('j') | KeyCode::Down => Action::OpenWithDown,
+      KeyCode::Char('k') | KeyCode::Up => Action::OpenWithUp,
+      KeyCode::Enter => Action::OpenWithSelect,
+      KeyCode::Esc | KeyCode::Char('q') => Action::OpenWithClose,
       _ => Action::None,
     },
     InputMode::Normal => {
@@ -286,6 +294,26 @@ mod tests {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::Favorites, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Char('z')), InputMode::Favorites, &c), Action::None);
+  }
+
+  #[test]
+  fn test_open_with_mode_navigation() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::OpenWith, &c), Action::OpenWithDown);
+    assert_eq!(map_key(key(KeyCode::Down), InputMode::OpenWith, &c), Action::OpenWithDown);
+    assert_eq!(map_key(key(KeyCode::Char('k')), InputMode::OpenWith, &c), Action::OpenWithUp);
+    assert_eq!(map_key(key(KeyCode::Up), InputMode::OpenWith, &c), Action::OpenWithUp);
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::OpenWith, &c), Action::OpenWithSelect);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::OpenWith, &c), Action::OpenWithClose);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::OpenWith, &c), Action::OpenWithClose);
+  }
+
+  #[test]
+  fn test_open_with_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::OpenWith, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::OpenWith, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char(' ')), InputMode::OpenWith, &c), Action::None);
   }
 
   #[test]
