@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
   Quit,
@@ -58,9 +60,24 @@ pub enum Action {
   OpenWithSelect,
   OpenWithClose,
   ErrorClose,
+  Undo,
+  Redo,
   Resize(u16, u16),
   Tick,
   None,
+}
+
+/// Represents a reversible file operation for undo/redo
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UndoAction {
+  /// Rename: store old path and new path
+  Rename { old_path: PathBuf, new_path: PathBuf },
+  /// Move: store source path and destination path
+  Move { source: PathBuf, dest: PathBuf },
+  /// Delete (to trash): store original path and trash location
+  Delete { original: PathBuf, trash_path: PathBuf },
+  /// Copy: store the created path (undo = delete the copy)
+  Copy { created: PathBuf },
 }
 
 impl Action {
@@ -100,6 +117,8 @@ impl Action {
       "favorites_open" => Some(Action::FavoritesOpen),
       "open_default" => Some(Action::OpenDefault),
       "open_with" => Some(Action::OpenWithStart),
+      "undo" => Some(Action::Undo),
+      "redo" => Some(Action::Redo),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -146,6 +165,8 @@ mod tests {
     assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
     assert_eq!(Action::from_name("open_default"), Some(Action::OpenDefault));
     assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
+    assert_eq!(Action::from_name("undo"), Some(Action::Undo));
+    assert_eq!(Action::from_name("redo"), Some(Action::Redo));
   }
 
   #[test]

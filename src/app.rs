@@ -4,7 +4,7 @@ use std::process::Command;
 use anyhow::Result;
 use ratatui_image::picker::Picker;
 
-use crate::action::Action;
+use crate::action::{Action, UndoAction};
 use crate::config::Config;
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
@@ -55,6 +55,9 @@ pub struct App {
   pub error_messages: Vec<String>,
   pub wrote_config: bool,
   pub claude_yolo: bool,
+  pub undo_stack: Vec<UndoAction>,
+  pub redo_stack: Vec<UndoAction>,
+  pub undo_stack_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +101,9 @@ impl App {
       error_messages: Vec::new(),
       wrote_config: false,
       claude_yolo: config.claude_yolo,
+      undo_stack: Vec::new(),
+      redo_stack: Vec::new(),
+      undo_stack_size: config.undo_stack_size,
     })
   }
 
@@ -313,6 +319,8 @@ impl App {
       Action::Tick => {
         self.preview.check_image_loaded();
       }
+      Action::Undo => self.execute_undo()?,
+      Action::Redo => self.execute_redo()?,
       Action::None => {}
     }
     Ok(())
@@ -663,6 +671,7 @@ impl App {
 
     let target_dir = self.current_dir();
     let mut last_dest = None;
+    let mut undo_actions: Vec<UndoAction> = Vec::new();
 
     for source in &paths {
       if !source.exists() {
@@ -700,6 +709,11 @@ impl App {
               }
             }
           }
+          // Track move for undo
+          undo_actions.push(UndoAction::Move {
+            source: source.clone(),
+            dest: dest.clone(),
+          });
         }
         ClipboardOp::Copy => {
           if let Err(e) = ops::copy_path(source, &dest) {
@@ -707,9 +721,16 @@ impl App {
             self.tree.reload()?;
             return Ok(());
           }
+          // Track copy for undo
+          undo_actions.push(UndoAction::Copy { created: dest.clone() });
         }
       }
       last_dest = Some(dest);
+    }
+
+    // Push all undo actions (in reverse order so undoing happens in correct sequence)
+    for action in undo_actions.into_iter().rev() {
+      self.push_undo(action);
     }
 
     if op == ClipboardOp::Cut {
@@ -735,14 +756,14 @@ impl App {
       return Ok(());
     };
 
-    let result = if entry.is_dir {
-      std::fs::remove_dir_all(&entry.path)
-    } else {
-      std::fs::remove_file(&entry.path)
-    };
-
-    match result {
-      Ok(()) => {
+    // Move to trash instead of permanent delete
+    match ops::move_to_trash(&entry.path) {
+      Ok(trash_path) => {
+        // Track for undo
+        self.push_undo(UndoAction::Delete {
+          original: entry.path.clone(),
+          trash_path,
+        });
         // Clean clipboard if deleted path was in it
         self.clipboard.paths.retain(|p| !p.starts_with(&entry.path));
         if self.clipboard.paths.is_empty() {
@@ -756,7 +777,7 @@ impl App {
         } else {
           self.cursor = self.cursor.min(len - 1);
         }
-        self.set_status(format!("Deleted: {}", entry.name));
+        self.set_status(format!("Deleted: {} (press u to undo)", entry.name));
         self.preview.invalidate();
         self.update_preview();
       }
@@ -793,6 +814,11 @@ impl App {
 
     match std::fs::rename(&entry.path, &new_path) {
       Ok(()) => {
+        // Track for undo
+        self.push_undo(UndoAction::Rename {
+          old_path: entry.path.clone(),
+          new_path: new_path.clone(),
+        });
         // Update clipboard if renamed path was in it
         for p in &mut self.clipboard.paths {
           if *p == entry.path {
@@ -963,6 +989,7 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    self.undo_stack_size = config.undo_stack_size;
   }
 
   pub fn reload_favorites(&mut self) {
@@ -999,6 +1026,210 @@ impl App {
         Command::new(cmd).arg(path).status()?;
       }
     }
+    Ok(())
+  }
+
+  /// Push an action to the undo stack, respecting size limit and clearing redo stack
+  pub fn push_undo(&mut self, action: UndoAction) {
+    // Clear redo stack when a new action is performed
+    self.redo_stack.clear();
+
+    // Enforce size limit by removing oldest entries
+    while self.undo_stack.len() >= self.undo_stack_size {
+      self.undo_stack.remove(0);
+    }
+
+    self.undo_stack.push(action);
+  }
+
+  /// Execute undo: reverse the most recent action
+  fn execute_undo(&mut self) -> Result<()> {
+    let Some(action) = self.undo_stack.pop() else {
+      self.set_status("Nothing to undo".to_string());
+      return Ok(());
+    };
+
+    match &action {
+      UndoAction::Rename { old_path, new_path } => {
+        if !new_path.exists() {
+          self.set_status(format!("Cannot undo: {} no longer exists", new_path.display()));
+          return Ok(());
+        }
+        match std::fs::rename(new_path, old_path) {
+          Ok(()) => {
+            let name = old_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Undo: renamed back to {name}"));
+            // Push same action to redo stack (redo will re-apply the same rename)
+            self.redo_stack.push(UndoAction::Rename {
+              old_path: old_path.clone(),
+              new_path: new_path.clone(),
+            });
+          }
+          Err(e) => {
+            self.set_status(format!("Undo failed: {e}"));
+            // Put action back on undo stack since it failed
+            self.undo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+      UndoAction::Move { source, dest } => {
+        if !dest.exists() {
+          self.set_status(format!("Cannot undo: {} no longer exists", dest.display()));
+          return Ok(());
+        }
+        match std::fs::rename(dest, source) {
+          Ok(()) => {
+            let name = source.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Undo: moved back to {name}"));
+            // Push same action to redo stack (redo will re-apply the same move)
+            self.redo_stack.push(UndoAction::Move {
+              source: source.clone(),
+              dest: dest.clone(),
+            });
+          }
+          Err(e) => {
+            self.set_status(format!("Undo failed: {e}"));
+            self.undo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+      UndoAction::Delete { original, trash_path } => {
+        if !trash_path.exists() {
+          self.set_status("Cannot undo: trash file no longer exists".to_string());
+          return Ok(());
+        }
+        match ops::restore_from_trash(trash_path, original) {
+          Ok(()) => {
+            let name = original.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Undo: restored {name}"));
+            // Note: For redo, we need to remember the actual restored path in case of conflict
+            // For simplicity, we'll re-trash to the same location concept
+            self.redo_stack.push(UndoAction::Delete {
+              original: original.clone(),
+              trash_path: trash_path.clone(),
+            });
+          }
+          Err(e) => {
+            self.set_status(format!("Undo failed: {e}"));
+            self.undo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+      UndoAction::Copy { created } => {
+        if !created.exists() {
+          self.set_status(format!("Cannot undo: {} no longer exists", created.display()));
+          return Ok(());
+        }
+        match ops::delete_path(created) {
+          Ok(()) => {
+            let name = created.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Undo: deleted copy {name}"));
+            // For redo, we can't easily recreate the copy, so we don't push to redo stack
+            // This is a destructive undo that can't be redone
+          }
+          Err(e) => {
+            self.set_status(format!("Undo failed: {e}"));
+            self.undo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+    }
+
+    // Refresh the tree and preview
+    self.tree.reload()?;
+    self.preview.invalidate();
+    self.update_preview();
+    Ok(())
+  }
+
+  /// Execute redo: re-apply the most recently undone action
+  fn execute_redo(&mut self) -> Result<()> {
+    let Some(action) = self.redo_stack.pop() else {
+      self.set_status("Nothing to redo".to_string());
+      return Ok(());
+    };
+
+    match &action {
+      UndoAction::Rename { old_path, new_path } => {
+        if !old_path.exists() {
+          self.set_status(format!("Cannot redo: {} no longer exists", old_path.display()));
+          return Ok(());
+        }
+        match std::fs::rename(old_path, new_path) {
+          Ok(()) => {
+            let name = new_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Redo: renamed to {name}"));
+            // Push same action to undo stack (undo will reverse it again)
+            self.undo_stack.push(UndoAction::Rename {
+              old_path: old_path.clone(),
+              new_path: new_path.clone(),
+            });
+          }
+          Err(e) => {
+            self.set_status(format!("Redo failed: {e}"));
+            self.redo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+      UndoAction::Move { source, dest } => {
+        if !source.exists() {
+          self.set_status(format!("Cannot redo: {} no longer exists", source.display()));
+          return Ok(());
+        }
+        match std::fs::rename(source, dest) {
+          Ok(()) => {
+            let name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Redo: moved to {name}"));
+            // Push same action to undo stack (undo will reverse it again)
+            self.undo_stack.push(UndoAction::Move {
+              source: source.clone(),
+              dest: dest.clone(),
+            });
+          }
+          Err(e) => {
+            self.set_status(format!("Redo failed: {e}"));
+            self.redo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+      UndoAction::Delete { original, trash_path: _ } => {
+        if !original.exists() {
+          self.set_status(format!("Cannot redo: {} no longer exists", original.display()));
+          return Ok(());
+        }
+        match ops::move_to_trash(original) {
+          Ok(new_trash_path) => {
+            let name = original.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.set_status(format!("Redo: deleted {name}"));
+            self.undo_stack.push(UndoAction::Delete {
+              original: original.clone(),
+              trash_path: new_trash_path,
+            });
+          }
+          Err(e) => {
+            self.set_status(format!("Redo failed: {e}"));
+            self.redo_stack.push(action);
+            return Ok(());
+          }
+        }
+      }
+      UndoAction::Copy { created: _ } => {
+        // Copy undo is not redoable (we deleted the copy)
+        self.set_status("Cannot redo copy deletion".to_string());
+        return Ok(());
+      }
+    }
+
+    // Refresh the tree and preview
+    self.tree.reload()?;
+    self.preview.invalidate();
+    self.update_preview();
     Ok(())
   }
 }
@@ -2017,6 +2248,272 @@ mod tests {
     assert!(subdir_entry.expanded);
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  // ============ UNDO/REDO TESTS ============
+
+  #[test]
+  fn test_undo_rename_restores_old_name() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    // Rename to renamed.txt
+    app.update(Action::RenameStart).unwrap();
+    app.prompt_input = "renamed.txt".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(!dir.join("bbb.txt").exists());
+    assert!(dir.join("renamed.txt").exists());
+    assert_eq!(app.undo_stack.len(), 1);
+
+    // Undo the rename
+    app.update(Action::Undo).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert!(!dir.join("renamed.txt").exists());
+    assert_eq!(app.undo_stack.len(), 0);
+    assert_eq!(app.redo_stack.len(), 1);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_undo_move_returns_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::CutFile).unwrap();
+
+    // Paste into aaa_dir
+    app.cursor = 0;
+    app.update(Action::Paste).unwrap();
+
+    assert!(dir.join("aaa_dir").join("bbb.txt").exists());
+    assert!(!dir.join("bbb.txt").exists());
+    assert_eq!(app.undo_stack.len(), 1);
+
+    // Undo the move
+    app.update(Action::Undo).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert!(!dir.join("aaa_dir").join("bbb.txt").exists());
+    assert_eq!(app.undo_stack.len(), 0);
+    assert_eq!(app.redo_stack.len(), 1);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_undo_delete_restores_from_trash() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    // Delete with confirmation
+    app.update(Action::DeleteFile).unwrap();
+    app.update(Action::PromptInput('y')).unwrap();
+
+    assert!(!dir.join("bbb.txt").exists());
+    assert_eq!(app.undo_stack.len(), 1);
+
+    // Undo the delete
+    app.update(Action::Undo).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert_eq!(app.undo_stack.len(), 0);
+    assert_eq!(app.redo_stack.len(), 1);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_redo_reapplies_action() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt and rename
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::RenameStart).unwrap();
+    app.prompt_input = "renamed.txt".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // Undo
+    app.update(Action::Undo).unwrap();
+    assert!(dir.join("bbb.txt").exists());
+    assert!(!dir.join("renamed.txt").exists());
+
+    // Redo
+    app.update(Action::Redo).unwrap();
+    assert!(!dir.join("bbb.txt").exists());
+    assert!(dir.join("renamed.txt").exists());
+    assert_eq!(app.undo_stack.len(), 1);
+    assert_eq!(app.redo_stack.len(), 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_stack_respects_size_limit() {
+    let dir = setup_test_dir();
+    let mut c = cfg();
+    c.undo_stack_size = 3;
+    let mut app = App::new(dir.clone(), None, &c).unwrap();
+
+    // Push 5 actions manually
+    for i in 0..5 {
+      app.push_undo(UndoAction::Rename {
+        old_path: dir.join(format!("old{i}")),
+        new_path: dir.join(format!("new{i}")),
+      });
+    }
+
+    // Stack should be limited to 3
+    assert_eq!(app.undo_stack.len(), 3);
+    // Oldest entries should have been removed (old2, old3, old4 remain)
+    if let UndoAction::Rename { old_path, .. } = &app.undo_stack[0] {
+      assert!(old_path.ends_with("old2"));
+    }
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_action_clears_redo_stack() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Rename once
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::RenameStart).unwrap();
+    app.prompt_input = "renamed.txt".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // Undo - creates redo entry
+    app.update(Action::Undo).unwrap();
+    assert_eq!(app.redo_stack.len(), 1);
+    assert!(dir.join("bbb.txt").exists());
+
+    // Do a new rename on ccc.rs (different file to avoid conflicts) - should clear redo stack
+    while app.selected_entry().map_or(true, |e| e.name != "ccc.rs") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::RenameStart).unwrap();
+    app.prompt_input = "another.rs".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert_eq!(app.redo_stack.len(), 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_undo_nothing_shows_message() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::Undo).unwrap();
+    assert_eq!(app.status_message.as_deref(), Some("Nothing to undo"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_redo_nothing_shows_message() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::Redo).unwrap();
+    assert_eq!(app.status_message.as_deref(), Some("Nothing to redo"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_undo_copy_deletes_created_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Copy bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::CopyFile).unwrap();
+
+    // Paste into aaa_dir
+    app.cursor = 0;
+    app.update(Action::Paste).unwrap();
+
+    assert!(dir.join("aaa_dir").join("bbb.txt").exists());
+    // Original still exists (copy, not move)
+    assert!(dir.join("bbb.txt").exists());
+    assert_eq!(app.undo_stack.len(), 1);
+
+    // Undo the copy
+    app.update(Action::Undo).unwrap();
+
+    // Copy should be deleted, original still exists
+    assert!(!dir.join("aaa_dir").join("bbb.txt").exists());
+    assert!(dir.join("bbb.txt").exists());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_redo_delete_sends_to_trash_again() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Delete bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DeleteFile).unwrap();
+    app.update(Action::PromptInput('y')).unwrap();
+
+    // Undo the delete
+    app.update(Action::Undo).unwrap();
+    assert!(dir.join("bbb.txt").exists());
+
+    // Redo the delete
+    app.update(Action::Redo).unwrap();
+    assert!(!dir.join("bbb.txt").exists());
+    assert_eq!(app.undo_stack.len(), 1);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_status_shows_undo_hint() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DeleteFile).unwrap();
+    app.update(Action::PromptInput('y')).unwrap();
+
+    // Status should mention undo
+    assert!(app.status_message.as_ref().unwrap().contains("undo"));
 
     cleanup_test_dir(&dir);
   }

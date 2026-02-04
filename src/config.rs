@@ -49,6 +49,7 @@ pub struct Config {
   pub ratio_step: u16,
   pub tick_rate_ms: u64,
   pub claude_yolo: bool,
+  pub undo_stack_size: usize,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
@@ -79,6 +80,7 @@ struct GeneralConfig {
   tree_ratio: Option<u16>,
   tick_rate_ms: Option<u64>,
   claude_yolo: Option<bool>,
+  undo_stack_size: Option<usize>,
 }
 
 #[derive(Deserialize, Default)]
@@ -193,6 +195,7 @@ impl Config {
       ratio_step: 5,
       tick_rate_ms: 100,
       claude_yolo: false,
+      undo_stack_size: 100,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       custom_apps: Vec::new(),
@@ -217,6 +220,9 @@ impl Config {
       }
       if let Some(yolo) = general.claude_yolo {
         self.claude_yolo = yolo;
+      }
+      if let Some(stack_size) = general.undo_stack_size {
+        self.undo_stack_size = stack_size;
       }
     }
 
@@ -257,6 +263,7 @@ impl Config {
     r#"[general]
 tree_ratio = 30       # initial tree pane width (percentage)
 tick_rate_ms = 100    # event loop tick rate in ms
+undo_stack_size = 100 # max number of undoable operations
 
 [keys.normal]
 j = "move_down"
@@ -299,6 +306,8 @@ a = "new_file_start"
 "~" = "go_home"
 f = "favorites_open"
 "shift+f" = "favorite_add"
+u = "undo"
+"ctrl+r" = "redo"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -558,6 +567,8 @@ mod tests {
       (KeyCode::Char('~'), n, Action::GoHome),
       (KeyCode::Char('f'), n, Action::FavoritesOpen),
       (KeyCode::Char('F'), n, Action::FavoriteAdd),
+      (KeyCode::Char('u'), n, Action::Undo),
+      (KeyCode::Char('r'), KeyModifiers::CONTROL, Action::Redo),
     ];
 
     for (code, mods, action) in expected {
