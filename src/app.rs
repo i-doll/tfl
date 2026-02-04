@@ -926,7 +926,7 @@ impl App {
 
   pub fn set_status(&mut self, msg: String) {
     self.status_message = Some(msg);
-    self.status_ticks = 30; // visible for ~3s at 100ms tick rate
+    self.status_ticks = 20; // visible for ~2s at 100ms tick rate
   }
 
   pub fn apply_config(&mut self, config: &Config) {
