@@ -2868,7 +2868,7 @@ mod tests {
     // Should not have gotten all the way back to original dir
     assert!(back_count >= 1, "Should have some history");
 
-    cleanup_test_dir(&final_root.ancestors().nth(back_count).unwrap().to_path_buf());
+    cleanup_test_dir(&dir);
   }
 
   #[test]
