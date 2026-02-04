@@ -119,20 +119,28 @@ pub fn app_available(app: &OpenApp) -> bool {
   command_exists(&app.command)
 }
 
+fn dedup_key(app: &OpenApp) -> String {
+  if app.command.is_empty() {
+    app.macos_app.clone().unwrap_or_default()
+  } else {
+    app.command.clone()
+  }
+}
+
 pub fn detect_apps(custom: &[OpenApp]) -> Vec<OpenApp> {
   let mut apps = Vec::new();
-  let mut seen_commands = std::collections::HashSet::new();
+  let mut seen = std::collections::HashSet::new();
 
   // Custom apps first
   for app in custom {
-    if app_available(app) && seen_commands.insert(app.command.clone()) {
+    if app_available(app) && seen.insert(dedup_key(app)) {
       apps.push(app.clone());
     }
   }
 
   // Built-in apps
   for app in known_apps() {
-    if app_available(&app) && seen_commands.insert(app.command.clone()) {
+    if app_available(&app) && seen.insert(dedup_key(&app)) {
       apps.push(app);
     }
   }
