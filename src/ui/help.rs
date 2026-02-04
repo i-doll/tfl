@@ -46,7 +46,7 @@ fn hardcoded_line(key: &str, desc: &str) -> Line<'static> {
 
 pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
   let width = 44.min(area.width.saturating_sub(4));
-  let height = 36.min(area.height.saturating_sub(2));
+  let height = 40.min(area.height.saturating_sub(2));
 
   if width < 10 || height < 5 {
     return;
@@ -70,6 +70,9 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::EnterDir, "Enter directory"),
     entry_line(&lookup, Action::GoToTop, "Go to top"),
     entry_line(&lookup, Action::GoToBottom, "Go to bottom"),
+    entry_line(&lookup, Action::GoHome, "Go to home"),
+    entry_line(&lookup, Action::FavoritesOpen, "Open favorites"),
+    entry_line(&lookup, Action::FavoriteAdd, "Add to favorites"),
     section_line("Search"),
     entry_line(&lookup, Action::SearchStart, "Start search"),
     hardcoded_line("Enter", "Confirm"),

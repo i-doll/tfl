@@ -41,6 +41,15 @@ pub enum Action {
   PromptEnd,
   PromptConfirm,
   PromptCancel,
+  GoHome,
+  FavoriteAdd,
+  FavoritesOpen,
+  FavoritesDown,
+  FavoritesUp,
+  FavoritesSelect,
+  FavoritesClose,
+  FavoritesRemove,
+  FavoritesAddCurrent,
   Resize(u16, u16),
   Tick,
   None,
@@ -77,6 +86,9 @@ impl Action {
       "rename_start" => Some(Action::RenameStart),
       "new_file_start" => Some(Action::NewFileStart),
       "new_dir_start" => Some(Action::NewDirStart),
+      "go_home" => Some(Action::GoHome),
+      "favorite_add" => Some(Action::FavoriteAdd),
+      "favorites_open" => Some(Action::FavoritesOpen),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -117,6 +129,9 @@ mod tests {
     assert_eq!(Action::from_name("rename_start"), Some(Action::RenameStart));
     assert_eq!(Action::from_name("new_file_start"), Some(Action::NewFileStart));
     assert_eq!(Action::from_name("new_dir_start"), Some(Action::NewDirStart));
+    assert_eq!(Action::from_name("go_home"), Some(Action::GoHome));
+    assert_eq!(Action::from_name("favorite_add"), Some(Action::FavoriteAdd));
+    assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
   }
 
   #[test]

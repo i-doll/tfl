@@ -2,6 +2,7 @@ mod action;
 mod app;
 mod config;
 mod event;
+mod favorites;
 mod fs;
 mod icons;
 mod preview;

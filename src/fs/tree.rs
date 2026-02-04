@@ -394,6 +394,18 @@ impl FileTree {
     Ok(())
   }
 
+  pub fn navigate_to(&mut self, path: &Path) -> Result<()> {
+    self.root = path.to_path_buf();
+    let (statuses, info) = query_git_status(&self.root);
+    self.git_statuses = statuses;
+    self.git_info = info;
+    let root = self.root.clone();
+    self.entries.clear();
+    self.load_dir(&root, 0)?;
+    propagate_git_status(&mut self.entries);
+    Ok(())
+  }
+
   pub fn go_parent(&mut self) -> Result<Option<PathBuf>> {
     if let Some(parent) = self.root.parent().map(|p| p.to_path_buf()) {
       let old_root = self.root.clone();
@@ -534,6 +546,19 @@ mod tests {
     let mut tree = FileTree::new(dir.clone()).unwrap();
     tree.enter_dir(0).unwrap();
     assert_eq!(tree.root, dir.join("alpha_dir"));
+    assert!(tree.entries.iter().any(|e| e.name == "inner.txt"));
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_navigate_to() {
+    let dir = setup_test_dir();
+    let target = dir.join("alpha_dir");
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    assert_eq!(tree.root, dir);
+
+    tree.navigate_to(&target).unwrap();
+    assert_eq!(tree.root, target);
     assert!(tree.entries.iter().any(|e| e.name == "inner.txt"));
     cleanup(&dir);
   }
