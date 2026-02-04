@@ -57,6 +57,8 @@ pub enum Action {
   OpenWithUp,
   OpenWithSelect,
   OpenWithClose,
+  CycleSortField,
+  ToggleSortOrder,
   ErrorClose,
   Resize(u16, u16),
   Tick,
@@ -100,6 +102,8 @@ impl Action {
       "favorites_open" => Some(Action::FavoritesOpen),
       "open_default" => Some(Action::OpenDefault),
       "open_with" => Some(Action::OpenWithStart),
+      "cycle_sort_field" => Some(Action::CycleSortField),
+      "toggle_sort_order" => Some(Action::ToggleSortOrder),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -146,6 +150,8 @@ mod tests {
     assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
     assert_eq!(Action::from_name("open_default"), Some(Action::OpenDefault));
     assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
+    assert_eq!(Action::from_name("cycle_sort_field"), Some(Action::CycleSortField));
+    assert_eq!(Action::from_name("toggle_sort_order"), Some(Action::ToggleSortOrder));
   }
 
   #[test]

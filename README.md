@@ -21,6 +21,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 ## Features
 
 - **Vim-style navigation** with `hjkl`, `gg`/`G`, and search with `/`
+- **Sortable file list** by name, size, date, or type with ascending/descending toggle
 - **Syntax-highlighted text preview** via syntect
 - **Image preview** in supported terminals (Kitty graphics protocol)
 - **Hex dump** for binary files
@@ -73,7 +74,9 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `e` | Open file in `$EDITOR` |
 | `c` | Open Claude Code in current directory |
 | `C` | Open Claude Code (alt mode — inverse of `claude_yolo` config) |
-| `s` | Open `$SHELL` in current directory |
+| `$` | Open `$SHELL` in current directory |
+| `s` | Cycle sort field (name/size/date/type) |
+| `S` | Toggle sort order (ascending/descending) |
 | `ø` | Shrink tree pane |
 | `æ` | Grow tree pane |
 | `~` / `gh` | Go to home directory |
@@ -236,7 +239,9 @@ y = "yank_path"
 e = "open_editor"
 c = "open_claude"
 "shift+c" = "open_claude_alt"
-s = "open_shell"
+"$" = "open_shell"
+s = "cycle_sort_field"
+"shift+s" = "toggle_sort_order"
 q = "quit"
 esc = "quit"
 delete = "delete_file"
@@ -269,7 +274,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `cycle_sort_field`, `toggle_sort_order`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 

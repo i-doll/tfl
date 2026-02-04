@@ -282,7 +282,9 @@ y = "yank_path"
 e = "open_editor"
 c = "open_claude"
 "shift+c" = "open_claude_alt"
-s = "open_shell"
+"$" = "open_shell"
+s = "cycle_sort_field"
+"shift+s" = "toggle_sort_order"
 q = "quit"
 esc = "quit"
 delete = "delete_file"
@@ -543,7 +545,9 @@ mod tests {
       (KeyCode::Char('e'), n, Action::OpenEditor),
       (KeyCode::Char('c'), n, Action::OpenClaude),
       (KeyCode::Char('C'), n, Action::OpenClaudeAlt),
-      (KeyCode::Char('s'), n, Action::OpenShell),
+      (KeyCode::Char('$'), n, Action::OpenShell),
+      (KeyCode::Char('s'), n, Action::CycleSortField),
+      (KeyCode::Char('S'), n, Action::ToggleSortOrder),
       (KeyCode::Delete, n, Action::DeleteFile),
       (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
       (KeyCode::Char('v'), KeyModifiers::CONTROL, Action::Paste),

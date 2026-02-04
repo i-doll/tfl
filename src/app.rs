@@ -306,6 +306,8 @@ impl App {
       Action::OpenWithClose => {
         self.input_mode = InputMode::Normal;
       }
+      Action::CycleSortField => self.cycle_sort_field()?,
+      Action::ToggleSortOrder => self.toggle_sort_order()?,
       Action::ErrorClose => {
         self.error_messages.clear();
         self.input_mode = InputMode::Normal;
@@ -607,6 +609,34 @@ impl App {
     self.preview.invalidate();
     self.update_preview();
     Ok(())
+  }
+
+  fn cycle_sort_field(&mut self) -> Result<()> {
+    let selected_path = self.selected_entry().map(|e| e.path.clone());
+    self.tree.cycle_sort_field()?;
+    self.reposition_after_sort(selected_path);
+    let field = self.tree.sort_field.display_name();
+    let order = self.tree.sort_order.display_name();
+    self.set_status(format!("Sort: {field} ({order})"));
+    Ok(())
+  }
+
+  fn toggle_sort_order(&mut self) -> Result<()> {
+    let selected_path = self.selected_entry().map(|e| e.path.clone());
+    self.tree.toggle_sort_order()?;
+    self.reposition_after_sort(selected_path);
+    let field = self.tree.sort_field.display_name();
+    let order = self.tree.sort_order.display_name();
+    self.set_status(format!("Sort: {field} ({order})"));
+    Ok(())
+  }
+
+  fn reposition_after_sort(&mut self, selected_path: Option<PathBuf>) {
+    if let Some(path) = selected_path {
+      self.reposition_cursor_to(&path);
+    }
+    self.preview.invalidate();
+    self.update_preview();
   }
 
   fn apply_search_filter(&mut self) {
