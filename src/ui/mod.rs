@@ -34,23 +34,47 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   // Header with breadcrumb navigation
   render_header(app, chunks[0], frame.buffer_mut());
 
-  // Main area: horizontal split
-  let main_chunks = Layout::default()
-    .direction(Direction::Horizontal)
-    .constraints([
-      Constraint::Percentage(app.tree_ratio),
-      Constraint::Percentage(100 - app.tree_ratio),
-    ])
-    .split(chunks[1]);
+  if app.dual_pane_mode {
+    // Dual-pane layout: left tree | right tree | preview (small)
+    let main_chunks = Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([
+        Constraint::Percentage(40), // left tree
+        Constraint::Percentage(40), // right tree
+        Constraint::Percentage(20), // preview
+      ])
+      .split(chunks[1]);
 
-  // Update viewport height
-  app.viewport_height = main_chunks[0].height.saturating_sub(2) as usize;
+    // Update viewport height
+    app.viewport_height = main_chunks[0].height.saturating_sub(2) as usize;
 
-  // File tree (left pane)
-  file_tree::render_file_tree(app, main_chunks[0], frame.buffer_mut());
+    // Left tree (active indicator based on active_pane)
+    file_tree::render_file_tree_with_active(app, main_chunks[0], frame.buffer_mut(), app.active_pane == 0, false);
 
-  // Preview (right pane)
-  preview::render_preview(app, main_chunks[1], frame.buffer_mut());
+    // Right tree
+    file_tree::render_file_tree_with_active(app, main_chunks[1], frame.buffer_mut(), app.active_pane == 1, true);
+
+    // Preview (smaller)
+    preview::render_preview(app, main_chunks[2], frame.buffer_mut());
+  } else {
+    // Single-pane layout: tree | preview
+    let main_chunks = Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([
+        Constraint::Percentage(app.tree_ratio),
+        Constraint::Percentage(100 - app.tree_ratio),
+      ])
+      .split(chunks[1]);
+
+    // Update viewport height
+    app.viewport_height = main_chunks[0].height.saturating_sub(2) as usize;
+
+    // File tree (left pane)
+    file_tree::render_file_tree(app, main_chunks[0], frame.buffer_mut());
+
+    // Preview (right pane)
+    preview::render_preview(app, main_chunks[1], frame.buffer_mut());
+  }
 
   // Status bar
   status_bar::render_status_bar(app, chunks[2], frame.buffer_mut());

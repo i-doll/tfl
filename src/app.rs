@@ -69,6 +69,49 @@ impl Default for ChmodState {
 /// Maximum number of entries in the directory history
 const HISTORY_LIMIT: usize = 50;
 
+/// State for a single pane in dual-pane mode
+pub struct Pane {
+  pub tree: FileTree,
+  pub cursor: usize,
+  pub scroll_offset: usize,
+  pub search_query: String,
+}
+
+impl Pane {
+  pub fn new(root: PathBuf) -> Result<Self> {
+    let tree = FileTree::new(root)?;
+    Ok(Self {
+      tree,
+      cursor: 0,
+      scroll_offset: 0,
+      search_query: String::new(),
+    })
+  }
+
+  pub fn visible_entries(&self) -> Vec<usize> {
+    if self.search_query.is_empty() {
+      return (0..self.tree.entries.len()).collect();
+    }
+    let query = self.search_query.to_lowercase();
+    self
+      .tree
+      .entries
+      .iter()
+      .enumerate()
+      .filter(|(_, e)| e.name.to_lowercase().contains(&query))
+      .map(|(i, _)| i)
+      .collect()
+  }
+
+  pub fn selected_entry(&self) -> Option<&crate::fs::FileEntry> {
+    let entries = self.visible_entries();
+    entries
+      .get(self.cursor)
+      .and_then(|&idx| self.tree.entries.get(idx))
+  }
+}
+
+
 pub struct App {
   pub tree: FileTree,
   pub cursor: usize,
@@ -107,6 +150,10 @@ pub struct App {
   history_forward: Vec<PathBuf>,
   pub breadcrumb_segments: Vec<BreadcrumbSegment>,
   pub breadcrumb_truncated: bool,
+  // Dual-pane state
+  pub dual_pane_mode: bool,
+  pub active_pane: usize,
+  pub right_pane: Option<Pane>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +206,9 @@ impl App {
       history_forward: Vec::new(),
       breadcrumb_segments,
       breadcrumb_truncated: false,
+      dual_pane_mode: false,
+      active_pane: 0,
+      right_pane: None,
     })
   }
 
@@ -411,6 +461,8 @@ impl App {
       Action::HistoryBack => self.history_go_back()?,
       Action::HistoryForward => self.history_go_forward()?,
       Action::BreadcrumbSelect(index) => self.breadcrumb_select(index)?,
+      Action::SwitchPane => self.switch_pane(),
+      Action::ToggleDualPane => self.toggle_dual_pane()?,
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
@@ -508,6 +560,56 @@ impl App {
       self.update_breadcrumbs();
     }
     Ok(())
+  }
+
+  fn switch_pane(&mut self) {
+    if !self.dual_pane_mode || self.right_pane.is_none() {
+      return;
+    }
+
+    // Save current pane state
+    if self.active_pane == 0 {
+      // Store left pane state and switch to right
+      self.active_pane = 1;
+    } else {
+      // Store right pane state and switch to left
+      self.active_pane = 0;
+    }
+    self.preview.invalidate();
+    self.update_preview();
+    self.set_status(format!("Pane: {}", if self.active_pane == 0 { "left" } else { "right" }));
+  }
+
+  fn toggle_dual_pane(&mut self) -> Result<()> {
+    if self.dual_pane_mode {
+      // Disable dual-pane mode
+      self.dual_pane_mode = false;
+      self.active_pane = 0;
+      self.right_pane = None;
+      self.set_status("Dual-pane mode: off".to_string());
+    } else {
+      // Enable dual-pane mode
+      let root = self.tree.root.clone();
+      self.right_pane = Some(Pane::new(root)?);
+      self.dual_pane_mode = true;
+      self.active_pane = 0;
+      self.set_status("Dual-pane mode: on".to_string());
+    }
+    self.preview.invalidate();
+    self.update_preview();
+    Ok(())
+  }
+
+  /// Returns the inactive pane's current directory (for copy/move destination)
+  pub fn inactive_pane_dir(&self) -> Option<PathBuf> {
+    if !self.dual_pane_mode {
+      return None;
+    }
+    if self.active_pane == 0 {
+      self.right_pane.as_ref().map(|p| p.tree.root.clone())
+    } else {
+      Some(self.tree.root.clone())
+    }
   }
 
   fn favorites_add(&mut self) {
@@ -2528,6 +2630,18 @@ mod tests {
     cleanup_test_dir(&dir);
   }
 
+  // === Dual-pane tests ===
+
+  #[test]
+  fn test_app_starts_in_single_pane_mode() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.dual_pane_mode);
+    assert_eq!(app.active_pane, 0);
+    assert!(app.right_pane.is_none());
+    cleanup_test_dir(&dir);
+  }
+
   #[test]
   fn test_toggle_blame() {
     let dir = setup_test_dir();
@@ -2544,6 +2658,17 @@ mod tests {
   }
 
   #[test]
+  fn test_toggle_dual_pane_enables_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    assert!(app.dual_pane_mode);
+    assert_eq!(app.active_pane, 0);
+    assert!(app.right_pane.is_some());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_start_opens_dialog() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2556,6 +2681,19 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Chmod);
     assert_eq!(app.chmod_state.path, path);
     assert!(!app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_dual_pane_twice_disables_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    assert!(app.dual_pane_mode);
+    app.update(Action::ToggleDualPane).unwrap();
+    assert!(!app.dual_pane_mode);
+    assert!(app.right_pane.is_none());
+    assert_eq!(app.active_pane, 0);
     cleanup_test_dir(&dir);
   }
 
@@ -2662,6 +2800,16 @@ mod tests {
   }
 
   #[test]
+  fn test_switch_pane_in_single_mode_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.active_pane, 0);
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 0); // Should not change
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_toggle_custom_ignore_action() {
     let dir = setup_test_dir();
     fs::write(dir.join("debug.log"), "log").unwrap();
@@ -2739,6 +2887,21 @@ mod tests {
   }
 
   #[test]
+  fn test_switch_pane_toggles_active_pane() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    assert_eq!(app.active_pane, 0);
+
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 1);
+
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_toggle_recursive_only_for_dirs() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2749,6 +2912,17 @@ mod tests {
     assert!(!app.chmod_state.is_dir);
     app.update(Action::ChmodToggleRecursive).unwrap();
     assert!(!app.chmod_state.recursive); // Should not toggle for files
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_right_pane_initialized_with_same_root() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    let right_pane = app.right_pane.as_ref().unwrap();
+    assert_eq!(right_pane.tree.root, app.tree.root);
     cleanup_test_dir(&dir);
   }
 
@@ -2767,6 +2941,25 @@ mod tests {
   }
 
   #[test]
+  fn test_pane_navigates_independently() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    // Move left pane cursor
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    assert_eq!(app.cursor, 2);
+
+    // Switch to right pane
+    app.update(Action::SwitchPane).unwrap();
+    // Right pane cursor should still be at 0
+    let right_pane = app.right_pane.as_ref().unwrap();
+    assert_eq!(right_pane.cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_close() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2774,6 +2967,34 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Chmod);
     app.update(Action::ChmodClose).unwrap();
     assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_inactive_pane_dir_returns_none_in_single_mode() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.inactive_pane_dir().is_none());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_inactive_pane_dir_returns_other_pane_root() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    // Active pane is left (0), inactive is right
+    let inactive_dir = app.inactive_pane_dir();
+    assert!(inactive_dir.is_some());
+    assert_eq!(inactive_dir.unwrap(), dir);
+
+    // Switch to right pane
+    app.update(Action::SwitchPane).unwrap();
+    // Now inactive pane is left
+    let inactive_dir = app.inactive_pane_dir();
+    assert!(inactive_dir.is_some());
+    assert_eq!(inactive_dir.unwrap(), dir);
     cleanup_test_dir(&dir);
   }
 
@@ -3201,6 +3422,24 @@ mod tests {
     let last = app.breadcrumb_segments.last().unwrap();
     assert_eq!(last.name, "aaa_dir");
 
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_preserves_left_pane_state() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move cursor and expand a dir
+    app.update(Action::MoveDown).unwrap();
+    let cursor_before = app.cursor;
+
+    // Enable dual-pane
+    app.update(Action::ToggleDualPane).unwrap();
+    assert_eq!(app.cursor, cursor_before);
+
+    // Disable dual-pane
+    app.update(Action::ToggleDualPane).unwrap();
+    assert_eq!(app.cursor, cursor_before);
     cleanup_test_dir(&dir);
   }
 }

@@ -74,6 +74,8 @@ pub enum Action {
   HistoryForward,
   BreadcrumbSelect(usize),
   ToggleMarkdownMode,
+  SwitchPane,
+  ToggleDualPane,
   Resize(u16, u16),
   Tick,
   None,
@@ -124,6 +126,8 @@ impl Action {
       "history_forward" => Some(Action::HistoryForward),
       "toggle_blame" => Some(Action::ToggleBlame),
       "toggle_markdown_mode" => Some(Action::ToggleMarkdownMode),
+      "switch_pane" => Some(Action::SwitchPane),
+      "toggle_dual_pane" => Some(Action::ToggleDualPane),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -175,6 +179,8 @@ mod tests {
     assert_eq!(Action::from_name("history_back"), Some(Action::HistoryBack));
     assert_eq!(Action::from_name("history_forward"), Some(Action::HistoryForward));
     assert_eq!(Action::from_name("toggle_blame"), Some(Action::ToggleBlame));
+    assert_eq!(Action::from_name("switch_pane"), Some(Action::SwitchPane));
+    assert_eq!(Action::from_name("toggle_dual_pane"), Some(Action::ToggleDualPane));
   }
 
   #[test]
