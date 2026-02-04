@@ -90,10 +90,16 @@ impl PreviewState {
     self.current_path = Some(path.to_path_buf());
 
     // Check cache
-    if self.cache.contains_key(path) {
+    if let Some(cached) = self.cache.get(path) {
       // Move to front of cache order
       self.cache_order.retain(|p| p != path);
       self.cache_order.push(path.to_path_buf());
+
+      // For images, re-trigger async load since we don't cache the protocol
+      if cached.preview_type == PreviewType::Image
+        && let Some(picker) = picker {
+          self.image_rx = Some(self::image::load_image_async(path, picker));
+        }
       return;
     }
 
