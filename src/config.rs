@@ -381,6 +381,7 @@ h = "go_home"
     }
   }
 
+  #[cfg(test)]
   pub fn load_from_str(s: &str) -> Config {
     let mut errors = Vec::new();
     Self::load_from_str_with_errors(s, &mut errors)
