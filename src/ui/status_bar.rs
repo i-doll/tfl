@@ -111,6 +111,13 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
           Line::from(spans)
         }
+        Some(PromptKind::Duplicate) => {
+          let mut spans = vec![
+            Span::styled(" Duplicate: ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(75)));
+          Line::from(spans)
+        }
         Some(PromptKind::ConfirmDelete) => {
           let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
           Line::from(vec![

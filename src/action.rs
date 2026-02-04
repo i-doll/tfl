@@ -30,6 +30,7 @@ pub enum Action {
   CopyFile,
   Paste,
   DeleteFile,
+  DuplicateStart,
   RenameStart,
   NewFileStart,
   NewDirStart,
@@ -92,6 +93,7 @@ impl Action {
       "copy_file" => Some(Action::CopyFile),
       "paste" => Some(Action::Paste),
       "delete_file" => Some(Action::DeleteFile),
+      "duplicate" => Some(Action::DuplicateStart),
       "rename_start" => Some(Action::RenameStart),
       "new_file_start" => Some(Action::NewFileStart),
       "new_dir_start" => Some(Action::NewDirStart),
@@ -138,6 +140,7 @@ mod tests {
     assert_eq!(Action::from_name("copy_file"), Some(Action::CopyFile));
     assert_eq!(Action::from_name("paste"), Some(Action::Paste));
     assert_eq!(Action::from_name("delete_file"), Some(Action::DeleteFile));
+    assert_eq!(Action::from_name("duplicate"), Some(Action::DuplicateStart));
     assert_eq!(Action::from_name("rename_start"), Some(Action::RenameStart));
     assert_eq!(Action::from_name("new_file_start"), Some(Action::NewFileStart));
     assert_eq!(Action::from_name("new_dir_start"), Some(Action::NewDirStart));

@@ -289,6 +289,7 @@ delete = "delete_file"
 "ctrl+x" = "cut_file"
 "ctrl+v" = "paste"
 "ctrl+c" = "copy_file"
+"ctrl+d" = "duplicate"
 r = "rename_start"
 f2 = "rename_start"
 a = "new_file_start"
@@ -548,6 +549,7 @@ mod tests {
       (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
       (KeyCode::Char('v'), KeyModifiers::CONTROL, Action::Paste),
       (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::CopyFile),
+      (KeyCode::Char('d'), KeyModifiers::CONTROL, Action::DuplicateStart),
       (KeyCode::Char('r'), n, Action::RenameStart),
       (KeyCode::F(2), n, Action::RenameStart),
       (KeyCode::Char('a'), n, Action::NewFileStart),

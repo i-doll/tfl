@@ -202,6 +202,19 @@ impl App {
           self.input_mode = InputMode::Prompt;
         }
       }
+      Action::DuplicateStart => {
+        if let Some(entry) = self.selected_entry() {
+          let path = &entry.path;
+          let suggested = ops::unique_dest_path(path);
+          self.prompt_input = suggested
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+          self.prompt_cursor = self.prompt_input.chars().count();
+          self.prompt_kind = Some(PromptKind::Duplicate);
+          self.input_mode = InputMode::Prompt;
+        }
+      }
       Action::NewFileStart => {
         self.prompt_input.clear();
         self.prompt_cursor = 0;
@@ -276,6 +289,7 @@ impl App {
           Some(PromptKind::Rename) => self.execute_rename()?,
           Some(PromptKind::NewFile) => self.execute_new_file()?,
           Some(PromptKind::NewDir) => self.execute_new_dir()?,
+          Some(PromptKind::Duplicate) => self.execute_duplicate()?,
           Some(PromptKind::ConfirmDelete) => {
             self.cancel_prompt();
             self.set_status("Delete cancelled".to_string());
@@ -877,6 +891,46 @@ impl App {
       Err(e) => {
         self.cancel_prompt();
         self.set_status(format!("Create dir failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn execute_duplicate(&mut self) -> Result<()> {
+    let new_name = self.prompt_input.trim().to_string();
+    if new_name.is_empty() {
+      self.cancel_prompt();
+      self.set_status("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let entry = self.selected_entry().cloned();
+    let Some(entry) = entry else {
+      self.cancel_prompt();
+      return Ok(());
+    };
+
+    let parent = entry.path.parent().unwrap_or(&self.tree.root);
+    let new_path = parent.join(&new_name);
+
+    if new_path.exists() {
+      self.cancel_prompt();
+      self.set_status(format!("{new_name} already exists"));
+      return Ok(());
+    }
+
+    match ops::copy_path(&entry.path, &new_path) {
+      Ok(()) => {
+        self.cancel_prompt();
+        self.tree.reload()?;
+        self.reposition_cursor_to(&new_path);
+        self.set_status(format!("Duplicated to {new_name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.set_status(format!("Duplicate failed: {e}"));
       }
     }
     Ok(())
@@ -2018,6 +2072,142 @@ mod tests {
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
 
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_file_creates_copy() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DuplicateStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::Duplicate));
+    // Prompt input should be pre-filled with suggested name
+    assert_eq!(app.prompt_input, "bbb_copy.txt");
+
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert!(dir.join("bbb_copy.txt").exists());
+    assert_eq!(fs::read_to_string(dir.join("bbb_copy.txt")).unwrap(), "hello");
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_dir_copies_recursively() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry is aaa_dir
+    assert!(app.tree.entries[0].is_dir);
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+
+    app.update(Action::DuplicateStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::Duplicate));
+    assert_eq!(app.prompt_input, "aaa_dir_copy");
+
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(dir.join("aaa_dir").is_dir());
+    assert!(dir.join("aaa_dir_copy").is_dir());
+    assert!(dir.join("aaa_dir_copy").join("inner.txt").exists());
+    assert_eq!(fs::read_to_string(dir.join("aaa_dir_copy").join("inner.txt")).unwrap(), "inner");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_allows_editing_name() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DuplicateStart).unwrap();
+
+    // Edit the name
+    app.prompt_input = "custom_name.txt".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert!(dir.join("custom_name.txt").exists());
+    assert!(!dir.join("bbb_copy.txt").exists());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_conflict_shows_error() {
+    let dir = setup_test_dir();
+    // Create a file that would conflict with the suggested duplicate name
+    fs::write(dir.join("bbb_copy.txt"), "existing").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DuplicateStart).unwrap();
+    // Prompt should suggest bbb_copy2.txt since bbb_copy.txt exists
+    assert_eq!(app.prompt_input, "bbb_copy2.txt");
+
+    // But if user manually types a conflicting name
+    app.prompt_input = "ccc.rs".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(app.status_message.as_ref().unwrap().contains("already exists"));
+    // Original should be untouched
+    assert_eq!(fs::read_to_string(dir.join("ccc.rs")).unwrap(), "fn main() {}");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_cancel_does_not_create() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DuplicateStart).unwrap();
+    app.update(Action::PromptCancel).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert!(!dir.join("bbb_copy.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_empty_name_rejected() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DuplicateStart).unwrap();
+    app.prompt_input = "  ".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert_eq!(app.status_message.as_deref(), Some("Name cannot be empty"));
+    assert!(!dir.join("bbb_copy.txt").exists());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_duplicate_cursor_repositions() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DuplicateStart).unwrap();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // Cursor should be on the duplicated file
+    let entry = app.selected_entry().unwrap();
+    assert_eq!(entry.name, "bbb_copy.txt");
     cleanup_test_dir(&dir);
   }
 }
