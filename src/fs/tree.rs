@@ -1,155 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::entry::{FileEntry, GitFileStatus, GitStatus};
-
-#[derive(Debug, Default)]
-pub struct GitRepoInfo {
-  pub branch: Option<String>,
-  pub ahead: usize,
-  pub behind: usize,
-  pub staged_count: usize,
-  pub modified_count: usize,
-  pub untracked_count: usize,
-}
-
-fn parse_status_char(c: u8) -> Option<GitFileStatus> {
-  match c {
-    b'M' => Some(GitFileStatus::Modified),
-    b'A' => Some(GitFileStatus::Added),
-    b'D' => Some(GitFileStatus::Deleted),
-    b'R' => Some(GitFileStatus::Renamed),
-    b'?' => Some(GitFileStatus::Untracked),
-    b'U' => Some(GitFileStatus::Conflicted),
-    _ => None,
-  }
-}
-
-fn is_conflict(x: u8, y: u8) -> bool {
-  matches!((x, y), (b'U', _) | (_, b'U') | (b'A', b'A') | (b'D', b'D'))
-}
-
-fn query_git_status(dir: &Path) -> (HashMap<PathBuf, GitStatus>, GitRepoInfo) {
-  let mut info = GitRepoInfo::default();
-  let empty = (HashMap::new(), info);
-
-  // Find repo root
-  let output = std::process::Command::new("git")
-    .args(["rev-parse", "--show-toplevel"])
-    .current_dir(dir)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .output();
-  let Ok(output) = output else { return empty };
-  if !output.status.success() {
-    return empty;
-  }
-  let repo_root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-
-  // Get branch name
-  let branch_output = std::process::Command::new("git")
-    .args(["rev-parse", "--abbrev-ref", "HEAD"])
-    .current_dir(&repo_root)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .output();
-  info = GitRepoInfo::default();
-  if let Ok(bo) = branch_output {
-    let branch = String::from_utf8_lossy(&bo.stdout).trim().to_string();
-    if !branch.is_empty() && branch != "HEAD" {
-      info.branch = Some(branch);
-    }
-  }
-
-  // Get ahead/behind
-  let ab_output = std::process::Command::new("git")
-    .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
-    .current_dir(&repo_root)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .output();
-  if let Ok(ab) = ab_output
-    && ab.status.success()
-  {
-    let text = String::from_utf8_lossy(&ab.stdout);
-    let parts: Vec<&str> = text.trim().split('\t').collect();
-    if parts.len() == 2 {
-      info.ahead = parts[0].parse().unwrap_or(0);
-      info.behind = parts[1].parse().unwrap_or(0);
-    }
-  }
-
-  // Get file statuses
-  let status_output = std::process::Command::new("git")
-    .args(["status", "--porcelain=v1", "-uall"])
-    .current_dir(&repo_root)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .output();
-  let Ok(status_output) = status_output else {
-    return (HashMap::new(), info);
-  };
-
-  let mut map: HashMap<PathBuf, GitStatus> = HashMap::new();
-  let text = String::from_utf8_lossy(&status_output.stdout);
-
-  for line in text.lines() {
-    if line.len() < 4 {
-      continue;
-    }
-    let bytes = line.as_bytes();
-    let x = bytes[0];
-    let y = bytes[1];
-    let path_str = &line[3..];
-
-    // Handle renames: "R  old -> new"
-    let file_path = if x == b'R' || y == b'R' {
-      if let Some(arrow) = path_str.find(" -> ") {
-        &path_str[arrow + 4..]
-      } else {
-        path_str
-      }
-    } else {
-      path_str
-    };
-
-    let abs_path = repo_root.join(file_path);
-
-    let status = if is_conflict(x, y) {
-      GitStatus {
-        staged: Some(GitFileStatus::Conflicted),
-        unstaged: Some(GitFileStatus::Conflicted),
-      }
-    } else if x == b'?' && y == b'?' {
-      GitStatus {
-        staged: None,
-        unstaged: Some(GitFileStatus::Untracked),
-      }
-    } else {
-      GitStatus {
-        staged: if x != b' ' && x != b'?' { parse_status_char(x) } else { None },
-        unstaged: if y != b' ' && y != b'?' { parse_status_char(y) } else { None },
-      }
-    };
-
-    // Count stats
-    if status.staged.is_some() && status.staged != Some(GitFileStatus::Untracked) {
-      info.staged_count += 1;
-    }
-    if status.unstaged == Some(GitFileStatus::Modified) {
-      info.modified_count += 1;
-    }
-    if status.unstaged == Some(GitFileStatus::Untracked) {
-      info.untracked_count += 1;
-    }
-
-    map.insert(abs_path, status);
-  }
-
-  (map, info)
-}
+use super::entry::{FileEntry, GitStatus};
+use crate::git::{GitRepo, GitRepoInfo};
 
 fn mark_git_status(statuses: &HashMap<PathBuf, GitStatus>, children: &mut [FileEntry]) {
   for child in children.iter_mut() {
@@ -185,22 +40,13 @@ fn propagate_git_status(entries: &mut [FileEntry]) {
   }
 }
 
-fn mark_git_ignored(dir: &Path, children: &mut [FileEntry]) {
+fn mark_git_ignored(git_repo: Option<&GitRepo>, children: &mut [FileEntry]) {
+  let Some(repo) = git_repo else { return };
   if children.is_empty() {
     return;
   }
-  let output = std::process::Command::new("git")
-    .arg("check-ignore")
-    .args(children.iter().map(|c| &c.path))
-    .current_dir(dir)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .output();
-  let Ok(output) = output else { return };
-  let ignored: HashSet<PathBuf> = String::from_utf8_lossy(&output.stdout)
-    .lines()
-    .map(PathBuf::from)
-    .collect();
+  let paths: Vec<PathBuf> = children.iter().map(|c| c.path.clone()).collect();
+  let ignored = repo.is_ignored_batch(&paths);
   for child in children.iter_mut() {
     child.is_git_ignored = ignored.contains(&child.path);
   }
@@ -213,21 +59,31 @@ pub struct FileTree {
   pub show_hidden: bool,
   pub git_statuses: HashMap<PathBuf, GitStatus>,
   pub git_info: GitRepoInfo,
+  git_repo: Option<GitRepo>,
 }
 
 impl FileTree {
   pub fn new(root: PathBuf) -> Result<Self> {
-    let (git_statuses, git_info) = query_git_status(&root);
+    let git_repo = GitRepo::open(&root);
+    let (git_statuses, git_info) = git_repo
+      .as_ref()
+      .map(|r| r.get_file_statuses())
+      .unwrap_or_default();
     let mut tree = Self {
       root: root.clone(),
       entries: Vec::new(),
       show_hidden: false,
       git_statuses,
       git_info,
+      git_repo,
     };
     tree.load_dir(&root, 0)?;
     propagate_git_status(&mut tree.entries);
     Ok(tree)
+  }
+
+  pub fn git_repo(&self) -> Option<&GitRepo> {
+    self.git_repo.as_ref()
   }
 
   pub fn load_dir(&mut self, path: &Path, depth: usize) -> Result<()> {
@@ -264,7 +120,7 @@ impl FileTree {
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    mark_git_ignored(path, &mut children);
+    mark_git_ignored(self.git_repo.as_ref(), &mut children);
     mark_git_status(&self.git_statuses, &mut children);
 
     // Insert children at the correct position
@@ -313,7 +169,7 @@ impl FileTree {
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    mark_git_ignored(&path, &mut children);
+    mark_git_ignored(self.git_repo.as_ref(), &mut children);
     mark_git_status(&self.git_statuses, &mut children);
 
     for (i, child) in children.into_iter().enumerate() {
@@ -349,7 +205,12 @@ impl FileTree {
 
   pub fn reload(&mut self) -> Result<()> {
     // Re-query git status
-    let (statuses, info) = query_git_status(&self.root);
+    self.git_repo = GitRepo::open(&self.root);
+    let (statuses, info) = self
+      .git_repo
+      .as_ref()
+      .map(|r| r.get_file_statuses())
+      .unwrap_or_default();
     self.git_statuses = statuses;
     self.git_info = info;
 
@@ -384,7 +245,12 @@ impl FileTree {
     }
     let path = self.entries[index].path.clone();
     self.root = path;
-    let (statuses, info) = query_git_status(&self.root);
+    self.git_repo = GitRepo::open(&self.root);
+    let (statuses, info) = self
+      .git_repo
+      .as_ref()
+      .map(|r| r.get_file_statuses())
+      .unwrap_or_default();
     self.git_statuses = statuses;
     self.git_info = info;
     let root = self.root.clone();
@@ -396,7 +262,12 @@ impl FileTree {
 
   pub fn navigate_to(&mut self, path: &Path) -> Result<()> {
     self.root = path.to_path_buf();
-    let (statuses, info) = query_git_status(&self.root);
+    self.git_repo = GitRepo::open(&self.root);
+    let (statuses, info) = self
+      .git_repo
+      .as_ref()
+      .map(|r| r.get_file_statuses())
+      .unwrap_or_default();
     self.git_statuses = statuses;
     self.git_info = info;
     let root = self.root.clone();
@@ -410,7 +281,12 @@ impl FileTree {
     if let Some(parent) = self.root.parent().map(|p| p.to_path_buf()) {
       let old_root = self.root.clone();
       self.root = parent;
-      let (statuses, info) = query_git_status(&self.root);
+      self.git_repo = GitRepo::open(&self.root);
+      let (statuses, info) = self
+        .git_repo
+        .as_ref()
+        .map(|r| r.get_file_statuses())
+        .unwrap_or_default();
       self.git_statuses = statuses;
       self.git_info = info;
       let root = self.root.clone();
@@ -428,8 +304,9 @@ impl FileTree {
 mod tests {
   use super::*;
   use std::fs;
-
   use std::sync::atomic::{AtomicU32, Ordering};
+
+  use crate::fs::entry::GitFileStatus;
   static COUNTER: AtomicU32 = AtomicU32::new(0);
 
   fn setup_test_dir() -> PathBuf {
@@ -572,11 +449,7 @@ mod tests {
     fs::create_dir_all(&dir).unwrap();
 
     // Init a git repo
-    std::process::Command::new("git")
-      .args(["init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    git2::Repository::init(&dir).unwrap();
 
     fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
     fs::write(dir.join("foo.log"), "log data").unwrap();
@@ -587,7 +460,8 @@ mod tests {
       FileEntry::from_path(dir.join("bar.txt"), 0),
     ];
 
-    mark_git_ignored(&dir, &mut children);
+    let repo = GitRepo::open(&dir);
+    mark_git_ignored(repo.as_ref(), &mut children);
 
     let foo = children.iter().find(|e| e.name == "foo.log").unwrap();
     let bar = children.iter().find(|e| e.name == "bar.txt").unwrap();
@@ -613,7 +487,7 @@ mod tests {
       FileEntry::from_path(dir.join("bar.txt"), 0),
     ];
 
-    mark_git_ignored(&dir, &mut children);
+    mark_git_ignored(None, &mut children);
 
     // No entries should be marked when not in a git repo
     assert!(!children.iter().any(|e| e.is_git_ignored));
@@ -629,11 +503,7 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    std::process::Command::new("git")
-      .args(["init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    git2::Repository::init(&dir).unwrap();
 
     fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
     fs::write(dir.join("ignored.log"), "log").unwrap();
@@ -665,29 +535,6 @@ mod tests {
   }
 
   #[test]
-  fn test_parse_status_char() {
-    assert_eq!(parse_status_char(b'M'), Some(GitFileStatus::Modified));
-    assert_eq!(parse_status_char(b'A'), Some(GitFileStatus::Added));
-    assert_eq!(parse_status_char(b'D'), Some(GitFileStatus::Deleted));
-    assert_eq!(parse_status_char(b'R'), Some(GitFileStatus::Renamed));
-    assert_eq!(parse_status_char(b'?'), Some(GitFileStatus::Untracked));
-    assert_eq!(parse_status_char(b'U'), Some(GitFileStatus::Conflicted));
-    assert_eq!(parse_status_char(b' '), None);
-    assert_eq!(parse_status_char(b'X'), None);
-  }
-
-  #[test]
-  fn test_is_conflict_patterns() {
-    assert!(is_conflict(b'U', b'U'));
-    assert!(is_conflict(b'U', b'A'));
-    assert!(is_conflict(b'A', b'U'));
-    assert!(is_conflict(b'A', b'A'));
-    assert!(is_conflict(b'D', b'D'));
-    assert!(!is_conflict(b'M', b' '));
-    assert!(!is_conflict(b' ', b'M'));
-  }
-
-  #[test]
   fn test_non_git_dir_all_clean() {
     let dir = std::env::temp_dir().join(format!(
       "tui_tree_nogit_clean_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
@@ -703,6 +550,40 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
   }
 
+  fn init_git_repo_with_config(dir: &Path) -> git2::Repository {
+    let repo = git2::Repository::init(dir).unwrap();
+    let mut config = repo.config().unwrap();
+    config.set_str("user.email", "test@test.com").unwrap();
+    config.set_str("user.name", "Test").unwrap();
+    repo
+  }
+
+  fn git_add_and_commit(repo: &git2::Repository, paths: &[&str], message: &str) {
+    let mut index = repo.index().unwrap();
+    for path in paths {
+      index.add_path(Path::new(path)).unwrap();
+    }
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let sig = repo.signature().unwrap();
+
+    if let Ok(head) = repo.head() {
+      let parent = repo.find_commit(head.target().unwrap()).unwrap();
+      repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).unwrap();
+    } else {
+      repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[]).unwrap();
+    }
+  }
+
+  fn git_stage(repo: &git2::Repository, paths: &[&str]) {
+    let mut index = repo.index().unwrap();
+    for path in paths {
+      index.add_path(Path::new(path)).unwrap();
+    }
+    index.write().unwrap();
+  }
+
   #[test]
   fn test_git_status_on_modified_files() {
     let dir = std::env::temp_dir().join(format!(
@@ -711,40 +592,11 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    // Init git repo with initial commit
-    std::process::Command::new("git")
-      .args(["init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["config", "user.email", "test@test.com"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["config", "user.name", "Test"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["config", "commit.gpgsign", "false"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    let repo = init_git_repo_with_config(&dir);
 
     // Create and commit a file
     fs::write(dir.join("tracked.txt"), "initial").unwrap();
-    std::process::Command::new("git")
-      .args(["add", "tracked.txt"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["commit", "-m", "init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    git_add_and_commit(&repo, &["tracked.txt"], "init");
 
     // Modify the tracked file
     fs::write(dir.join("tracked.txt"), "modified").unwrap();
@@ -752,11 +604,7 @@ mod tests {
     fs::write(dir.join("untracked.txt"), "new").unwrap();
     // Create a staged file
     fs::write(dir.join("staged.txt"), "staged").unwrap();
-    std::process::Command::new("git")
-      .args(["add", "staged.txt"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    git_stage(&repo, &["staged.txt"]);
 
     let tree = FileTree::new(dir.clone()).unwrap();
 
@@ -784,11 +632,7 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("subdir")).unwrap();
 
-    std::process::Command::new("git")
-      .args(["init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    git2::Repository::init(&dir).unwrap();
 
     // Create untracked file inside subdir
     fs::write(dir.join("subdir").join("new.txt"), "new").unwrap();
@@ -813,39 +657,11 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    std::process::Command::new("git")
-      .args(["init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["config", "user.email", "test@test.com"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["config", "user.name", "Test"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["config", "commit.gpgsign", "false"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    let repo = init_git_repo_with_config(&dir);
 
     // Create and commit
     fs::write(dir.join("file.txt"), "initial").unwrap();
-    std::process::Command::new("git")
-      .args(["add", "."])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
-    std::process::Command::new("git")
-      .args(["commit", "-m", "init"])
-      .current_dir(&dir)
-      .output()
-      .unwrap();
+    git_add_and_commit(&repo, &["file.txt"], "init");
 
     let mut tree = FileTree::new(dir.clone()).unwrap();
     let file = tree.entries.iter().find(|e| e.name == "file.txt").unwrap();

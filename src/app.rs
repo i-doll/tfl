@@ -897,7 +897,7 @@ impl App {
     let entries = self.visible_entries();
     if let Some(&idx) = entries.get(self.cursor) {
       let path = self.tree.entries[idx].path.clone();
-      self.preview.request_preview(&path, self.picker.as_ref());
+      self.preview.request_preview(&path, self.picker.as_ref(), self.tree.git_repo());
     }
   }
 
