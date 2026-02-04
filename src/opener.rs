@@ -92,8 +92,15 @@ pub fn command_exists(cmd: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 pub fn macos_app_exists(app_name: &str) -> bool {
-  ["/Applications", "/System/Applications", "/System/Applications/Utilities"]
-    .iter()
+  let mut dirs = vec![
+    "/Applications".into(),
+    "/System/Applications".into(),
+    "/System/Applications/Utilities".into(),
+  ];
+  if let Some(home) = dirs::home_dir() {
+    dirs.push(home.join("Applications").to_string_lossy().into_owned());
+  }
+  dirs.iter()
     .any(|dir| Path::new(&format!("{dir}/{app_name}.app")).exists())
 }
 
