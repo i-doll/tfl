@@ -5,6 +5,7 @@ mod event;
 mod favorites;
 mod fs;
 mod icons;
+mod opener;
 mod preview;
 mod ui;
 
@@ -167,6 +168,11 @@ If no path is given, opens the current directory."
       events.resume();
       app.tree.reload()?;
       app.preview.invalidate();
+      // Re-request preview for currently selected file
+      if let Some(entry) = app.selected_entry() {
+        let path = entry.path.clone();
+        app.preview.request_preview(&path, app.picker.as_ref());
+      }
     }
 
     if app.should_quit {

@@ -1,6 +1,7 @@
 pub mod favorites;
 pub mod file_tree;
 pub mod help;
+pub mod open_with;
 pub mod preview;
 pub mod status_bar;
 
@@ -57,6 +58,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   }
   if app.input_mode == crate::event::InputMode::Favorites {
     favorites::render_favorites(app, area, frame.buffer_mut());
+  }
+  if app.input_mode == crate::event::InputMode::OpenWith {
+    open_with::render_open_with(app, area, frame.buffer_mut());
   }
 }
 

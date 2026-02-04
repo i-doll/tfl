@@ -28,6 +28,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Fuzzy search/filter** across file names
 - **File management** — cut, copy, paste, delete, rename, new file/dir
 - **Yank path** to clipboard
+- **Open with system default** — press Enter on a file to open with the default app
+- **Open-with picker** — press `o` to choose from detected editors/IDEs
 - **Shell integrations** - drop into `$EDITOR`, `$SHELL`, or Claude Code
 - **Git status highlighting** — modified (yellow), staged (green), untracked (red), conflicted (bright red) with parent directory propagation
 - **Git branch display** in header with ahead/behind counts and summary stats
@@ -49,7 +51,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `h` / `←` | Collapse directory / go to parent |
 | `l` / `→` | Expand directory / select file |
 | `Space` | Toggle expand/collapse directory |
-| `Enter` | Enter directory |
+| `Enter` | Open file / enter directory |
+| `o` | Open with... (picker) |
 | `J` / `PageDown` | Scroll preview down |
 | `K` / `PageUp` | Scroll preview up |
 | `gg` | Go to top |
@@ -119,6 +122,15 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `d` / `Delete` | Remove selected favorite |
 | `Esc` | Close picker |
 
+### Open with mode
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Open with selected app |
+| `q` / `Esc` | Close picker |
+
 ### Help mode
 
 | Key | Action |
@@ -143,6 +155,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `serde` | Serialization/deserialization for config |
 | `toml` | TOML config file parsing |
 | `dirs` | XDG config directory resolution |
+| `open` | Open files with system default application |
 
 ## Build
 
@@ -189,7 +202,8 @@ up = "move_up"
 left = "move_left"
 right = "move_right"
 space = "toggle_expand"
-enter = "enter_dir"
+enter = "open_default"
+o = "open_with"
 "shift+j" = "scroll_preview_down"
 "shift+k" = "scroll_preview_up"
 pagedown = "scroll_preview_down"
@@ -234,11 +248,32 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
 Search and prompt mode keys are not configurable (they handle text input).
+
+### Custom apps
+
+Add `[[apps]]` entries to register custom apps for the open-with picker:
+
+```toml
+[[apps]]
+name = "Kakoune"
+command = "kak"
+tui = true
+
+[[apps]]
+name = "Lite XL"
+command = "lite-xl"
+
+[[apps]]
+name = "Pages"
+macos_app = "Pages"    # macOS only — opens via `open -a "Pages"`
+```
+
+Each entry needs at least `command` or `macos_app`. The `tui` flag (default `false`) enables suspend/resume for terminal editors. Custom apps appear before built-in apps in the picker.
 
 ## Module structure
 
@@ -250,6 +285,7 @@ src/
   event.rs         Event loop, key mapping, input modes
   config.rs        Config loading, key binding parsing, defaults
   favorites.rs     Favorites persistence (load/save/add/remove)
+  opener.rs        Open-with app detection and launching
   fs/
     entry.rs       FileEntry struct (path, metadata, depth)
     ops.rs         Filesystem helpers (copy, unique path)
@@ -263,6 +299,7 @@ src/
   ui/
     mod.rs         Layout: header, tree/preview split, status bar
     favorites.rs   Favorites picker floating overlay
+    open_with.rs   Open-with picker floating overlay
     file_tree.rs   Tree pane rendering with indent/icons
     preview.rs     Preview pane rendering (text, image, hex)
     status_bar.rs  Status bar: search input, file info, position

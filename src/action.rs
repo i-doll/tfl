@@ -50,6 +50,12 @@ pub enum Action {
   FavoritesClose,
   FavoritesRemove,
   FavoritesAddCurrent,
+  OpenDefault,
+  OpenWithStart,
+  OpenWithDown,
+  OpenWithUp,
+  OpenWithSelect,
+  OpenWithClose,
   Resize(u16, u16),
   Tick,
   None,
@@ -89,6 +95,8 @@ impl Action {
       "go_home" => Some(Action::GoHome),
       "favorite_add" => Some(Action::FavoriteAdd),
       "favorites_open" => Some(Action::FavoritesOpen),
+      "open_default" => Some(Action::OpenDefault),
+      "open_with" => Some(Action::OpenWithStart),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -132,6 +140,8 @@ mod tests {
     assert_eq!(Action::from_name("go_home"), Some(Action::GoHome));
     assert_eq!(Action::from_name("favorite_add"), Some(Action::FavoriteAdd));
     assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
+    assert_eq!(Action::from_name("open_default"), Some(Action::OpenDefault));
+    assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
   }
 
   #[test]
