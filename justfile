@@ -1,24 +1,37 @@
 default:
   @just --list
 
-build:
-  cargo build --release
+# Run clippy and tests
+[group('dev')]
+check: lint test
 
-install:
-  cargo install --path .
-
-uninstall:
-  cargo uninstall tfl
-
-test:
-  cargo test
-
+# Run clippy
+[group('dev')]
 lint:
   cargo clippy
 
-check: lint test
+# Run tests
+[group('dev')]
+test:
+  cargo test
+
+# Build release binary
+[group('install')]
+build:
+  cargo build --release
+
+# Install to cargo bin
+[group('install')]
+install:
+  cargo install --path .
+
+# Uninstall from cargo bin
+[group('install')]
+uninstall:
+  cargo uninstall tfl
 
 # Bump version, create release branch, commit, push, and open PR
+[group('release')]
 release version:
   #!/usr/bin/env bash
   set -euo pipefail
