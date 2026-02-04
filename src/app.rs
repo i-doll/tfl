@@ -52,6 +52,7 @@ pub struct App {
   pub open_with_apps: Vec<OpenApp>,
   pub open_with_cursor: usize,
   pub custom_apps: Vec<OpenApp>,
+  pub wrote_config: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +93,7 @@ impl App {
       open_with_apps: Vec::new(),
       open_with_cursor: 0,
       custom_apps: config.custom_apps.clone(),
+      wrote_config: false,
     })
   }
 
@@ -328,6 +330,7 @@ impl App {
       self.status_message = Some(format!("Save favorites failed: {e}"));
       return;
     }
+    self.wrote_config = true;
     self.status_message = Some("Added to favorites".to_string());
   }
 
@@ -376,6 +379,7 @@ impl App {
         self.status_message = Some(format!("Save favorites failed: {e}"));
         return;
       }
+      self.wrote_config = true;
       if self.favorites.len() > 0 {
         self.favorites_cursor = self.favorites_cursor.min(self.favorites.len() - 1);
       } else {
@@ -395,6 +399,7 @@ impl App {
       self.status_message = Some(format!("Save favorites failed: {e}"));
       return;
     }
+    self.wrote_config = true;
     self.status_message = Some("Added to favorites".to_string());
   }
 

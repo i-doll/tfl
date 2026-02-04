@@ -154,7 +154,9 @@ If no path is given, opens the current directory."
         app.update(crate::action::Action::Resize(w, h))?;
       }
       Event::ConfigChanged => {
-        if last_reload.elapsed() > Duration::from_millis(500) {
+        if app.wrote_config {
+          app.wrote_config = false;
+        } else if last_reload.elapsed() > Duration::from_millis(500) {
           reload_config(&mut config, &mut app);
           last_reload = Instant::now();
         }
