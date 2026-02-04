@@ -301,6 +301,7 @@ f = "favorites_open"
 "shift+f" = "favorite_add"
 x = "extract_archive"
 "shift+x" = "extract_and_delete"
+"ctrl+p" = "chmod"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -562,6 +563,7 @@ mod tests {
       (KeyCode::Char('F'), n, Action::FavoriteAdd),
       (KeyCode::Char('x'), n, Action::ExtractArchive),
       (KeyCode::Char('X'), n, Action::ExtractAndDelete),
+      (KeyCode::Char('p'), KeyModifiers::CONTROL, Action::ChmodStart),
     ];
 
     for (code, mods, action) in expected {

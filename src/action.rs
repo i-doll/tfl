@@ -60,6 +60,14 @@ pub enum Action {
   ErrorClose,
   ExtractArchive,
   ExtractAndDelete,
+  ChmodStart,
+  ChmodToggleBit(u8),
+  ChmodDigit(char),
+  ChmodOctalBackspace,
+  ChmodToggleOctal,
+  ChmodToggleRecursive,
+  ChmodApply,
+  ChmodClose,
   Resize(u16, u16),
   Tick,
   None,
@@ -104,6 +112,7 @@ impl Action {
       "open_with" => Some(Action::OpenWithStart),
       "extract_archive" => Some(Action::ExtractArchive),
       "extract_and_delete" => Some(Action::ExtractAndDelete),
+      "chmod" => Some(Action::ChmodStart),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -150,6 +159,7 @@ mod tests {
     assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
     assert_eq!(Action::from_name("open_default"), Some(Action::OpenDefault));
     assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
+    assert_eq!(Action::from_name("chmod"), Some(Action::ChmodStart));
   }
 
   #[test]

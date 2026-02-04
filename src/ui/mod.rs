@@ -1,3 +1,4 @@
+pub mod chmod;
 pub mod error;
 pub mod favorites;
 pub mod file_tree;
@@ -62,6 +63,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   }
   if app.input_mode == crate::event::InputMode::OpenWith {
     open_with::render_open_with(app, area, frame.buffer_mut());
+  }
+  if app.input_mode == crate::event::InputMode::Chmod {
+    chmod::render_chmod(app, area, frame.buffer_mut());
   }
   if !app.error_messages.is_empty() {
     error::render_error(&app.error_messages, area, frame.buffer_mut());

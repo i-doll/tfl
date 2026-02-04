@@ -121,6 +121,7 @@ pub enum InputMode {
   Prompt,
   Favorites,
   OpenWith,
+  Chmod,
   Error,
 }
 
@@ -177,6 +178,21 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Char('k') | KeyCode::Up => Action::OpenWithUp,
       KeyCode::Enter => Action::OpenWithSelect,
       KeyCode::Esc | KeyCode::Char('q') => Action::OpenWithClose,
+      _ => Action::None,
+    },
+    InputMode::Chmod => match key.code {
+      KeyCode::Esc | KeyCode::Char('q') => Action::ChmodClose,
+      KeyCode::Enter => Action::ChmodApply,
+      KeyCode::Char('r') => Action::ChmodToggleBit(0), // owner read
+      KeyCode::Char('w') => Action::ChmodToggleBit(1), // owner write
+      KeyCode::Char('x') => Action::ChmodToggleBit(2), // owner execute
+      KeyCode::Char('R') => Action::ChmodToggleBit(3), // group read
+      KeyCode::Char('W') => Action::ChmodToggleBit(4), // group write
+      KeyCode::Char('X') => Action::ChmodToggleBit(5), // group execute
+      KeyCode::Char(c @ '0'..='7') => Action::ChmodDigit(c),
+      KeyCode::Tab => Action::ChmodToggleOctal,
+      KeyCode::Backspace => Action::ChmodOctalBackspace,
+      KeyCode::Char('d') => Action::ChmodToggleRecursive,
       _ => Action::None,
     },
     InputMode::Error => match key.code {
@@ -374,5 +390,41 @@ mod tests {
     };
     c.normal_keys.insert(kb, Action::Quit);
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal, &c), Action::Quit);
+  }
+
+  #[test]
+  fn test_chmod_mode_close() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Chmod, &c), Action::ChmodClose);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Chmod, &c), Action::ChmodClose);
+  }
+
+  #[test]
+  fn test_chmod_mode_apply() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Chmod, &c), Action::ChmodApply);
+  }
+
+  #[test]
+  fn test_chmod_mode_toggle_bits() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('r')), InputMode::Chmod, &c), Action::ChmodToggleBit(0));
+    assert_eq!(map_key(key(KeyCode::Char('w')), InputMode::Chmod, &c), Action::ChmodToggleBit(1));
+    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::Chmod, &c), Action::ChmodToggleBit(2));
+    assert_eq!(map_key(key(KeyCode::Char('R')), InputMode::Chmod, &c), Action::ChmodToggleBit(3));
+    assert_eq!(map_key(key(KeyCode::Char('W')), InputMode::Chmod, &c), Action::ChmodToggleBit(4));
+    assert_eq!(map_key(key(KeyCode::Char('X')), InputMode::Chmod, &c), Action::ChmodToggleBit(5));
+  }
+
+  #[test]
+  fn test_chmod_mode_toggle_recursive() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('d')), InputMode::Chmod, &c), Action::ChmodToggleRecursive);
+  }
+
+  #[test]
+  fn test_chmod_mode_toggle_octal() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Tab), InputMode::Chmod, &c), Action::ChmodToggleOctal);
   }
 }

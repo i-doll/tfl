@@ -26,7 +26,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
-- **File management** — cut, copy, paste, delete, rename, new file/dir
+- **File management** — cut, copy, paste, delete, rename, new file/dir, chmod
 - **Yank path** to clipboard
 - **Open with system default** — press Enter on a file to open with the default app
 - **Open-with picker** — press `o` to choose from detected editors/IDEs
@@ -83,6 +83,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `F` | Add current directory to favorites |
 | `x` | Extract archive to current directory |
 | `X` | Extract archive and delete after success |
+| `Ctrl+p` | Change file permissions (chmod) |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
@@ -145,6 +146,18 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 |---|---|
 | `?` | Close help |
 | `Esc` | Close help |
+
+### Chmod mode
+
+| Key | Action |
+|---|---|
+| `r` / `w` / `x` | Toggle owner read/write/execute |
+| `R` / `W` / `X` | Toggle group read/write/execute |
+| `4` / `2` / `1` | Toggle others read/write/execute |
+| `Tab` | Toggle octal input mode |
+| `d` | Toggle recursive (directories only) |
+| `Enter` | Apply changes |
+| `Esc` / `q` | Cancel |
 
 ## Dependencies
 
@@ -262,6 +275,7 @@ a = "new_file_start"
 "~" = "go_home"
 f = "favorites_open"
 "shift+f" = "favorite_add"
+"ctrl+p" = "chmod"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -278,7 +292,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -331,6 +345,7 @@ src/
     metadata.rs    File/image metadata extraction, formatting
   ui/
     mod.rs         Layout: header, tree/preview split, status bar
+    chmod.rs       Chmod dialog for changing file permissions
     favorites.rs   Favorites picker floating overlay
     open_with.rs   Open-with picker floating overlay
     file_tree.rs   Tree pane rendering with indent/icons

@@ -148,6 +148,12 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("Enter:open  Esc:close", Style::default().fg(Color::DarkGray)),
       ])
     }
+    InputMode::Chmod => {
+      Line::from(vec![
+        Span::styled(" Chmod ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
+        Span::styled("r/w/x:toggle  Tab:octal  Enter:apply  Esc:cancel", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::Error => {
       Line::from(vec![
         Span::styled(" Error ", Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD)),
