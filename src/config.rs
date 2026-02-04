@@ -269,9 +269,13 @@ a = "new_file_start"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
 "?" = "toggle_help"
+"~" = "go_home"
+f = "favorites_open"
+"shift+f" = "favorite_add"
 
 [keys.g_prefix]
 g = "go_to_top"
+h = "go_home"
 "#
   }
 
@@ -480,6 +484,9 @@ mod tests {
       (KeyCode::Char('ø'), n, Action::ShrinkTree),
       (KeyCode::Char('æ'), n, Action::GrowTree),
       (KeyCode::Char('?'), n, Action::ToggleHelp),
+      (KeyCode::Char('~'), n, Action::GoHome),
+      (KeyCode::Char('f'), n, Action::FavoritesOpen),
+      (KeyCode::Char('F'), n, Action::FavoriteAdd),
     ];
 
     for (code, mods, action) in expected {
@@ -497,6 +504,8 @@ mod tests {
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('g'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.g_prefix_keys.get(&kb), Some(&Action::GoToTop));
+    let kb_h = KeyBinding { code: KeyCode::Char('h'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.g_prefix_keys.get(&kb_h), Some(&Action::GoHome));
   }
 
   // --- Config::load_from_str tests ---

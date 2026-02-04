@@ -7,6 +7,7 @@ use ratatui_image::picker::Picker;
 use crate::action::Action;
 use crate::config::Config;
 use crate::event::{InputMode, PromptKind};
+use crate::favorites::Favorites;
 use crate::fs::FileTree;
 use crate::fs::ops;
 use crate::preview::PreviewState;
@@ -44,6 +45,8 @@ pub struct App {
   pub prompt_kind: Option<PromptKind>,
   pub prompt_input: String,
   pub prompt_cursor: usize,
+  pub favorites: Favorites,
+  pub favorites_cursor: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +80,8 @@ impl App {
       prompt_kind: None,
       prompt_input: String::new(),
       prompt_cursor: 0,
+      favorites: Favorites::load(),
+      favorites_cursor: 0,
     })
   }
 
@@ -264,12 +269,114 @@ impl App {
       Action::Resize(_, h) => {
         self.viewport_height = h.saturating_sub(4) as usize;
       }
+      Action::GoHome => self.go_home()?,
+      Action::FavoriteAdd => self.favorites_add(),
+      Action::FavoritesOpen => self.favorites_open(),
+      Action::FavoritesDown => self.favorites_move(1),
+      Action::FavoritesUp => self.favorites_move(-1),
+      Action::FavoritesSelect => self.favorites_select()?,
+      Action::FavoritesClose => self.favorites_close(),
+      Action::FavoritesRemove => self.favorites_remove(),
+      Action::FavoritesAddCurrent => self.favorites_add_current(),
       Action::Tick => {
         self.preview.check_image_loaded();
       }
       Action::None => {}
     }
     Ok(())
+  }
+
+  fn go_home(&mut self) -> Result<()> {
+    if let Some(home) = dirs::home_dir() {
+      self.tree.navigate_to(&home)?;
+      self.search_query.clear();
+      self.cursor = 0;
+      self.tree_scroll_offset = 0;
+      self.preview.invalidate();
+      self.update_preview();
+    }
+    Ok(())
+  }
+
+  fn favorites_add(&mut self) {
+    let root = self.tree.root.clone();
+    if self.favorites.contains(&root) {
+      self.status_message = Some("Already in favorites".to_string());
+      return;
+    }
+    self.favorites.add(root);
+    if let Err(e) = self.favorites.save() {
+      self.status_message = Some(format!("Save favorites failed: {e}"));
+      return;
+    }
+    self.status_message = Some("Added to favorites".to_string());
+  }
+
+  fn favorites_open(&mut self) {
+    self.input_mode = InputMode::Favorites;
+    self.favorites_cursor = 0;
+  }
+
+  fn favorites_close(&mut self) {
+    self.input_mode = InputMode::Normal;
+  }
+
+  fn favorites_move(&mut self, delta: i32) {
+    let len = self.favorites.len();
+    if len == 0 {
+      return;
+    }
+    if delta > 0 {
+      self.favorites_cursor = (self.favorites_cursor + delta as usize).min(len - 1);
+    } else {
+      self.favorites_cursor = self.favorites_cursor.saturating_sub((-delta) as usize);
+    }
+  }
+
+  fn favorites_select(&mut self) -> Result<()> {
+    if let Some(path) = self.favorites.get(self.favorites_cursor).map(|p| p.to_path_buf()) {
+      if path.is_dir() {
+        self.tree.navigate_to(&path)?;
+        self.search_query.clear();
+        self.cursor = 0;
+        self.tree_scroll_offset = 0;
+        self.preview.invalidate();
+        self.update_preview();
+        self.input_mode = InputMode::Normal;
+      } else {
+        self.status_message = Some("Directory no longer exists".to_string());
+      }
+    }
+    Ok(())
+  }
+
+  fn favorites_remove(&mut self) {
+    if self.favorites_cursor < self.favorites.len() {
+      self.favorites.remove(self.favorites_cursor);
+      if let Err(e) = self.favorites.save() {
+        self.status_message = Some(format!("Save favorites failed: {e}"));
+        return;
+      }
+      if self.favorites.len() > 0 {
+        self.favorites_cursor = self.favorites_cursor.min(self.favorites.len() - 1);
+      } else {
+        self.favorites_cursor = 0;
+      }
+    }
+  }
+
+  fn favorites_add_current(&mut self) {
+    let root = self.tree.root.clone();
+    if self.favorites.contains(&root) {
+      self.status_message = Some("Already in favorites".to_string());
+      return;
+    }
+    self.favorites.add(root);
+    if let Err(e) = self.favorites.save() {
+      self.status_message = Some(format!("Save favorites failed: {e}"));
+      return;
+    }
+    self.status_message = Some("Added to favorites".to_string());
   }
 
   fn move_cursor(&mut self, delta: i32) {

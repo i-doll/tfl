@@ -34,6 +34,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **.gitignore-aware** hidden file toggling
 - **Resizable panes** with adjustable tree/preview ratio
 - **Preview cache** with LRU eviction and debounced loading
+- **Favorites** — save directories, jump to them from a picker overlay
+- **Home shortcut** — jump to home directory with `~` or `gh`
 - **Configurable keybindings** via TOML config file
 
 ## Keybindings
@@ -67,6 +69,9 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `s` | Open `$SHELL` in current directory |
 | `ø` | Shrink tree pane |
 | `æ` | Grow tree pane |
+| `~` / `gh` | Go to home directory |
+| `f` | Open favorites picker |
+| `F` | Add current directory to favorites |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
@@ -84,6 +89,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | Key | Action |
 |---|---|
 | `g` | Go to top (`gg`) |
+| `h` | Go to home directory (`gh`) |
 | Any other | Cancel |
 
 ### Prompt mode (rename, new file, new dir)
@@ -101,6 +107,17 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 |---|---|
 | `y` | Confirm delete |
 | Any other | Cancel |
+
+### Favorites mode
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Navigate to selected favorite |
+| `a` | Add current directory |
+| `d` / `Delete` | Remove selected favorite |
+| `Esc` | Close picker |
 
 ### Help mode
 
@@ -198,9 +215,13 @@ a = "new_file_start"
 "ø" = "shrink_tree"
 "æ" = "grow_tree"
 "?" = "toggle_help"
+"~" = "go_home"
+f = "favorites_open"
+"shift+f" = "favorite_add"
 
 [keys.g_prefix]
 g = "go_to_top"
+h = "go_home"
 ```
 
 ### Key format
@@ -213,7 +234,7 @@ g = "go_to_top"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -228,6 +249,7 @@ src/
   action.rs        Action enum (all possible user actions)
   event.rs         Event loop, key mapping, input modes
   config.rs        Config loading, key binding parsing, defaults
+  favorites.rs     Favorites persistence (load/save/add/remove)
   fs/
     entry.rs       FileEntry struct (path, metadata, depth)
     ops.rs         Filesystem helpers (copy, unique path)
@@ -240,6 +262,7 @@ src/
     directory.rs   Directory summary (file counts, sizes)
   ui/
     mod.rs         Layout: header, tree/preview split, status bar
+    favorites.rs   Favorites picker floating overlay
     file_tree.rs   Tree pane rendering with indent/icons
     preview.rs     Preview pane rendering (text, image, hex)
     status_bar.rs  Status bar: search input, file info, position

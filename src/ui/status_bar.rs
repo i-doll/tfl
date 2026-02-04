@@ -127,6 +127,12 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         }
       }
     }
+    InputMode::Favorites => {
+      Line::from(vec![
+        Span::styled(" Favorites ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
+        Span::styled("a:add  d:remove  Enter:go  Esc:close", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::Normal => {
       if let Some(ref msg) = app.status_message {
         Line::from(vec![

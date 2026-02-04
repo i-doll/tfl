@@ -1,3 +1,4 @@
+pub mod favorites;
 pub mod file_tree;
 pub mod help;
 pub mod preview;
@@ -50,9 +51,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   // Status bar
   status_bar::render_status_bar(app, chunks[2], frame.buffer_mut());
 
-  // Help overlay
+  // Overlays
   if app.show_help {
     help::render_help(config, area, frame.buffer_mut());
+  }
+  if app.input_mode == crate::event::InputMode::Favorites {
+    favorites::render_favorites(app, area, frame.buffer_mut());
   }
 }
 
