@@ -121,7 +121,7 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Char('j') | KeyCode::Down => Action::FavoritesDown,
       KeyCode::Char('k') | KeyCode::Up => Action::FavoritesUp,
       KeyCode::Enter => Action::FavoritesSelect,
-      KeyCode::Esc => Action::FavoritesClose,
+      KeyCode::Esc | KeyCode::Char('q') => Action::FavoritesClose,
       KeyCode::Char('d') | KeyCode::Delete => Action::FavoritesRemove,
       KeyCode::Char('a') => Action::FavoritesAddCurrent,
       _ => Action::None,
@@ -275,6 +275,7 @@ mod tests {
     assert_eq!(map_key(key(KeyCode::Up), InputMode::Favorites, &c), Action::FavoritesUp);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Favorites, &c), Action::FavoritesSelect);
     assert_eq!(map_key(key(KeyCode::Esc), InputMode::Favorites, &c), Action::FavoritesClose);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Favorites, &c), Action::FavoritesClose);
     assert_eq!(map_key(key(KeyCode::Char('d')), InputMode::Favorites, &c), Action::FavoritesRemove);
     assert_eq!(map_key(key(KeyCode::Delete), InputMode::Favorites, &c), Action::FavoritesRemove);
     assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::Favorites, &c), Action::FavoritesAddCurrent);
@@ -283,8 +284,8 @@ mod tests {
   #[test]
   fn test_favorites_mode_other_keys_ignored() {
     let c = cfg();
-    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Favorites, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::Favorites, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('z')), InputMode::Favorites, &c), Action::None);
   }
 
   #[test]
