@@ -2,6 +2,9 @@
 name = "tfl"
 version = "0.1.0"
 edition = "2024"
+description = "Terminal file explorer with vim-style navigation and rich file previews"
+license = "MIT"
+repository = "https://github.com/i-doll/tfl"
 
 [dependencies]
 ratatui = "0.30"

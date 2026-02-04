@@ -159,13 +159,23 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `open` | Open files with system default application |
 | `notify` | OS-native file watching for live config reload |
 
-## Build
+## Installation
+
+### From source
 
 ```sh
-cargo build --release
+just install
 ```
 
-The binary will be at `target/release/tfl`.
+Or without just:
+
+```sh
+cargo install --path .
+```
+
+### Pre-built binaries
+
+Download from [GitHub Releases](https://github.com/i-doll/tfl/releases).
 
 ## Usage
 
