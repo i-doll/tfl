@@ -278,6 +278,7 @@ pageup = "scroll_preview_up"
 "shift+g" = "go_to_bottom"
 g = "g_press"
 "/" = "search_start"
+"ctrl+s" = "size_filter_start"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
@@ -558,6 +559,7 @@ mod tests {
       (KeyCode::Char('~'), n, Action::GoHome),
       (KeyCode::Char('f'), n, Action::FavoritesOpen),
       (KeyCode::Char('F'), n, Action::FavoriteAdd),
+      (KeyCode::Char('s'), KeyModifiers::CONTROL, Action::SizeFilterStart),
     ];
 
     for (code, mods, action) in expected {

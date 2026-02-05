@@ -8,7 +8,7 @@ use crate::action::Action;
 use crate::config::Config;
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
-use crate::fs::FileTree;
+use crate::fs::{FileTree, SizeFilter};
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::PreviewState;
@@ -32,6 +32,7 @@ pub struct App {
   pub picker: Option<Picker>,
   pub input_mode: InputMode,
   pub search_query: String,
+  pub size_filter_query: String,
   pub tree_ratio: u16,
   pub min_tree_ratio: u16,
   pub max_tree_ratio: u16,
@@ -75,6 +76,7 @@ impl App {
       picker,
       input_mode: InputMode::Normal,
       search_query: String::new(),
+      size_filter_query: String::new(),
       tree_ratio: config.tree_ratio,
       min_tree_ratio: config.min_tree_ratio,
       max_tree_ratio: config.max_tree_ratio,
@@ -151,6 +153,26 @@ impl App {
       Action::SearchCancel => {
         self.input_mode = InputMode::Normal;
         self.search_query.clear();
+      }
+      Action::SizeFilterStart => {
+        self.input_mode = InputMode::SizeFilter;
+        self.size_filter_query.clear();
+      }
+      Action::SizeFilterInput(c) => {
+        self.size_filter_query.push(c);
+        self.apply_size_filter();
+      }
+      Action::SizeFilterBackspace => {
+        self.size_filter_query.pop();
+        self.apply_size_filter();
+      }
+      Action::SizeFilterConfirm => {
+        self.input_mode = InputMode::Normal;
+        // Keep the filter active
+      }
+      Action::SizeFilterCancel => {
+        self.input_mode = InputMode::Normal;
+        self.size_filter_query.clear();
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -936,18 +958,46 @@ impl App {
 
   /// Returns indices into tree.entries for visible (filtered) entries
   pub fn visible_entries(&self) -> Vec<usize> {
-    if self.search_query.is_empty() {
+    let has_name_filter = !self.search_query.is_empty();
+    let size_filter = SizeFilter::parse(&self.size_filter_query);
+
+    if !has_name_filter && size_filter.is_none() {
       return (0..self.tree.entries.len()).collect();
     }
+
     let query = self.search_query.to_lowercase();
     self
       .tree
       .entries
       .iter()
       .enumerate()
-      .filter(|(_, e)| e.name.to_lowercase().contains(&query))
+      .filter(|(_, e)| {
+        // Name filter (if active)
+        if has_name_filter && !e.name.to_lowercase().contains(&query) {
+          return false;
+        }
+        // Size filter (if active) - only apply to files, not directories
+        if let Some(ref sf) = size_filter
+          && !e.is_dir && !sf.matches(e.size)
+        {
+          return false;
+        }
+        true
+      })
       .map(|(i, _)| i)
       .collect()
+  }
+
+  fn apply_size_filter(&mut self) {
+    // Move cursor to first matching entry
+    let entries = self.visible_entries();
+    if entries.is_empty() {
+      self.cursor = 0;
+    } else if self.cursor >= entries.len() {
+      self.cursor = entries.len().saturating_sub(1);
+    }
+    self.adjust_scroll();
+    self.update_preview();
   }
 
   pub fn set_status(&mut self, msg: String) {
@@ -2017,6 +2067,258 @@ mod tests {
     assert!(subdir_entry.expanded);
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  // --- Size filter tests ---
+
+  fn setup_test_dir_with_sizes() -> PathBuf {
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("tui_app_size_{id}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    // Create files of different sizes
+    fs::write(dir.join("empty.txt"), "").unwrap(); // 0 bytes
+    fs::write(dir.join("small.txt"), "hello").unwrap(); // 5 bytes
+    fs::write(dir.join("medium.txt"), "x".repeat(1000)).unwrap(); // 1000 bytes
+    fs::write(dir.join("large.txt"), "x".repeat(10000)).unwrap(); // 10000 bytes
+    dir
+  }
+
+  #[test]
+  fn test_size_filter_start() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.size_filter_query.is_empty());
+
+    app.update(Action::SizeFilterStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::SizeFilter);
+    assert!(app.size_filter_query.is_empty());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_input() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::SizeFilterStart).unwrap();
+
+    app.update(Action::SizeFilterInput('>')).unwrap();
+    app.update(Action::SizeFilterInput('1')).unwrap();
+    app.update(Action::SizeFilterInput('0')).unwrap();
+    app.update(Action::SizeFilterInput('0')).unwrap();
+    assert_eq!(app.size_filter_query, ">100");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_backspace() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::SizeFilterStart).unwrap();
+
+    app.update(Action::SizeFilterInput('>')).unwrap();
+    app.update(Action::SizeFilterInput('1')).unwrap();
+    app.update(Action::SizeFilterInput('M')).unwrap();
+    assert_eq!(app.size_filter_query, ">1M");
+
+    app.update(Action::SizeFilterBackspace).unwrap();
+    assert_eq!(app.size_filter_query, ">1");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_cancel() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::SizeFilterStart).unwrap();
+    app.update(Action::SizeFilterInput('>')).unwrap();
+    app.update(Action::SizeFilterInput('1')).unwrap();
+    app.update(Action::SizeFilterInput('M')).unwrap();
+
+    app.update(Action::SizeFilterCancel).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.size_filter_query.is_empty());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_confirm() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::SizeFilterStart).unwrap();
+    app.update(Action::SizeFilterInput('>')).unwrap();
+    app.update(Action::SizeFilterInput('1')).unwrap();
+    app.update(Action::SizeFilterInput('0')).unwrap();
+    app.update(Action::SizeFilterInput('0')).unwrap();
+
+    app.update(Action::SizeFilterConfirm).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    // Filter should still be active after confirm
+    assert_eq!(app.size_filter_query, ">100");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_greater_than() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let all_entries = app.visible_entries().len();
+    assert_eq!(all_entries, 4); // 4 files
+
+    // Filter for files > 100 bytes
+    app.size_filter_query = ">100".to_string();
+    let visible = app.visible_entries();
+
+    // Should show medium.txt (1000) and large.txt (10000)
+    let visible_names: Vec<_> = visible
+      .iter()
+      .map(|&i| app.tree.entries[i].name.clone())
+      .collect();
+    assert!(visible_names.contains(&"medium.txt".to_string()));
+    assert!(visible_names.contains(&"large.txt".to_string()));
+    assert!(!visible_names.contains(&"small.txt".to_string()));
+    assert!(!visible_names.contains(&"empty.txt".to_string()));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_less_than() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Filter for files < 100 bytes
+    app.size_filter_query = "<100".to_string();
+    let visible = app.visible_entries();
+
+    // Should show empty.txt (0) and small.txt (5)
+    let visible_names: Vec<_> = visible
+      .iter()
+      .map(|&i| app.tree.entries[i].name.clone())
+      .collect();
+    assert!(visible_names.contains(&"empty.txt".to_string()));
+    assert!(visible_names.contains(&"small.txt".to_string()));
+    assert!(!visible_names.contains(&"medium.txt".to_string()));
+    assert!(!visible_names.contains(&"large.txt".to_string()));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_equal_zero() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Filter for empty files
+    app.size_filter_query = "=0".to_string();
+    let visible = app.visible_entries();
+
+    // Should only show empty.txt
+    assert_eq!(visible.len(), 1);
+    assert_eq!(app.tree.entries[visible[0]].name, "empty.txt");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_range() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Filter for files between 100 and 5000 bytes
+    app.size_filter_query = "100-5000".to_string();
+    let visible = app.visible_entries();
+
+    // Should only show medium.txt (1000)
+    assert_eq!(visible.len(), 1);
+    assert_eq!(app.tree.entries[visible[0]].name, "medium.txt");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_combined_with_name() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Filter by both name and size
+    app.search_query = "txt".to_string();
+    app.size_filter_query = ">100".to_string();
+    let visible = app.visible_entries();
+
+    // Should show medium.txt and large.txt (both contain "txt" and are > 100 bytes)
+    let visible_names: Vec<_> = visible
+      .iter()
+      .map(|&i| app.tree.entries[i].name.clone())
+      .collect();
+    assert!(visible_names.contains(&"medium.txt".to_string()));
+    assert!(visible_names.contains(&"large.txt".to_string()));
+    assert!(!visible_names.contains(&"small.txt".to_string()));
+    assert!(!visible_names.contains(&"empty.txt".to_string()));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_with_units() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Filter for files > 1K (1024 bytes)
+    app.size_filter_query = ">1K".to_string();
+    let visible = app.visible_entries();
+
+    // Should only show large.txt (10000 bytes)
+    let visible_names: Vec<_> = visible
+      .iter()
+      .map(|&i| app.tree.entries[i].name.clone())
+      .collect();
+    assert!(visible_names.contains(&"large.txt".to_string()));
+    assert!(!visible_names.contains(&"medium.txt".to_string()));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_ignores_directories() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Filter for files < 10 bytes
+    app.size_filter_query = "<10".to_string();
+    let visible = app.visible_entries();
+
+    // Directories should still be visible
+    let visible_names: Vec<_> = visible
+      .iter()
+      .map(|&i| &app.tree.entries[i])
+      .filter(|e| e.is_dir)
+      .map(|e| e.name.clone())
+      .collect();
+    assert!(visible_names.contains(&"aaa_dir".to_string()));
+    assert!(visible_names.contains(&"zzz_dir".to_string()));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_size_filter_invalid_expression() {
+    let dir = setup_test_dir_with_sizes();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let all_entries = app.visible_entries().len();
+
+    // Invalid filter should show all entries
+    app.size_filter_query = "invalid".to_string();
+    let visible = app.visible_entries();
+    assert_eq!(visible.len(), all_entries);
 
     cleanup_test_dir(&dir);
   }

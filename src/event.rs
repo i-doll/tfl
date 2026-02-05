@@ -116,6 +116,7 @@ impl EventLoop {
 pub enum InputMode {
   Normal,
   Search,
+  SizeFilter,
   GPrefix,
   Help,
   Prompt,
@@ -139,6 +140,13 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Enter => Action::SearchConfirm,
       KeyCode::Backspace => Action::SearchBackspace,
       KeyCode::Char(c) => Action::SearchInput(c),
+      _ => Action::None,
+    },
+    InputMode::SizeFilter => match key.code {
+      KeyCode::Esc => Action::SizeFilterCancel,
+      KeyCode::Enter => Action::SizeFilterConfirm,
+      KeyCode::Backspace => Action::SizeFilterBackspace,
+      KeyCode::Char(c) => Action::SizeFilterInput(c),
       _ => Action::None,
     },
     InputMode::GPrefix => {
@@ -373,5 +381,16 @@ mod tests {
     };
     c.normal_keys.insert(kb, Action::Quit);
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal, &c), Action::Quit);
+  }
+
+  #[test]
+  fn test_size_filter_mode() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('>')), InputMode::SizeFilter, &c), Action::SizeFilterInput('>'));
+    assert_eq!(map_key(key(KeyCode::Char('1')), InputMode::SizeFilter, &c), Action::SizeFilterInput('1'));
+    assert_eq!(map_key(key(KeyCode::Char('M')), InputMode::SizeFilter, &c), Action::SizeFilterInput('M'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::SizeFilter, &c), Action::SizeFilterConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::SizeFilter, &c), Action::SizeFilterCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::SizeFilter, &c), Action::SizeFilterBackspace);
   }
 }

@@ -17,6 +17,11 @@ pub enum Action {
   SearchBackspace,
   SearchConfirm,
   SearchCancel,
+  SizeFilterStart,
+  SizeFilterInput(char),
+  SizeFilterBackspace,
+  SizeFilterConfirm,
+  SizeFilterCancel,
   YankPath,
   OpenEditor,
   OpenClaude,
@@ -79,6 +84,7 @@ impl Action {
       "go_to_top" => Some(Action::GoToTop),
       "go_to_bottom" => Some(Action::GoToBottom),
       "search_start" => Some(Action::SearchStart),
+      "size_filter_start" => Some(Action::SizeFilterStart),
       "yank_path" => Some(Action::YankPath),
       "open_editor" => Some(Action::OpenEditor),
       "open_claude" => Some(Action::OpenClaude),
@@ -146,6 +152,7 @@ mod tests {
     assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
     assert_eq!(Action::from_name("open_default"), Some(Action::OpenDefault));
     assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
+    assert_eq!(Action::from_name("size_filter_start"), Some(Action::SizeFilterStart));
   }
 
   #[test]

@@ -76,6 +76,14 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("▌", Style::default().fg(Color::Indexed(75))),
       ])
     }
+    InputMode::SizeFilter => {
+      Line::from(vec![
+        Span::styled(" Size: ", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
+        Span::styled(&app.size_filter_query, Style::default().fg(Color::Indexed(252))),
+        Span::styled("▌", Style::default().fg(Color::Indexed(208))),
+        Span::styled(" (e.g. >1M, <100K, 1M-10M, =0)", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::GPrefix => {
       Line::from(vec![
         Span::styled(" g", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
