@@ -130,6 +130,7 @@ pub enum PromptKind {
   NewFile,
   NewDir,
   ConfirmDelete,
+  Duplicate,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
