@@ -25,6 +25,9 @@ open = "5"
 notify = "8"
 kamadak-exif = "0.5"
 git2 = "0.20"
+zip = "0.6"
+tar = "0.4"
+flate2 = "1.0"
 
 [profile.release]
 lto = true

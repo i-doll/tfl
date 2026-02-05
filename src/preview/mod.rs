@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod directory;
 pub mod hex;
 pub mod image;
@@ -29,6 +30,7 @@ pub enum PreviewType {
   Image,
   Binary,
   Directory,
+  Archive,
   Empty,
   TooLarge,
   Error(String),
@@ -130,6 +132,7 @@ impl PreviewState {
         })
       }
       PreviewType::Binary => self.load_hex(path, git_repo),
+      PreviewType::Archive => self.load_archive(path, git_repo),
       PreviewType::Directory => self.load_directory(path),
       PreviewType::TooLarge => {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -259,6 +262,38 @@ impl PreviewState {
     })
   }
 
+  fn load_archive(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let metadata = get_file_metadata(path);
+    let git_commits = get_git_commits(git_repo, path, 3);
+
+    match archive::list_archive(path) {
+      Ok(entries) => {
+        let lines = archive::render_archive_contents(&entries);
+        Some(PreviewContent {
+          lines,
+          preview_type: PreviewType::Archive,
+          line_count: entries.len(),
+          file_size,
+          extension: get_extension(path),
+          metadata,
+          image_metadata: None,
+          git_commits,
+        })
+      }
+      Err(e) => Some(PreviewContent {
+        lines: vec![Line::from(format!(" Error reading archive: {e}"))],
+        preview_type: PreviewType::Error(e),
+        line_count: 0,
+        file_size,
+        extension: get_extension(path),
+        metadata,
+        image_metadata: None,
+        git_commits,
+      }),
+    }
+  }
+
   fn insert_cache(&mut self, path: PathBuf, content: PreviewContent) {
     if self.cache.len() >= CACHE_SIZE
       && let Some(oldest) = self.cache_order.first().cloned() {
@@ -342,6 +377,11 @@ pub fn detect_preview_type(path: &Path) -> PreviewType {
 
   if metadata.len() == 0 {
     return PreviewType::Empty;
+  }
+
+  // Check for archive types early (they can be large)
+  if archive::is_archive(path) {
+    return PreviewType::Archive;
   }
 
   if metadata.len() > MAX_TEXT_BYTES {
@@ -433,6 +473,37 @@ mod tests {
     let file = dir.join("photo.png");
     fs::write(&file, "fake png data").unwrap();
     assert_eq!(detect_preview_type(&file), PreviewType::Image);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_detect_archive_zip() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_archive_zip");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.zip");
+    // Create a minimal valid ZIP file
+    {
+      let f = fs::File::create(&file).unwrap();
+      let mut zip = zip::ZipWriter::new(f);
+      let options = zip::write::FileOptions::default();
+      zip.start_file("test.txt", options).unwrap();
+      std::io::Write::write_all(&mut zip, b"test").unwrap();
+      zip.finish().unwrap();
+    }
+    assert_eq!(detect_preview_type(&file), PreviewType::Archive);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_detect_archive_tar_gz() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_archive_tgz");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.tar.gz");
+    // Just create a fake file - detection is by extension
+    fs::write(&file, "fake tar.gz data").unwrap();
+    assert_eq!(detect_preview_type(&file), PreviewType::Archive);
     let _ = fs::remove_dir_all(&dir);
   }
 
