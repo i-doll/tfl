@@ -25,6 +25,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Rendered markdown preview** with styled headings, lists, code blocks, and links
 - **JSON/TOML pretty-printing** with formatted/raw view toggle (`P`)
 - **Image preview** in supported terminals (Kitty graphics protocol)
+- **PDF preview** with text extraction and multi-page navigation
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
@@ -67,6 +68,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `J` / `PageDown` | Scroll preview down |
 | `K` / `PageUp` | Scroll preview up |
 | `P` | Toggle formatted/raw view (JSON/TOML) |
+| `n` | Next PDF page |
+| `p` | Previous PDF page |
 | `gg` | Go to top |
 | `G` | Go to bottom |
 | `/` | Start search |
@@ -202,6 +205,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `flate2` | GZIP decompression for tar.gz files |
 | `bzip2` | BZIP2 decompression for tar.bz2 files |
 | `xz2` | XZ/LZMA decompression for tar.xz files |
+| `pdf-extract` | PDF text extraction for preview |
 
 ## Installation
 
@@ -299,6 +303,8 @@ f = "favorites_open"
 m = "toggle_markdown_mode"
 tab = "switch_pane"
 f6 = "toggle_dual_pane"
+n = "pdf_next_page"
+p = "pdf_prev_page"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -336,7 +342,7 @@ Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option co
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `toggle_formatted`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `switch_pane`, `toggle_dual_pane`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `toggle_formatted`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `switch_pane`, `toggle_dual_pane`, `pdf_next_page`, `pdf_prev_page`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -386,6 +392,7 @@ src/
     markdown.rs    Rendered markdown preview with styled elements
     structured.rs  JSON/TOML pretty-printing
     image.rs       Async image loading (Kitty protocol)
+    pdf.rs         PDF text extraction and rendering
     hex.rs         Hex dump for binary files
     directory.rs   Directory summary (file counts, sizes)
     metadata.rs    File/image metadata extraction, formatting

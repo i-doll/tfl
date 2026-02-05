@@ -5,6 +5,7 @@ pub mod hex;
 pub mod image;
 pub mod markdown;
 pub mod metadata;
+pub mod pdf;
 pub mod structured;
 pub mod text;
 
@@ -36,6 +37,7 @@ pub enum PreviewType {
   Binary,
   Directory,
   Archive,
+  Pdf,
   Empty,
   TooLarge,
   Error(String),
@@ -55,6 +57,8 @@ pub struct PreviewContent {
   pub raw_lines: Option<Vec<Line<'static>>>,
   /// Whether this file is a structured data file (JSON/TOML).
   pub is_structured: bool,
+  pub pdf_content: Option<self::pdf::PdfContent>,
+  pub pdf_current_page: usize,
 }
 
 pub struct PreviewState {
@@ -67,6 +71,7 @@ pub struct PreviewState {
   pub markdown_rendered: bool,
   /// Whether to show formatted (pretty-printed) view for structured data.
   pub show_formatted: bool,
+  pub pdf_rx: Option<mpsc::Receiver<self::pdf::PdfLoadResult>>,
   highlighter: SyntaxHighlighter,
   cache: HashMap<PathBuf, PreviewContent>,
   cache_order: Vec<PathBuf>,
@@ -86,6 +91,7 @@ impl PreviewState {
       blame_enabled: false,
       markdown_rendered: true,
       show_formatted: true,
+      pdf_rx: None,
       highlighter: SyntaxHighlighter::new(),
       cache: HashMap::new(),
       cache_order: Vec::new(),
@@ -138,6 +144,7 @@ impl PreviewState {
     self.scroll_offset = 0;
     self.image_protocol = None;
     self.image_rx = None;
+    self.pdf_rx = None;
     self.current_path = Some(path.to_path_buf());
 
     // Check cache
@@ -182,6 +189,28 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          pdf_content: None,
+          pdf_current_page: 0,
+        })
+      }
+      PreviewType::Pdf => {
+        self.pdf_rx = Some(pdf::load_pdf_async(path));
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let metadata = get_file_metadata(path);
+        Some(PreviewContent {
+          lines: vec![Line::from(" Loading PDF...")],
+          preview_type: PreviewType::Pdf,
+          line_count: 0,
+          file_size,
+          extension: get_extension(path),
+          metadata,
+          image_metadata: None,
+          git_commits,
+          blame_data: None,
+          raw_lines: None,
+          is_structured: false,
+          pdf_content: None,
+          pdf_current_page: 0,
         })
       }
       PreviewType::Binary => self.load_hex(path, git_repo),
@@ -201,6 +230,8 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          pdf_content: None,
+          pdf_current_page: 0,
         })
       }
       PreviewType::Empty => Some(PreviewContent {
@@ -215,6 +246,8 @@ impl PreviewState {
         blame_data: None,
         raw_lines: None,
         is_structured: false,
+        pdf_content: None,
+        pdf_current_page: 0,
       }),
       PreviewType::Error(ref msg) => Some(PreviewContent {
         lines: vec![Line::from(format!(" Error: {msg}"))],
@@ -228,6 +261,8 @@ impl PreviewState {
         blame_data: None,
         raw_lines: None,
         is_structured: false,
+        pdf_content: None,
+        pdf_current_page: 0,
       }),
     };
 
@@ -252,6 +287,8 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          pdf_content: None,
+          pdf_current_page: 0,
         });
       }
     };
@@ -306,6 +343,8 @@ impl PreviewState {
       blame_data,
       raw_lines,
       is_structured,
+      pdf_content: None,
+      pdf_current_page: 0,
     })
   }
 
@@ -325,6 +364,8 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          pdf_content: None,
+          pdf_current_page: 0,
         });
       }
     };
@@ -356,6 +397,8 @@ impl PreviewState {
       blame_data,
       raw_lines: None,
       is_structured: false,
+      pdf_content: None,
+      pdf_current_page: 0,
     })
   }
 
@@ -375,6 +418,8 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          pdf_content: None,
+          pdf_current_page: 0,
         });
       }
     };
@@ -397,6 +442,8 @@ impl PreviewState {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      pdf_content: None,
+      pdf_current_page: 0,
     })
   }
 
@@ -416,6 +463,8 @@ impl PreviewState {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      pdf_content: None,
+      pdf_current_page: 0,
     })
   }
 
@@ -438,6 +487,8 @@ impl PreviewState {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      pdf_content: None,
+      pdf_current_page: 0,
     })
   }
 
@@ -476,6 +527,8 @@ impl PreviewState {
                 blame_data: None,
                 raw_lines: None,
                 is_structured: false,
+                pdf_content: None,
+                pdf_current_page: 0,
               };
               self.insert_cache(path.clone(), content);
             }
@@ -483,6 +536,79 @@ impl PreviewState {
         }
         self.image_rx = None;
       }
+  }
+
+  pub fn check_pdf_loaded(&mut self) {
+    if let Some(ref rx) = self.pdf_rx
+      && let Ok(result) = rx.try_recv() {
+        match result {
+          pdf::PdfLoadResult::Loaded(pdf_content) => {
+            if let Some(ref path) = self.current_path {
+              // Update the cached content with PDF data
+              if let Some(cached) = self.cache.get_mut(path) {
+                let lines = pdf::render_pdf_content(&pdf_content, 0);
+                cached.lines = lines;
+                cached.line_count = pdf_content.page_count;
+                cached.pdf_content = Some(pdf_content);
+                cached.pdf_current_page = 0;
+              }
+            }
+          }
+          pdf::PdfLoadResult::Error(msg) => {
+            if let Some(ref path) = self.current_path {
+              let content = PreviewContent {
+                lines: vec![Line::from(format!(" {msg}"))],
+                preview_type: PreviewType::Error(msg),
+                line_count: 0,
+                file_size: 0,
+                extension: String::new(),
+                metadata: None,
+                image_metadata: None,
+                git_commits: Vec::new(),
+                pdf_content: None,
+                pdf_current_page: 0,
+              };
+              self.insert_cache(path.clone(), content);
+            }
+          }
+        }
+        self.pdf_rx = None;
+      }
+  }
+
+  /// Navigate to the next PDF page
+  pub fn pdf_next_page(&mut self) {
+    if let Some(ref path) = self.current_path.clone()
+      && let Some(cached) = self.cache.get_mut(path)
+      && let Some(ref pdf_content) = cached.pdf_content
+      && cached.pdf_current_page + 1 < pdf_content.page_count
+    {
+      cached.pdf_current_page += 1;
+      cached.lines = pdf::render_pdf_content(pdf_content, cached.pdf_current_page);
+      self.scroll_offset = 0;
+    }
+  }
+
+  /// Navigate to the previous PDF page
+  pub fn pdf_prev_page(&mut self) {
+    if let Some(ref path) = self.current_path.clone()
+      && let Some(cached) = self.cache.get_mut(path)
+      && let Some(ref pdf_content) = cached.pdf_content
+      && cached.pdf_current_page > 0
+    {
+      cached.pdf_current_page -= 1;
+      cached.lines = pdf::render_pdf_content(pdf_content, cached.pdf_current_page);
+      self.scroll_offset = 0;
+    }
+  }
+
+  /// Check if current preview is a PDF with multiple pages
+  #[allow(dead_code)]
+  pub fn is_multipage_pdf(&self) -> bool {
+    self.get_content().is_some_and(|c| {
+      c.preview_type == PreviewType::Pdf
+        && c.pdf_content.as_ref().is_some_and(|p| p.page_count > 1)
+    })
   }
 
   pub fn scroll_up(&mut self, amount: usize) {
@@ -504,6 +630,7 @@ impl PreviewState {
     self.content = None;
     self.image_protocol = None;
     self.image_rx = None;
+    self.pdf_rx = None;
   }
 
   /// Toggle between raw and rendered markdown mode
@@ -571,6 +698,11 @@ pub fn detect_preview_type(path: &Path) -> PreviewType {
     return PreviewType::Archive;
   }
 
+  // Check for PDF (can be large files)
+  if pdf::is_pdf(path) {
+    return PreviewType::Pdf;
+  }
+
   if metadata.len() > MAX_TEXT_BYTES {
     // Check if it's an image (images can be large)
     let ext = get_extension(path);
@@ -597,6 +729,9 @@ pub fn detect_preview_type(path: &Path) -> PreviewType {
       let mime = kind.mime_type();
       if mime.starts_with("image/") {
         return PreviewType::Image;
+      }
+      if mime == "application/pdf" {
+        return PreviewType::Pdf;
       }
       if !mime.starts_with("text/") {
         return PreviewType::Binary;
@@ -688,6 +823,17 @@ mod tests {
   }
 
   #[test]
+  fn test_detect_pdf_by_extension() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_pdf_ext");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("document.pdf");
+    fs::write(&file, "fake pdf data").unwrap();
+    assert_eq!(detect_preview_type(&file), PreviewType::Pdf);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
   fn test_detect_archive_tar_gz() {
     let dir = std::env::temp_dir().join("tui_explorer_test_archive_tgz");
     let _ = fs::remove_dir_all(&dir);
@@ -722,6 +868,17 @@ mod tests {
       assert_eq!(detect_preview_type(&file), PreviewType::Markdown, "Failed for extension: {ext}");
     }
 
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_detect_pdf_by_magic() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_pdf_magic");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("document_no_ext");
+    fs::write(&file, b"%PDF-1.4 fake pdf content").unwrap();
+    assert_eq!(detect_preview_type(&file), PreviewType::Pdf);
     let _ = fs::remove_dir_all(&dir);
   }
 
@@ -766,6 +923,8 @@ mod tests {
         blame_data: None,
         raw_lines: None,
         is_structured: false,
+        pdf_content: None,
+        pdf_current_page: 0,
       };
       state.insert_cache(path, content);
     }

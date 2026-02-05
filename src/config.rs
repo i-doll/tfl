@@ -360,6 +360,8 @@ m = "toggle_markdown_mode"
 tab = "switch_pane"
 f6 = "toggle_dual_pane"
 "shift+p" = "toggle_formatted"
+n = "pdf_next_page"
+p = "pdf_prev_page"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -1158,5 +1160,14 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('P'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleFormatted));
+  }
+
+  #[test]
+  fn test_default_has_pdf_page_bindings() {
+    let config = Config::default();
+    let kb_n = KeyBinding { code: KeyCode::Char('n'), modifiers: KeyModifiers::NONE };
+    let kb_p = KeyBinding { code: KeyCode::Char('p'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb_n), Some(&Action::PdfNextPage));
+    assert_eq!(config.normal_keys.get(&kb_p), Some(&Action::PdfPrevPage));
   }
 }

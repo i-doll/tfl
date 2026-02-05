@@ -549,8 +549,15 @@ impl App {
       Action::BreadcrumbSelect(index) => self.breadcrumb_select(index)?,
       Action::SwitchPane => self.switch_pane(),
       Action::ToggleDualPane => self.toggle_dual_pane()?,
+      Action::PdfNextPage => {
+        self.preview.pdf_next_page();
+      }
+      Action::PdfPrevPage => {
+        self.preview.pdf_prev_page();
+      }
       Action::Tick => {
         self.preview.check_image_loaded();
+        self.preview.check_pdf_loaded();
         self.check_extraction_complete()?;
       }
       Action::ToggleMarkdownMode => {

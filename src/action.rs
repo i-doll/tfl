@@ -77,6 +77,8 @@ pub enum Action {
   ToggleMarkdownMode,
   SwitchPane,
   ToggleDualPane,
+  PdfNextPage,
+  PdfPrevPage,
   Resize(u16, u16),
   Tick,
   None,
@@ -130,6 +132,8 @@ impl Action {
       "toggle_markdown_mode" => Some(Action::ToggleMarkdownMode),
       "switch_pane" => Some(Action::SwitchPane),
       "toggle_dual_pane" => Some(Action::ToggleDualPane),
+      "pdf_next_page" => Some(Action::PdfNextPage),
+      "pdf_prev_page" => Some(Action::PdfPrevPage),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -203,5 +207,11 @@ mod tests {
     assert_eq!(Action::from_name("prompt_input"), None);
     assert_eq!(Action::from_name("resize"), None);
     assert_eq!(Action::from_name("tick"), None);
+  }
+
+  #[test]
+  fn test_from_name_pdf_actions() {
+    assert_eq!(Action::from_name("pdf_next_page"), Some(Action::PdfNextPage));
+    assert_eq!(Action::from_name("pdf_prev_page"), Some(Action::PdfPrevPage));
   }
 }
