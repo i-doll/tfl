@@ -10,6 +10,7 @@ pub enum Action {
   ScrollPreviewUp,
   ScrollPreviewDown,
   ToggleHidden,
+  ToggleFormatted,
   GoToTop,
   GoToBottom,
   SearchStart,
@@ -94,6 +95,7 @@ impl Action {
       "scroll_preview_up" => Some(Action::ScrollPreviewUp),
       "scroll_preview_down" => Some(Action::ScrollPreviewDown),
       "toggle_hidden" => Some(Action::ToggleHidden),
+      "toggle_formatted" => Some(Action::ToggleFormatted),
       "go_to_top" => Some(Action::GoToTop),
       "go_to_bottom" => Some(Action::GoToBottom),
       "search_start" => Some(Action::SearchStart),
@@ -150,6 +152,7 @@ mod tests {
     assert_eq!(Action::from_name("scroll_preview_up"), Some(Action::ScrollPreviewUp));
     assert_eq!(Action::from_name("scroll_preview_down"), Some(Action::ScrollPreviewDown));
     assert_eq!(Action::from_name("toggle_hidden"), Some(Action::ToggleHidden));
+    assert_eq!(Action::from_name("toggle_formatted"), Some(Action::ToggleFormatted));
     assert_eq!(Action::from_name("go_to_top"), Some(Action::GoToTop));
     assert_eq!(Action::from_name("go_to_bottom"), Some(Action::GoToBottom));
     assert_eq!(Action::from_name("search_start"), Some(Action::SearchStart));

@@ -359,6 +359,7 @@ x = "extract_archive"
 m = "toggle_markdown_mode"
 tab = "switch_pane"
 f6 = "toggle_dual_pane"
+"shift+p" = "toggle_formatted"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -1150,5 +1151,12 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::F(6), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleDualPane));
+  }
+
+  #[test]
+  fn test_default_has_toggle_formatted_binding() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('P'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleFormatted));
   }
 }

@@ -237,6 +237,12 @@ impl App {
       Action::ScrollPreviewDown => self.preview.scroll_down(3),
       Action::ScrollPreviewUp => self.preview.scroll_up(3),
       Action::ToggleHidden => self.toggle_hidden()?,
+      Action::ToggleFormatted => {
+        if self.preview.toggle_formatted() {
+          let mode = if self.preview.show_formatted { "formatted" } else { "raw" };
+          self.set_status(format!("Showing {mode} view"));
+        }
+      }
       Action::GoToTop => {
         if self.dual_pane_mode && self.active_pane == 1 {
           if let Some(ref mut pane) = self.right_pane {
