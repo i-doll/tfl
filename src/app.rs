@@ -4456,4 +4456,80 @@ mod tests {
 
     cleanup_test_dir(&dir);
   }
+
+  #[test]
+  fn test_date_filter_today() {
+    let dir = setup_test_dir();
+    // The test files were just created, so they should match "today"
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Verify we have some entries
+    let all_entries = app.visible_entries();
+    assert!(!all_entries.is_empty(), "Should have entries before filtering");
+    let count_before = all_entries.len();
+
+    // Apply date filter for "today"
+    app.date_filter_query = "today".to_string();
+    app.apply_date_filter();
+
+    // Verify date_filter was parsed
+    assert!(app.date_filter.is_some(), "Date filter should be parsed");
+
+    // All files were just created, so they should all match "today"
+    let filtered = app.visible_entries();
+    assert!(!filtered.is_empty(), "Should have entries matching 'today'");
+    assert_eq!(filtered.len(), count_before, "All entries should match 'today' since they were just created");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_flow() {
+    use crate::event::InputMode;
+
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start date filter mode
+    app.update(Action::DateFilterStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::DateFilter);
+    assert!(app.date_filter_query.is_empty());
+
+    // Type "today"
+    for c in "today".chars() {
+      app.update(Action::DateFilterInput(c)).unwrap();
+    }
+    assert_eq!(app.date_filter_query, "today");
+    assert!(app.date_filter.is_some(), "Date filter should be parsed after input");
+
+    // Confirm
+    app.update(Action::DateFilterConfirm).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.date_filter_query, "today", "Filter should remain after confirm");
+
+    // Filter should still be active
+    let filtered = app.visible_entries();
+    assert!(!filtered.is_empty(), "Should have entries after confirm");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_clears_on_navigation() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Set a date filter
+    app.date_filter_query = "today".to_string();
+    app.apply_date_filter();
+    assert!(!app.date_filter_query.is_empty());
+
+    // Navigate to a directory
+    app.update(Action::EnterDir).unwrap();
+
+    // Date filter should be cleared
+    assert!(app.date_filter_query.is_empty(), "Date filter should be cleared on navigation");
+
+    cleanup_test_dir(&dir);
+  }
 }
