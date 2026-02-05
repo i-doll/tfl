@@ -9,6 +9,7 @@ use regex::Regex;
 
 use crate::action::Action;
 use crate::config::Config;
+use crate::date_filter::{DateFilter, TimeType};
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
 use crate::fs::{FileProperties, FileTree, SizeFilter};
@@ -376,6 +377,36 @@ impl App {
       Action::SizeFilterCancel => {
         self.input_mode = InputMode::Normal;
         self.size_filter_query.clear();
+      }
+      Action::DateFilterStart => {
+        self.input_mode = InputMode::DateFilter;
+        self.date_filter_query.clear();
+        self.date_filter = None;
+      }
+      Action::DateFilterInput(c) => {
+        self.date_filter_query.push(c);
+        self.apply_date_filter();
+      }
+      Action::DateFilterBackspace => {
+        self.date_filter_query.pop();
+        self.apply_date_filter();
+      }
+      Action::DateFilterConfirm => {
+        self.input_mode = InputMode::Normal;
+        // Keep the filter active
+      }
+      Action::DateFilterCancel => {
+        self.input_mode = InputMode::Normal;
+        self.date_filter_query.clear();
+        self.date_filter = None;
+      }
+      Action::DateFilterCycleTimeType => {
+        self.date_filter_time_type = match self.date_filter_time_type {
+          TimeType::Modified => TimeType::Created,
+          TimeType::Created => TimeType::Accessed,
+          TimeType::Accessed => TimeType::Modified,
+        };
+        self.apply_date_filter();
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -1244,6 +1275,19 @@ impl App {
         self.adjust_scroll();
         self.update_preview();
       }
+    }
+  }
+
+  fn apply_date_filter(&mut self) {
+    // Parse the date filter expression
+    self.date_filter = DateFilter::parse(&self.date_filter_query);
+
+    // Move cursor to first matching entry
+    let entries = self.visible_entries();
+    if !entries.is_empty() {
+      self.cursor = self.cursor.min(entries.len().saturating_sub(1));
+      self.adjust_scroll();
+      self.update_preview();
     }
   }
 

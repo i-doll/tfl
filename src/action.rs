@@ -173,6 +173,7 @@ mod tests {
     assert_eq!(Action::from_name("go_to_top"), Some(Action::GoToTop));
     assert_eq!(Action::from_name("go_to_bottom"), Some(Action::GoToBottom));
     assert_eq!(Action::from_name("search_start"), Some(Action::SearchStart));
+    assert_eq!(Action::from_name("date_filter_start"), Some(Action::DateFilterStart));
     assert_eq!(Action::from_name("yank_path"), Some(Action::YankPath));
     assert_eq!(Action::from_name("open_editor"), Some(Action::OpenEditor));
     assert_eq!(Action::from_name("open_claude"), Some(Action::OpenClaude));

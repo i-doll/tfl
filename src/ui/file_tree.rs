@@ -4,7 +4,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use std::path::Path;
+
 use crate::app::{App, ClipboardOp};
+use crate::date_filter::{DateFilter, TimeType};
 use crate::icons::{file_icon, file_name_color};
 
 /// Splits a name into spans with highlighted matches
