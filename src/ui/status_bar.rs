@@ -244,16 +244,25 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           Span::styled(format!(" {msg}"), Style::default().fg(Color::Indexed(150))),
         ])
       } else if let Some(entry) = app.selected_entry() {
-        let mut spans = vec![
-          Span::styled(
-            format!(" {}", entry.name),
-            Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
-          ),
-          Span::styled(
-            format!(" | {}", format_size(entry.size)),
-            Style::default().fg(Color::DarkGray),
-          ),
-        ];
+        let mut spans = Vec::new();
+
+        // Show active filter indicator
+        if let Some(filter_summary) = app.active_filter_summary() {
+          spans.push(Span::styled(
+            format!(" [{}]", filter_summary),
+            Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+          ));
+          spans.push(Span::styled(" ", Style::default()));
+        }
+
+        spans.push(Span::styled(
+          format!(" {}", entry.name),
+          Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+          format!(" | {}", format_size(entry.size)),
+          Style::default().fg(Color::DarkGray),
+        ));
 
         // Per-file git status label
         if let Some(label) = git_status_label(&entry.git_status) {

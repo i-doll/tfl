@@ -707,7 +707,7 @@ impl App {
       && segment.path.is_dir()
     {
       self.tree.navigate_to(&segment.path)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
@@ -721,7 +721,7 @@ impl App {
     if let Some(home) = dirs::home_dir() {
       self.push_history(self.tree.root.clone());
       self.tree.navigate_to(&home)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.input_mode = InputMode::Normal;
@@ -756,7 +756,7 @@ impl App {
         self.history_forward.push(current);
       }
       self.tree.navigate_to(&prev)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
@@ -775,7 +775,7 @@ impl App {
         self.history_back.push(current);
       }
       self.tree.navigate_to(&next)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
@@ -1217,7 +1217,7 @@ impl App {
         if self.tree.entries[idx].is_dir {
           self.push_history(self.tree.root.clone());
           self.tree.enter_dir(idx)?;
-          self.search_query.clear();
+          self.clear_filters();
           self.cursor = 0;
           self.tree_scroll_offset = 0;
           self.preview.invalidate();
@@ -1302,7 +1302,7 @@ impl App {
         if self.history_forward.last() != Some(&old_root) {
           self.history_forward.push(old_root.clone());
         }
-        self.search_query.clear();
+        self.clear_filters();
         self.cursor = self
           .tree
           .entries
@@ -1411,6 +1411,46 @@ impl App {
       self.adjust_scroll();
       self.update_preview();
     }
+  }
+
+  /// Returns true if any filter is currently active
+  #[allow(dead_code)]
+  pub fn has_active_filter(&self) -> bool {
+    !self.search_query.is_empty()
+      || !self.size_filter_query.is_empty()
+      || !self.date_filter_query.is_empty()
+  }
+
+  /// Returns a summary of active filters for display
+  pub fn active_filter_summary(&self) -> Option<String> {
+    let mut parts = Vec::new();
+    if !self.search_query.is_empty() {
+      let prefix = if self.search_regex { "re:" } else { "/" };
+      parts.push(format!("{}{}", prefix, self.search_query));
+    }
+    if !self.size_filter_query.is_empty() {
+      parts.push(format!("size:{}", self.size_filter_query));
+    }
+    if !self.date_filter_query.is_empty() {
+      parts.push(format!("date:{}", self.date_filter_query));
+    }
+    if parts.is_empty() {
+      None
+    } else {
+      Some(parts.join(" "))
+    }
+  }
+
+  /// Clears all active filters
+  pub fn clear_filters(&mut self) {
+    self.search_query.clear();
+    self.search_regex = false;
+    self.search_case_sensitive = false;
+    self.search_regex_error = None;
+    self.compiled_regex = None;
+    self.size_filter_query.clear();
+    self.date_filter_query.clear();
+    self.date_filter = None;
   }
 
   fn cut_file(&mut self) {
