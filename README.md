@@ -26,6 +26,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
+- **Date filter** — filter by modification time with expressions like `today`, `7d`, `>2024-01-01`
 - **File management** — cut, copy, paste, delete, rename, new file/dir
 - **Yank path** to clipboard
 - **Open with system default** — press Enter on a file to open with the default app
@@ -61,6 +62,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `gg` | Go to top |
 | `G` | Go to bottom |
 | `/` | Start search |
+| `Ctrl+d` | Start date filter |
 | `.` | Toggle hidden files |
 | `y` | Yank path to clipboard |
 | `Ctrl+c` | Copy file/dir to clipboard |
@@ -90,6 +92,28 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Enter` | Confirm search |
 | `Esc` | Cancel search |
 | `Backspace` | Delete character |
+
+### Date filter mode
+
+| Key | Action |
+|---|---|
+| Characters | Type date expression |
+| `Tab` | Cycle time type (modified/created/accessed) |
+| `Enter` | Confirm filter |
+| `Esc` | Cancel filter |
+| `Backspace` | Delete character |
+
+Date expressions:
+- `today` — files modified today
+- `yesterday` — files modified yesterday
+- `7d` — files modified in the last 7 days
+- `2w` — files modified in the last 2 weeks
+- `1m` — files modified in the last month
+- `2024-01-15` — files modified on that exact date
+- `>2024-01-01` — files modified after that date
+- `<2024-06-30` — files modified before that date
+- `<1w` — files modified more than 1 week ago
+- `2024-01-01..2024-01-31` — files modified in that date range
 
 ### g-prefix mode
 
@@ -163,6 +187,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `notify` | OS-native file watching for live config reload |
 | `git2` | Native Git repository operations (status, commits, branch info) |
 | `kamadak-exif` | EXIF metadata extraction from images |
+| `chrono` | Date/time parsing and formatting for date filter |
 
 ## Installation
 
@@ -232,6 +257,7 @@ pageup = "scroll_preview_up"
 "shift+g" = "go_to_bottom"
 g = "g_press"
 "/" = "search_start"
+"ctrl+d" = "date_filter_start"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
@@ -269,7 +295,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `date_filter_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -305,6 +331,7 @@ src/
   action.rs        Action enum (all possible user actions)
   event.rs         Event loop, key mapping, input modes
   config.rs        Config loading, key binding parsing, defaults
+  date_filter.rs   Date expression parsing and file matching
   favorites.rs     Favorites persistence (load/save/add/remove)
   opener.rs        Open-with app detection and launching
   git.rs           Git operations via libgit2 (status, branch, commits)

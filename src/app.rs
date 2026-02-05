@@ -6,6 +6,7 @@ use ratatui_image::picker::Picker;
 
 use crate::action::Action;
 use crate::config::Config;
+use crate::date_filter::{DateFilter, TimeType};
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
 use crate::fs::FileTree;
@@ -32,6 +33,9 @@ pub struct App {
   pub picker: Option<Picker>,
   pub input_mode: InputMode,
   pub search_query: String,
+  pub date_filter_query: String,
+  pub date_filter: Option<DateFilter>,
+  pub date_filter_time_type: TimeType,
   pub tree_ratio: u16,
   pub min_tree_ratio: u16,
   pub max_tree_ratio: u16,
@@ -75,6 +79,9 @@ impl App {
       picker,
       input_mode: InputMode::Normal,
       search_query: String::new(),
+      date_filter_query: String::new(),
+      date_filter: None,
+      date_filter_time_type: TimeType::default(),
       tree_ratio: config.tree_ratio,
       min_tree_ratio: config.min_tree_ratio,
       max_tree_ratio: config.max_tree_ratio,
@@ -151,6 +158,36 @@ impl App {
       Action::SearchCancel => {
         self.input_mode = InputMode::Normal;
         self.search_query.clear();
+      }
+      Action::DateFilterStart => {
+        self.input_mode = InputMode::DateFilter;
+        self.date_filter_query.clear();
+        self.date_filter = None;
+      }
+      Action::DateFilterInput(c) => {
+        self.date_filter_query.push(c);
+        self.apply_date_filter();
+      }
+      Action::DateFilterBackspace => {
+        self.date_filter_query.pop();
+        self.apply_date_filter();
+      }
+      Action::DateFilterConfirm => {
+        self.input_mode = InputMode::Normal;
+        // Keep the filter active
+      }
+      Action::DateFilterCancel => {
+        self.input_mode = InputMode::Normal;
+        self.date_filter_query.clear();
+        self.date_filter = None;
+      }
+      Action::DateFilterCycleTimeType => {
+        self.date_filter_time_type = match self.date_filter_time_type {
+          TimeType::Modified => TimeType::Created,
+          TimeType::Created => TimeType::Accessed,
+          TimeType::Accessed => TimeType::Modified,
+        };
+        self.apply_date_filter();
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -625,6 +662,19 @@ impl App {
     }
   }
 
+  fn apply_date_filter(&mut self) {
+    // Parse the date filter expression
+    self.date_filter = DateFilter::parse(&self.date_filter_query);
+
+    // Move cursor to first matching entry
+    let entries = self.visible_entries();
+    if !entries.is_empty() {
+      self.cursor = self.cursor.min(entries.len().saturating_sub(1));
+      self.adjust_scroll();
+      self.update_preview();
+    }
+  }
+
   fn cut_file(&mut self) {
     if let Some(entry) = self.selected_entry() {
       let path = entry.path.clone();
@@ -936,16 +986,34 @@ impl App {
 
   /// Returns indices into tree.entries for visible (filtered) entries
   pub fn visible_entries(&self) -> Vec<usize> {
-    if self.search_query.is_empty() {
+    let has_search = !self.search_query.is_empty();
+    let has_date_filter = self.date_filter.is_some();
+
+    if !has_search && !has_date_filter {
       return (0..self.tree.entries.len()).collect();
     }
+
     let query = self.search_query.to_lowercase();
     self
       .tree
       .entries
       .iter()
       .enumerate()
-      .filter(|(_, e)| e.name.to_lowercase().contains(&query))
+      .filter(|(_, e)| {
+        // Apply search filter
+        if has_search && !e.name.to_lowercase().contains(&query) {
+          return false;
+        }
+
+        // Apply date filter
+        if let Some(ref filter) = self.date_filter
+          && !filter.matches(&e.path, self.date_filter_time_type)
+        {
+          return false;
+        }
+
+        true
+      })
       .map(|(i, _)| i)
       .collect()
   }
@@ -2017,6 +2085,158 @@ mod tests {
     assert!(subdir_entry.expanded);
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_start() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    app.update(Action::DateFilterStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::DateFilter);
+    assert!(app.date_filter_query.is_empty());
+    assert!(app.date_filter.is_none());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_input_and_parse() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::DateFilterStart).unwrap();
+    app.update(Action::DateFilterInput('t')).unwrap();
+    app.update(Action::DateFilterInput('o')).unwrap();
+    app.update(Action::DateFilterInput('d')).unwrap();
+    app.update(Action::DateFilterInput('a')).unwrap();
+    app.update(Action::DateFilterInput('y')).unwrap();
+    assert_eq!(app.date_filter_query, "today");
+    assert!(app.date_filter.is_some());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_cancel() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::DateFilterStart).unwrap();
+    app.update(Action::DateFilterInput('7')).unwrap();
+    app.update(Action::DateFilterInput('d')).unwrap();
+    assert!(!app.date_filter_query.is_empty());
+
+    app.update(Action::DateFilterCancel).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.date_filter_query.is_empty());
+    assert!(app.date_filter.is_none());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_confirm() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::DateFilterStart).unwrap();
+    app.update(Action::DateFilterInput('t')).unwrap();
+    app.update(Action::DateFilterInput('o')).unwrap();
+    app.update(Action::DateFilterInput('d')).unwrap();
+    app.update(Action::DateFilterInput('a')).unwrap();
+    app.update(Action::DateFilterInput('y')).unwrap();
+
+    app.update(Action::DateFilterConfirm).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    // Filter should remain active
+    assert!(app.date_filter.is_some());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_backspace() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::DateFilterStart).unwrap();
+    app.update(Action::DateFilterInput('7')).unwrap();
+    app.update(Action::DateFilterInput('d')).unwrap();
+    assert_eq!(app.date_filter_query, "7d");
+
+    app.update(Action::DateFilterBackspace).unwrap();
+    assert_eq!(app.date_filter_query, "7");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_cycle_time_type() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    assert_eq!(app.date_filter_time_type, TimeType::Modified);
+
+    app.update(Action::DateFilterCycleTimeType).unwrap();
+    assert_eq!(app.date_filter_time_type, TimeType::Created);
+
+    app.update(Action::DateFilterCycleTimeType).unwrap();
+    assert_eq!(app.date_filter_time_type, TimeType::Accessed);
+
+    app.update(Action::DateFilterCycleTimeType).unwrap();
+    assert_eq!(app.date_filter_time_type, TimeType::Modified);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_filters_files() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // All files just created should match "today"
+    let initial_count = app.visible_entries().len();
+    assert!(initial_count > 0);
+
+    app.update(Action::DateFilterStart).unwrap();
+    app.update(Action::DateFilterInput('t')).unwrap();
+    app.update(Action::DateFilterInput('o')).unwrap();
+    app.update(Action::DateFilterInput('d')).unwrap();
+    app.update(Action::DateFilterInput('a')).unwrap();
+    app.update(Action::DateFilterInput('y')).unwrap();
+
+    // Files created today should still be visible
+    assert_eq!(app.visible_entries().len(), initial_count);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_combined_with_search() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Set search filter
+    app.search_query = "txt".to_string();
+    let search_count = app.visible_entries().len();
+    assert!(search_count > 0);
+
+    // Add date filter for today
+    app.update(Action::DateFilterStart).unwrap();
+    app.update(Action::DateFilterInput('t')).unwrap();
+    app.update(Action::DateFilterInput('o')).unwrap();
+    app.update(Action::DateFilterInput('d')).unwrap();
+    app.update(Action::DateFilterInput('a')).unwrap();
+    app.update(Action::DateFilterInput('y')).unwrap();
+
+    // Combined filter should still show txt files from today
+    let combined_count = app.visible_entries().len();
+    assert!(combined_count <= search_count);
+    assert!(combined_count > 0);
 
     cleanup_test_dir(&dir);
   }

@@ -1,6 +1,7 @@
 mod action;
 mod app;
 mod config;
+mod date_filter;
 mod event;
 mod favorites;
 mod fs;

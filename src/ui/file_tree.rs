@@ -4,8 +4,29 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use std::path::Path;
+
 use crate::app::{App, ClipboardOp};
+use crate::date_filter::{DateFilter, TimeType};
 use crate::icons::{file_icon, file_name_color};
+
+fn get_time_indicator(path: &Path, time_type: TimeType) -> String {
+  let metadata = match path.metadata() {
+    Ok(m) => m,
+    Err(_) => return String::new(),
+  };
+
+  let file_time = match time_type {
+    TimeType::Modified => metadata.modified(),
+    TimeType::Created => metadata.created(),
+    TimeType::Accessed => metadata.accessed(),
+  };
+
+  match file_time {
+    Ok(t) => format!(" {}", DateFilter::format_time(t)),
+    Err(_) => String::new(),
+  }
+}
 
 pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
   let entries = app.visible_entries();
@@ -60,11 +81,19 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
       )
     };
 
+    // Show matching time when date filter is active
+    let time_indicator = if app.date_filter.is_some() {
+      get_time_indicator(&entry.path, app.date_filter_time_type)
+    } else {
+      String::new()
+    };
+
     let line = Line::from(vec![
       Span::styled(indent, name_style),
       Span::styled(icon.glyph, icon_style),
       Span::styled(entry.name.clone(), name_style),
       Span::styled(symlink_indicator, Style::default().fg(Color::DarkGray)),
+      Span::styled(time_indicator, Style::default().fg(Color::Indexed(178))),
     ]);
 
     lines.push(line);

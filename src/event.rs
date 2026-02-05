@@ -116,6 +116,7 @@ impl EventLoop {
 pub enum InputMode {
   Normal,
   Search,
+  DateFilter,
   GPrefix,
   Help,
   Prompt,
@@ -139,6 +140,14 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Enter => Action::SearchConfirm,
       KeyCode::Backspace => Action::SearchBackspace,
       KeyCode::Char(c) => Action::SearchInput(c),
+      _ => Action::None,
+    },
+    InputMode::DateFilter => match key.code {
+      KeyCode::Esc => Action::DateFilterCancel,
+      KeyCode::Enter => Action::DateFilterConfirm,
+      KeyCode::Backspace => Action::DateFilterBackspace,
+      KeyCode::Tab => Action::DateFilterCycleTimeType,
+      KeyCode::Char(c) => Action::DateFilterInput(c),
       _ => Action::None,
     },
     InputMode::GPrefix => {
@@ -268,6 +277,16 @@ mod tests {
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Search, &c), Action::SearchConfirm);
     assert_eq!(map_key(key(KeyCode::Esc), InputMode::Search, &c), Action::SearchCancel);
     assert_eq!(map_key(key(KeyCode::Backspace), InputMode::Search, &c), Action::SearchBackspace);
+  }
+
+  #[test]
+  fn test_date_filter_mode() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::DateFilter, &c), Action::DateFilterInput('a'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::DateFilter, &c), Action::DateFilterConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::DateFilter, &c), Action::DateFilterCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::DateFilter, &c), Action::DateFilterBackspace);
+    assert_eq!(map_key(key(KeyCode::Tab), InputMode::DateFilter, &c), Action::DateFilterCycleTimeType);
   }
 
   #[test]

@@ -25,6 +25,7 @@ open = "5"
 notify = "8"
 kamadak-exif = "0.5"
 git2 = "0.20"
+chrono = "0.4"
 
 [profile.release]
 lto = true

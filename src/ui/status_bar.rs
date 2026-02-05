@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::app::App;
+use crate::date_filter::TimeType;
 use crate::event::{InputMode, PromptKind};
 use crate::fs::{GitFileStatus, GitStatus};
 use crate::preview::directory::format_size;
@@ -67,6 +68,14 @@ fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color) -> Vec<Sp
   }
 }
 
+fn time_type_label(tt: TimeType) -> &'static str {
+  match tt {
+    TimeType::Modified => "mod",
+    TimeType::Created => "cre",
+    TimeType::Accessed => "acc",
+  }
+}
+
 pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
   let line = match app.input_mode {
     InputMode::Search => {
@@ -74,6 +83,20 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled(" /", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
         Span::styled(&app.search_query, Style::default().fg(Color::Indexed(252))),
         Span::styled("▌", Style::default().fg(Color::Indexed(75))),
+      ])
+    }
+    InputMode::DateFilter => {
+      let tt_label = time_type_label(app.date_filter_time_type);
+      let valid = app.date_filter.is_some() || app.date_filter_query.is_empty();
+      let query_color = if valid { Color::Indexed(252) } else { Color::Indexed(167) };
+      Line::from(vec![
+        Span::styled(
+          format!(" d[{tt_label}]:"),
+          Style::default().fg(Color::Indexed(178)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(&app.date_filter_query, Style::default().fg(query_color)),
+        Span::styled("▌", Style::default().fg(Color::Indexed(178))),
+        Span::styled(" (Tab:type)", Style::default().fg(Color::DarkGray)),
       ])
     }
     InputMode::GPrefix => {
