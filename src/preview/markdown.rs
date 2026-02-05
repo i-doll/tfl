@@ -1,12 +1,17 @@
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use super::text::SyntaxHighlighter;
 
 /// Renders markdown content to styled terminal lines
 pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Line<'static>> {
-  let parser = Parser::new(content);
+  let mut options = Options::empty();
+  options.insert(Options::ENABLE_TABLES);
+  options.insert(Options::ENABLE_STRIKETHROUGH);
+
+  let parser = Parser::new_ext(content, options);
   let mut lines: Vec<Line<'static>> = Vec::new();
   let mut current_spans: Vec<Span<'static>> = Vec::new();
   let mut list_depth: usize = 0;
@@ -17,6 +22,12 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
   let mut heading_level: HeadingLevel = HeadingLevel::H1;
   let mut style_stack: Vec<Style> = vec![Style::default()];
   let mut in_blockquote = false;
+
+  // Table state
+  let mut table_row: Vec<String> = Vec::new();
+  let mut table_alignments: Vec<pulldown_cmark::Alignment> = Vec::new();
+  let mut is_header_row = false;
+  let mut table_rows: Vec<Vec<String>> = Vec::new();
 
   for event in parser {
     match event {
@@ -85,6 +96,22 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
           flush_line(&mut current_spans, &mut lines);
           in_blockquote = true;
         }
+        Tag::Table(alignments) => {
+          flush_line(&mut current_spans, &mut lines);
+          if !lines.is_empty() {
+            lines.push(Line::from(""));
+          }
+          table_alignments = alignments;
+          table_rows.clear();
+        }
+        Tag::TableHead => {
+          is_header_row = true;
+          table_row.clear();
+        }
+        Tag::TableRow => {
+          table_row.clear();
+        }
+        Tag::TableCell => {}
         _ => {}
       },
       Event::End(tag) => match tag {
@@ -157,6 +184,26 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
         }
         TagEnd::BlockQuote(_) => {
           in_blockquote = false;
+        }
+        TagEnd::Table => {
+          // Render the complete table
+          render_table(&table_rows, &table_alignments, &mut lines);
+          table_rows.clear();
+        }
+        TagEnd::TableHead => {
+          table_rows.push(table_row.clone());
+          is_header_row = false;
+        }
+        TagEnd::TableRow => {
+          if !is_header_row {
+            table_rows.push(table_row.clone());
+          }
+        }
+        TagEnd::TableCell => {
+          // Cell content is accumulated in current_spans
+          let cell_text: String = current_spans.iter().map(|s| s.content.as_ref()).collect();
+          table_row.push(cell_text);
+          current_spans.clear();
         }
         _ => {}
       },
@@ -247,6 +294,106 @@ fn heading_prefix(level: HeadingLevel) -> String {
     HeadingLevel::H4 => "#### ".to_string(),
     HeadingLevel::H5 => "##### ".to_string(),
     HeadingLevel::H6 => "###### ".to_string(),
+  }
+}
+
+fn render_table(
+  rows: &[Vec<String>],
+  alignments: &[pulldown_cmark::Alignment],
+  lines: &mut Vec<Line<'static>>,
+) {
+  if rows.is_empty() {
+    return;
+  }
+
+  // Calculate column widths using unicode display width
+  let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+  let mut col_widths: Vec<usize> = vec![0; col_count];
+
+  for row in rows {
+    for (i, cell) in row.iter().enumerate() {
+      if i < col_widths.len() {
+        col_widths[i] = col_widths[i].max(cell.width());
+      }
+    }
+  }
+
+  // Ensure minimum column width of 3 for alignment indicators
+  for w in &mut col_widths {
+    *w = (*w).max(3);
+  }
+
+  let border_style = Style::default().fg(Color::Indexed(240));
+  let header_style = Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD);
+  let cell_style = Style::default();
+
+  for (row_idx, row) in rows.iter().enumerate() {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::styled("│ ", border_style));
+
+    for (col_idx, cell) in row.iter().enumerate() {
+      let width = col_widths.get(col_idx).copied().unwrap_or(3);
+      let alignment = alignments.get(col_idx).copied().unwrap_or(pulldown_cmark::Alignment::None);
+
+      let padded = align_text(cell, width, alignment);
+      let style = if row_idx == 0 { header_style } else { cell_style };
+
+      spans.push(Span::styled(padded, style));
+      // Use " │ " between cells, " │" after last cell (no trailing space)
+      if col_idx < col_count - 1 {
+        spans.push(Span::styled(" │ ", border_style));
+      } else {
+        spans.push(Span::styled(" │", border_style));
+      }
+    }
+
+    // Fill empty columns
+    for col_idx in row.len()..col_count {
+      let width = col_widths.get(col_idx).copied().unwrap_or(3);
+      spans.push(Span::styled(" ".repeat(width), cell_style));
+      if col_idx < col_count - 1 {
+        spans.push(Span::styled(" │ ", border_style));
+      } else {
+        spans.push(Span::styled(" │", border_style));
+      }
+    }
+
+    lines.push(Line::from(spans));
+
+    // Add separator after header row
+    if row_idx == 0 {
+      let mut sep_spans: Vec<Span<'static>> = Vec::new();
+      sep_spans.push(Span::styled("├", border_style));
+
+      for (col_idx, &width) in col_widths.iter().enumerate() {
+        // Each cell is: content(width) + " │ " (3 chars)
+        // So separator needs: "─" * (width + 2) to match " content " spacing
+        sep_spans.push(Span::styled("─".repeat(width + 2), border_style));
+        if col_idx < col_widths.len() - 1 {
+          sep_spans.push(Span::styled("┼", border_style));
+        }
+      }
+      sep_spans.push(Span::styled("┤", border_style));
+      lines.push(Line::from(sep_spans));
+    }
+  }
+}
+
+fn align_text(text: &str, width: usize, alignment: pulldown_cmark::Alignment) -> String {
+  let text_width = text.width();
+  if text_width >= width {
+    return text.to_string();
+  }
+
+  let padding = width - text_width;
+  match alignment {
+    pulldown_cmark::Alignment::Right => format!("{}{}", " ".repeat(padding), text),
+    pulldown_cmark::Alignment::Center => {
+      let left = padding / 2;
+      let right = padding - left;
+      format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+    }
+    _ => format!("{}{}", text, " ".repeat(padding)),
   }
 }
 
@@ -440,5 +587,41 @@ mod tests {
     // Both should have content
     assert!(!raw_lines.is_empty());
     assert!(!rendered_lines.is_empty());
+  }
+
+  #[test]
+  fn test_table_renders() {
+    let h = highlighter();
+    let content = "| Flag | Description |\n|---|---|\n| `-a` | Show all |\n| `-h` | Help |";
+    let lines = render_markdown(content, &h);
+
+    // Should have multiple lines for table
+    assert!(lines.len() >= 3, "Table should produce multiple lines");
+
+    let text: String = lines.iter()
+      .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+      .collect();
+
+    assert!(text.contains("Flag"), "Header should be present");
+    assert!(text.contains("Description"), "Header should be present");
+    assert!(text.contains("-a"), "Cell content should be present");
+    assert!(text.contains("Show all"), "Cell content should be present");
+  }
+
+  #[test]
+  fn test_table_with_alignment() {
+    let h = highlighter();
+    let content = "| Left | Center | Right |\n|:---|:---:|---:|\n| L | C | R |";
+    let lines = render_markdown(content, &h);
+
+    assert!(!lines.is_empty(), "Table should produce lines");
+
+    let text: String = lines.iter()
+      .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+      .collect();
+
+    assert!(text.contains("Left"));
+    assert!(text.contains("Center"));
+    assert!(text.contains("Right"));
   }
 }
