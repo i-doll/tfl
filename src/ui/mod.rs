@@ -35,13 +35,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   render_header(app, chunks[0], frame.buffer_mut());
 
   if app.dual_pane_mode {
-    // Dual-pane layout: left tree | right tree | preview (small)
+    // Dual-pane layout: left tree | right tree | preview
+    let left_pct = app.dual_left_ratio;
+    let right_pct = app.dual_right_ratio;
+    let preview_pct = 100u16.saturating_sub(left_pct + right_pct).max(10);
+
     let main_chunks = Layout::default()
       .direction(Direction::Horizontal)
       .constraints([
-        Constraint::Percentage(40), // left tree
-        Constraint::Percentage(40), // right tree
-        Constraint::Percentage(20), // preview
+        Constraint::Percentage(left_pct),    // left tree
+        Constraint::Percentage(right_pct),   // right tree
+        Constraint::Percentage(preview_pct), // preview
       ])
       .split(chunks[1]);
 

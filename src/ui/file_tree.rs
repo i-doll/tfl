@@ -90,16 +90,16 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
     lines.push(line);
   }
 
-  let title = if is_right_pane {
-    if tree.show_hidden {
-      " Right [hidden: on] "
-    } else {
-      " Right "
-    }
-  } else if tree.show_hidden {
-    " Files [hidden: on] "
+  // Get directory name from tree root
+  let dir_name = tree.root
+    .file_name()
+    .and_then(|n| n.to_str())
+    .unwrap_or("~");
+
+  let title = if tree.show_hidden {
+    format!(" {} [hidden: on] ", dir_name)
   } else {
-    " Files "
+    format!(" {} ", dir_name)
   };
 
   let border_color = if is_active {
