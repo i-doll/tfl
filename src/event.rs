@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use notify::{RecommendedWatcher, Watcher};
 
 use crate::action::Action;
@@ -138,6 +138,8 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Esc => Action::SearchCancel,
       KeyCode::Enter => Action::SearchConfirm,
       KeyCode::Backspace => Action::SearchBackspace,
+      KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::SearchToggleRegex,
+      KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::SearchToggleCase,
       KeyCode::Char(c) => Action::SearchInput(c),
       _ => Action::None,
     },
@@ -268,6 +270,24 @@ mod tests {
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Search, &c), Action::SearchConfirm);
     assert_eq!(map_key(key(KeyCode::Esc), InputMode::Search, &c), Action::SearchCancel);
     assert_eq!(map_key(key(KeyCode::Backspace), InputMode::Search, &c), Action::SearchBackspace);
+  }
+
+  #[test]
+  fn test_search_mode_toggle_regex() {
+    let c = cfg();
+    assert_eq!(
+      map_key(key_with_mod(KeyCode::Char('r'), KeyModifiers::CONTROL), InputMode::Search, &c),
+      Action::SearchToggleRegex
+    );
+  }
+
+  #[test]
+  fn test_search_mode_toggle_case() {
+    let c = cfg();
+    assert_eq!(
+      map_key(key_with_mod(KeyCode::Char('i'), KeyModifiers::CONTROL), InputMode::Search, &c),
+      Action::SearchToggleCase
+    );
   }
 
   #[test]

@@ -2902,6 +2902,7 @@ dependencies = [
  "open",
  "ratatui",
  "ratatui-image",
+ "regex",
  "serde",
  "syntect",
  "thiserror 2.0.18",

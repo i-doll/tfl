@@ -9,6 +9,15 @@ use crate::event::{InputMode, PromptKind};
 use crate::fs::{GitFileStatus, GitStatus};
 use crate::preview::directory::format_size;
 
+fn truncate_error(err: &str) -> String {
+  let first_line = err.lines().next().unwrap_or(err);
+  if first_line.len() > 50 {
+    format!("{}...", &first_line[..47])
+  } else {
+    first_line.to_string()
+  }
+}
+
 fn git_status_label(status: &GitStatus) -> Option<&'static str> {
   if status.is_clean() {
     return None;
@@ -70,11 +79,30 @@ fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color) -> Vec<Sp
 pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
   let line = match app.input_mode {
     InputMode::Search => {
-      Line::from(vec![
+      let mut spans = vec![
         Span::styled(" /", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled(&app.search_query, Style::default().fg(Color::Indexed(252))),
-        Span::styled("▌", Style::default().fg(Color::Indexed(75))),
-      ])
+      ];
+
+      // Mode indicators
+      if app.search_regex {
+        spans.push(Span::styled("[re]", Style::default().fg(Color::Indexed(208))));
+      }
+      if app.search_case_sensitive {
+        spans.push(Span::styled("[Aa]", Style::default().fg(Color::Indexed(114))));
+      }
+
+      spans.push(Span::styled(&app.search_query, Style::default().fg(Color::Indexed(252))));
+      spans.push(Span::styled("▌", Style::default().fg(Color::Indexed(75))));
+
+      // Show regex error if present
+      if let Some(ref err) = app.search_regex_error {
+        spans.push(Span::styled(
+          format!(" Error: {}", truncate_error(err)),
+          Style::default().fg(Color::Indexed(167)),
+        ));
+      }
+
+      Line::from(spans)
     }
     InputMode::GPrefix => {
       Line::from(vec![
