@@ -120,6 +120,13 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
             ),
           ])
         }
+        Some(PromptKind::SaveSearch) => {
+          let mut spans = vec![
+            Span::styled(" Save search as: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          Line::from(spans)
+        }
         None => {
           Line::from(vec![
             Span::styled(" ...", Style::default().fg(Color::DarkGray)),
@@ -137,6 +144,12 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
       Line::from(vec![
         Span::styled(" Open with ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
         Span::styled("Enter:open  Esc:close", Style::default().fg(Color::DarkGray)),
+      ])
+    }
+    InputMode::SavedSearches => {
+      Line::from(vec![
+        Span::styled(" Saved Searches ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
+        Span::styled("1-9:quick  d:delete  Enter:apply  Esc:close", Style::default().fg(Color::DarkGray)),
       ])
     }
     InputMode::Error => {
