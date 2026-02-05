@@ -120,6 +120,15 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
             ),
           ])
         }
+        Some(PromptKind::ConfirmExtractAndDelete) => {
+          let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
+          Line::from(vec![
+            Span::styled(
+              format!(" Extract and delete {name}? (y/N)"),
+              Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+            ),
+          ])
+        }
         None => {
           Line::from(vec![
             Span::styled(" ...", Style::default().fg(Color::DarkGray)),

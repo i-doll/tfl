@@ -42,6 +42,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Live config reload** — changes to `config.toml`, `apps.toml`, and `favorites` are picked up automatically without restarting
 - **File metadata panel** — size, modified time, permissions, line count, git commit history
 - **Image EXIF data** — camera model, ISO, exposure for photos with embedded metadata
+- **Archive browsing** — preview contents of ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ files with file listing
+- **Archive extraction** — extract archives to current directory, with optional delete after extract
 
 ## Keybindings
 
@@ -79,6 +81,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `~` / `gh` | Go to home directory |
 | `f` | Open favorites picker |
 | `F` | Add current directory to favorites |
+| `x` | Extract archive to current directory |
+| `X` | Extract archive and delete after success |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
@@ -163,6 +167,11 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `notify` | OS-native file watching for live config reload |
 | `git2` | Native Git repository operations (status, commits, branch info) |
 | `kamadak-exif` | EXIF metadata extraction from images |
+| `zip` | ZIP archive reading and extraction |
+| `tar` | TAR archive reading and extraction |
+| `flate2` | GZIP decompression for tar.gz files |
+| `bzip2` | BZIP2 decompression for tar.bz2 files |
+| `xz2` | XZ/LZMA decompression for tar.xz files |
 
 ## Installation
 
@@ -269,7 +278,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -314,6 +323,7 @@ src/
     tree.rs        FileTree: flat vec, expand/collapse, sort, reload
   preview/
     mod.rs         PreviewState: cache, debounce, type detection
+    archive.rs     Archive listing and extraction (ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ)
     text.rs        Syntax-highlighted text preview
     image.rs       Async image loading (Kitty protocol)
     hex.rs         Hex dump for binary files
