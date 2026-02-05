@@ -63,25 +63,37 @@ pub fn load_pdf_async(path: &Path) -> mpsc::Receiver<PdfLoadResult> {
   rx
 }
 
-/// Suppress stderr output during a closure execution
+/// Suppress stdout and stderr output during a closure execution
 /// Used to silence debug messages from pdf-extract library
 #[cfg(unix)]
-fn suppress_stderr<T, F: FnOnce() -> T>(f: F) -> T {
-  // Save original stderr
-  let stderr_fd = std::io::stderr().as_raw_fd();
+fn suppress_output<T, F: FnOnce() -> T>(f: F) -> T {
+  use std::io::{stdout, stderr};
+
+  // Save original stdout and stderr
+  let stdout_fd = stdout().as_raw_fd();
+  let stderr_fd = stderr().as_raw_fd();
+  let saved_stdout = unsafe { libc::dup(stdout_fd) };
   let saved_stderr = unsafe { libc::dup(stderr_fd) };
 
-  // Open /dev/null and redirect stderr to it
+  // Open /dev/null and redirect both to it
   if let Ok(dev_null) = File::open("/dev/null") {
+    let null_fd = dev_null.as_raw_fd();
     unsafe {
-      libc::dup2(dev_null.as_raw_fd(), stderr_fd);
+      libc::dup2(null_fd, stdout_fd);
+      libc::dup2(null_fd, stderr_fd);
     }
   }
 
   // Run the closure
   let result = f();
 
-  // Restore original stderr
+  // Restore original stdout and stderr
+  if saved_stdout >= 0 {
+    unsafe {
+      libc::dup2(saved_stdout, stdout_fd);
+      libc::close(saved_stdout);
+    }
+  }
   if saved_stderr >= 0 {
     unsafe {
       libc::dup2(saved_stderr, stderr_fd);
@@ -94,15 +106,15 @@ fn suppress_stderr<T, F: FnOnce() -> T>(f: F) -> T {
 
 /// No-op on non-Unix platforms
 #[cfg(not(unix))]
-fn suppress_stderr<T, F: FnOnce() -> T>(f: F) -> T {
+fn suppress_output<T, F: FnOnce() -> T>(f: F) -> T {
   f()
 }
 
 /// Extract text from a PDF file
 fn extract_pdf_text(path: &Path) -> PdfLoadResult {
-  // Suppress stderr during extraction - pdf-extract prints debug messages
+  // Suppress stdout/stderr during extraction - pdf-extract prints debug messages
   // about Unicode ligature mismatches that spam the terminal
-  let result = suppress_stderr(|| pdf_extract::extract_text(path));
+  let result = suppress_output(|| pdf_extract::extract_text(path));
 
   match result {
     Ok(text) => {
