@@ -131,6 +131,9 @@ pub struct App {
   pub search_regex_error: Option<String>,
   compiled_regex: Option<Regex>,
   pub size_filter_query: String,
+  pub date_filter_query: String,
+  pub date_filter: Option<DateFilter>,
+  pub date_filter_time_type: TimeType,
   pub tree_ratio: u16,
   pub min_tree_ratio: u16,
   pub max_tree_ratio: u16,
@@ -197,6 +200,9 @@ impl App {
       search_regex_error: None,
       compiled_regex: None,
       size_filter_query: String::new(),
+      date_filter_query: String::new(),
+      date_filter: None,
+      date_filter_time_type: TimeType::Modified,
       tree_ratio: config.tree_ratio,
       min_tree_ratio: config.min_tree_ratio,
       max_tree_ratio: config.max_tree_ratio,
@@ -1733,8 +1739,9 @@ impl App {
   pub fn visible_entries(&self) -> Vec<usize> {
     let has_name_filter = !self.search_query.is_empty();
     let size_filter = SizeFilter::parse(&self.size_filter_query);
+    let date_filter = DateFilter::parse(&self.date_filter_query);
 
-    if !has_name_filter && size_filter.is_none() {
+    if !has_name_filter && size_filter.is_none() && date_filter.is_none() {
       return (0..self.tree.entries.len()).collect();
     }
 
@@ -1757,6 +1764,12 @@ impl App {
             {
               return false;
             }
+            // Date filter (if active)
+            if let Some(ref df) = date_filter
+              && !df.matches(&e.path, self.date_filter_time_type)
+            {
+              return false;
+            }
             true
           })
           .map(|(i, _)| i)
@@ -1768,7 +1781,7 @@ impl App {
       }
     }
 
-    // Standard substring search with size filter
+    // Standard substring search with size filter and date filter
     let query = if self.search_case_sensitive {
       self.search_query.clone()
     } else {
@@ -1795,6 +1808,12 @@ impl App {
         // Size filter (if active) - only apply to files, not directories
         if let Some(ref sf) = size_filter
           && !e.is_dir && !sf.matches(e.size)
+        {
+          return false;
+        }
+        // Date filter (if active)
+        if let Some(ref df) = date_filter
+          && !df.matches(&e.path, self.date_filter_time_type)
         {
           return false;
         }

@@ -126,6 +126,7 @@ pub enum InputMode {
   Normal,
   Search,
   SizeFilter,
+  DateFilter,
   GPrefix,
   Help,
   Prompt,
@@ -161,6 +162,14 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Enter => Action::SizeFilterConfirm,
       KeyCode::Backspace => Action::SizeFilterBackspace,
       KeyCode::Char(c) => Action::SizeFilterInput(c),
+      _ => Action::None,
+    },
+    InputMode::DateFilter => match key.code {
+      KeyCode::Esc => Action::DateFilterCancel,
+      KeyCode::Enter => Action::DateFilterConfirm,
+      KeyCode::Backspace => Action::DateFilterBackspace,
+      KeyCode::Tab => Action::DateFilterCycleTimeType,
+      KeyCode::Char(c) => Action::DateFilterInput(c),
       _ => Action::None,
     },
     InputMode::GPrefix => {
@@ -518,5 +527,25 @@ mod tests {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Properties, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Properties, &c), Action::None);
+  }
+
+  #[test]
+  fn test_size_filter_mode() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('5')), InputMode::SizeFilter, &c), Action::SizeFilterInput('5'));
+    assert_eq!(map_key(key(KeyCode::Char('>')), InputMode::SizeFilter, &c), Action::SizeFilterInput('>'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::SizeFilter, &c), Action::SizeFilterConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::SizeFilter, &c), Action::SizeFilterCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::SizeFilter, &c), Action::SizeFilterBackspace);
+  }
+
+  #[test]
+  fn test_date_filter_mode() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::DateFilter, &c), Action::DateFilterInput('a'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::DateFilter, &c), Action::DateFilterConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::DateFilter, &c), Action::DateFilterCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::DateFilter, &c), Action::DateFilterBackspace);
+    assert_eq!(map_key(key(KeyCode::Tab), InputMode::DateFilter, &c), Action::DateFilterCycleTimeType);
   }
 }

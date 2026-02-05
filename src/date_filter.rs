@@ -198,6 +198,7 @@ impl DateFilter {
   }
 
   /// Get a display string for the time that matched
+  #[allow(dead_code)]
   pub fn format_time(time: SystemTime) -> String {
     let datetime: DateTime<Local> = time.into();
     datetime.format("%Y-%m-%d %H:%M").to_string()
