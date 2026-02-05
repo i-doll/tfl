@@ -49,6 +49,7 @@ pub struct Config {
   pub ratio_step: u16,
   pub tick_rate_ms: u64,
   pub claude_yolo: bool,
+  pub show_hidden: bool,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
@@ -57,7 +58,13 @@ pub struct Config {
 #[derive(Deserialize, Default)]
 struct TomlConfig {
   general: Option<GeneralConfig>,
+  display: Option<DisplayConfig>,
   keys: Option<KeysConfig>,
+}
+
+#[derive(Deserialize, Default)]
+struct DisplayConfig {
+  show_hidden: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -193,6 +200,7 @@ impl Config {
       ratio_step: 5,
       tick_rate_ms: 100,
       claude_yolo: false,
+      show_hidden: false,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       custom_apps: Vec::new(),
@@ -218,6 +226,12 @@ impl Config {
       if let Some(yolo) = general.claude_yolo {
         self.claude_yolo = yolo;
       }
+    }
+
+    if let Some(display) = toml_config.display
+      && let Some(show_hidden) = display.show_hidden
+    {
+      self.show_hidden = show_hidden;
     }
 
     if let Some(keys) = toml_config.keys {
@@ -335,6 +349,61 @@ h = "go_home"
     }
 
     std::fs::write(path, Self::default_toml())
+      .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+
+    Ok(())
+  }
+
+  pub fn save_show_hidden(path: &std::path::Path, show_hidden: bool) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+      std::fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let value_str = if show_hidden { "true" } else { "false" };
+
+    let new_content = if content.contains("[display]") {
+      // Update existing display section
+      let mut lines: Vec<&str> = content.lines().collect();
+      let mut in_display = false;
+      let mut found_show_hidden = false;
+
+      for line in &mut lines {
+        if line.starts_with("[display]") {
+          in_display = true;
+        } else if line.starts_with('[') {
+          in_display = false;
+        } else if in_display && line.trim_start().starts_with("show_hidden") {
+          *line = Box::leak(format!("show_hidden = {value_str}").into_boxed_str());
+          found_show_hidden = true;
+        }
+      }
+
+      if !found_show_hidden {
+        // Add show_hidden after [display] section header
+        let mut result = Vec::new();
+        for line in &lines {
+          result.push(*line);
+          if line.starts_with("[display]") {
+            result.push(Box::leak(format!("show_hidden = {value_str}").into_boxed_str()));
+          }
+        }
+        result.join("\n")
+      } else {
+        lines.join("\n")
+      }
+    } else {
+      // Add new display section
+      let trimmed = content.trim_end();
+      if trimmed.is_empty() {
+        format!("[display]\nshow_hidden = {value_str}\n")
+      } else {
+        format!("{trimmed}\n\n[display]\nshow_hidden = {value_str}\n")
+      }
+    };
+
+    std::fs::write(path, new_content)
       .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
 
     Ok(())
@@ -964,5 +1033,109 @@ claude_yolo = false
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('?'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleHelp));
+  }
+
+  // --- show_hidden persistence tests ---
+
+  #[test]
+  fn test_show_hidden_default_false() {
+    let config = Config::default();
+    assert!(!config.show_hidden);
+  }
+
+  #[test]
+  fn test_show_hidden_parsed_true() {
+    let toml = r#"
+[display]
+show_hidden = true
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(config.show_hidden);
+  }
+
+  #[test]
+  fn test_show_hidden_parsed_false() {
+    let toml = r#"
+[display]
+show_hidden = false
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(!config.show_hidden);
+  }
+
+  #[test]
+  fn test_save_show_hidden_creates_display_section() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_config_save_{}_{}", std::sync::atomic::AtomicU32::new(0).fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let path = dir.join("config.toml");
+
+    // Save show_hidden = true to a new file
+    Config::save_show_hidden(&path, true).unwrap();
+
+    // Verify the file contains the correct content
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("[display]"));
+    assert!(content.contains("show_hidden = true"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_save_show_hidden_updates_existing_file() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_config_save2_{}_{}", std::sync::atomic::AtomicU32::new(0).fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let path = dir.join("config.toml");
+
+    // Create existing config with general section
+    std::fs::write(&path, r#"[general]
+tree_ratio = 40
+"#).unwrap();
+
+    // Save show_hidden = true
+    Config::save_show_hidden(&path, true).unwrap();
+
+    // Verify file now contains both sections
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("[general]"));
+    assert!(content.contains("tree_ratio = 40"));
+    assert!(content.contains("[display]"));
+    assert!(content.contains("show_hidden = true"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_save_show_hidden_updates_existing_display_section() {
+    let dir = std::env::temp_dir().join(format!(
+      "tui_config_save3_{}_{}", std::sync::atomic::AtomicU32::new(0).fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let path = dir.join("config.toml");
+
+    // Create existing config with display section
+    std::fs::write(&path, r#"[display]
+show_hidden = false
+"#).unwrap();
+
+    // Save show_hidden = true
+    Config::save_show_hidden(&path, true).unwrap();
+
+    // Verify value was updated
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("show_hidden = true"));
+    // Should not have duplicate display sections or false value
+    assert!(!content.contains("show_hidden = false"));
+
+    let _ = std::fs::remove_dir_all(&dir);
   }
 }
