@@ -145,6 +145,14 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("Esc:dismiss", Style::default().fg(Color::DarkGray)),
       ])
     }
+    InputMode::Visual => {
+      let count = app.selection_count();
+      Line::from(vec![
+        Span::styled(" VISUAL ", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{count} selected "), Style::default().fg(Color::Indexed(252))),
+        Span::styled("j/k:extend  Space:toggle  d:delete  y:yank  Esc:clear", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::Normal => {
       if let Some(ref msg) = app.status_message {
         Line::from(vec![
@@ -226,6 +234,15 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           spans.push(Span::styled(
             format!(" \u{2191}{}\u{2193}{}", info.ahead, info.behind),
             Style::default().fg(Color::Indexed(75)),
+          ));
+        }
+
+        // Selection count if any
+        let selection_count = app.selection_count();
+        if selection_count > 0 {
+          spans.push(Span::styled(
+            format!(" [{selection_count} sel]"),
+            Style::default().fg(Color::Indexed(208)),
           ));
         }
 

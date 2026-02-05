@@ -122,6 +122,7 @@ pub enum InputMode {
   Favorites,
   OpenWith,
   Error,
+  Visual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +183,15 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Action::ErrorClose,
       _ => Action::None,
     },
+    InputMode::Visual => match key.code {
+      KeyCode::Char('j') | KeyCode::Down => Action::VisualModeDown,
+      KeyCode::Char('k') | KeyCode::Up => Action::VisualModeUp,
+      KeyCode::Esc => Action::ClearSelection,
+      KeyCode::Char(' ') => Action::ToggleSelection,
+      KeyCode::Char('d') | KeyCode::Delete => Action::DeleteFile,
+      KeyCode::Char('y') => Action::YankPath,
+      _ => Action::None,
+    },
     InputMode::Normal => {
       let kb = normalize_key_event(key);
       config.normal_keys.get(&kb).cloned().unwrap_or(Action::None)
@@ -237,13 +247,15 @@ mod tests {
   #[test]
   fn test_normal_mode_actions() {
     let c = cfg();
-    assert_eq!(map_key(key(KeyCode::Char(' ')), InputMode::Normal, &c), Action::ToggleExpand);
+    assert_eq!(map_key(key(KeyCode::Char(' ')), InputMode::Normal, &c), Action::ToggleSelection);
+    assert_eq!(map_key(key(KeyCode::Tab), InputMode::Normal, &c), Action::ToggleExpand);
     assert_eq!(map_key(key(KeyCode::Char('.')), InputMode::Normal, &c), Action::ToggleHidden);
     assert_eq!(map_key(key(KeyCode::Char('G')), InputMode::Normal, &c), Action::GoToBottom);
     assert_eq!(map_key(key(KeyCode::Char('g')), InputMode::Normal, &c), Action::GPress);
     assert_eq!(map_key(key(KeyCode::Char('/')), InputMode::Normal, &c), Action::SearchStart);
     assert_eq!(map_key(key(KeyCode::Char('J')), InputMode::Normal, &c), Action::ScrollPreviewDown);
     assert_eq!(map_key(key(KeyCode::Char('K')), InputMode::Normal, &c), Action::ScrollPreviewUp);
+    assert_eq!(map_key(key(KeyCode::Char('V')), InputMode::Normal, &c), Action::VisualModeStart);
   }
 
   #[test]
@@ -373,5 +385,31 @@ mod tests {
     };
     c.normal_keys.insert(kb, Action::Quit);
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal, &c), Action::Quit);
+  }
+
+  #[test]
+  fn test_visual_mode_navigation() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Visual, &c), Action::VisualModeDown);
+    assert_eq!(map_key(key(KeyCode::Down), InputMode::Visual, &c), Action::VisualModeDown);
+    assert_eq!(map_key(key(KeyCode::Char('k')), InputMode::Visual, &c), Action::VisualModeUp);
+    assert_eq!(map_key(key(KeyCode::Up), InputMode::Visual, &c), Action::VisualModeUp);
+  }
+
+  #[test]
+  fn test_visual_mode_actions() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Visual, &c), Action::ClearSelection);
+    assert_eq!(map_key(key(KeyCode::Char(' ')), InputMode::Visual, &c), Action::ToggleSelection);
+    assert_eq!(map_key(key(KeyCode::Char('d')), InputMode::Visual, &c), Action::DeleteFile);
+    assert_eq!(map_key(key(KeyCode::Delete), InputMode::Visual, &c), Action::DeleteFile);
+    assert_eq!(map_key(key(KeyCode::Char('y')), InputMode::Visual, &c), Action::YankPath);
+  }
+
+  #[test]
+  fn test_visual_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::Visual, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Visual, &c), Action::None);
   }
 }
