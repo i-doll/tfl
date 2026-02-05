@@ -266,32 +266,19 @@ impl PreviewState {
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let metadata = get_file_metadata(path);
     let git_commits = get_git_commits(git_repo, path, 3);
+    let archive_type = archive::archive_type(path).unwrap_or("archive");
+    let lines = archive::render_archive_summary(archive_type, file_size);
 
-    match archive::list_archive(path) {
-      Ok(entries) => {
-        let lines = archive::render_archive_contents(&entries);
-        Some(PreviewContent {
-          lines,
-          preview_type: PreviewType::Archive,
-          line_count: entries.len(),
-          file_size,
-          extension: get_extension(path),
-          metadata,
-          image_metadata: None,
-          git_commits,
-        })
-      }
-      Err(e) => Some(PreviewContent {
-        lines: vec![Line::from(format!(" Error reading archive: {e}"))],
-        preview_type: PreviewType::Error(e),
-        line_count: 0,
-        file_size,
-        extension: get_extension(path),
-        metadata,
-        image_metadata: None,
-        git_commits,
-      }),
-    }
+    Some(PreviewContent {
+      lines,
+      preview_type: PreviewType::Archive,
+      line_count: 0,
+      file_size,
+      extension: get_extension(path),
+      metadata,
+      image_metadata: None,
+      git_commits,
+    })
   }
 
   fn insert_cache(&mut self, path: PathBuf, content: PreviewContent) {

@@ -42,7 +42,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Live config reload** — changes to `config.toml`, `apps.toml`, and `favorites` are picked up automatically without restarting
 - **File metadata panel** — size, modified time, permissions, line count, git commit history
 - **Image EXIF data** — camera model, ISO, exposure for photos with embedded metadata
-- **Archive browsing** — preview contents of ZIP, TAR, TAR.GZ files with file listing
+- **Archive browsing** — preview contents of ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ files with file listing
 - **Archive extraction** — extract archives to current directory, with optional delete after extract
 
 ## Keybindings
@@ -169,7 +169,9 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `kamadak-exif` | EXIF metadata extraction from images |
 | `zip` | ZIP archive reading and extraction |
 | `tar` | TAR archive reading and extraction |
-| `flate2` | GZIP compression/decompression for tar.gz files |
+| `flate2` | GZIP decompression for tar.gz files |
+| `bzip2` | BZIP2 decompression for tar.bz2 files |
+| `xz2` | XZ/LZMA decompression for tar.xz files |
 
 ## Installation
 
@@ -321,7 +323,7 @@ src/
     tree.rs        FileTree: flat vec, expand/collapse, sort, reload
   preview/
     mod.rs         PreviewState: cache, debounce, type detection
-    archive.rs     Archive listing and extraction (ZIP, TAR, TAR.GZ)
+    archive.rs     Archive listing and extraction (ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ)
     text.rs        Syntax-highlighted text preview
     image.rs       Async image loading (Kitty protocol)
     hex.rs         Hex dump for binary files

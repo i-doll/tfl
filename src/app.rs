@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::mpsc;
 
 use anyhow::Result;
 use ratatui_image::picker::Picker;
@@ -17,6 +18,19 @@ use crate::preview::{PreviewState, archive};
 pub enum ClipboardOp {
   Cut,
   Copy,
+}
+
+/// Result of an async archive extraction
+pub struct ExtractResult {
+  pub name: String,
+  pub path: PathBuf,
+  pub delete_after: bool,
+  pub result: Result<(), String>,
+}
+
+/// State for an in-progress extraction
+pub struct ExtractingState {
+  pub rx: mpsc::Receiver<ExtractResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +69,7 @@ pub struct App {
   pub error_messages: Vec<String>,
   pub wrote_config: bool,
   pub claude_yolo: bool,
+  pub extracting: Option<ExtractingState>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +113,7 @@ impl App {
       error_messages: Vec::new(),
       wrote_config: false,
       claude_yolo: config.claude_yolo,
+      extracting: None,
     })
   }
 
@@ -329,10 +345,11 @@ impl App {
         self.error_messages.clear();
         self.input_mode = InputMode::Normal;
       }
-      Action::ExtractArchive => self.extract_archive(false)?,
+      Action::ExtractArchive => self.extract_archive_start(false)?,
       Action::ExtractAndDelete => self.extract_archive_start_confirm()?,
       Action::Tick => {
         self.preview.check_image_loaded();
+        self.check_extraction_complete()?;
       }
       Action::None => {}
     }
@@ -903,12 +920,19 @@ impl App {
     Ok(())
   }
 
-  fn extract_archive(&mut self, delete_after: bool) -> Result<()> {
+  fn extract_archive_start(&mut self, delete_after: bool) -> Result<()> {
+    // Don't start another extraction while one is in progress
+    if self.extracting.is_some() {
+      self.set_status("Extraction already in progress".to_string());
+      return Ok(());
+    }
+
     let Some(entry) = self.selected_entry() else {
       return Ok(());
     };
 
     let path = entry.path.clone();
+    let name = entry.name.clone();
 
     // Check if it's an archive
     if !archive::is_archive(&path) {
@@ -919,18 +943,57 @@ impl App {
     // Extract to parent directory of the archive
     let dest_dir = path.parent().unwrap_or(&self.tree.root).to_path_buf();
 
-    match archive::extract_archive(&path, &dest_dir) {
+    // Show extracting status
+    self.set_status(format!("Extracting {name}..."));
+
+    // Spawn background thread for extraction
+    let (tx, rx) = mpsc::channel();
+    let extract_name = name.clone();
+    let extract_path = path.clone();
+
+    std::thread::spawn(move || {
+      let result = archive::extract_archive(&extract_path, &dest_dir);
+      let _ = tx.send(ExtractResult {
+        name: extract_name,
+        path: extract_path,
+        delete_after,
+        result,
+      });
+    });
+
+    self.extracting = Some(ExtractingState { rx });
+    Ok(())
+  }
+
+  fn check_extraction_complete(&mut self) -> Result<()> {
+    let Some(ref state) = self.extracting else {
+      return Ok(());
+    };
+
+    // Non-blocking check
+    let result = match state.rx.try_recv() {
+      Ok(r) => r,
+      Err(mpsc::TryRecvError::Empty) => return Ok(()),
+      Err(mpsc::TryRecvError::Disconnected) => {
+        self.extracting = None;
+        self.set_status("Extraction failed: thread died".to_string());
+        return Ok(());
+      }
+    };
+
+    // Clear extracting state
+    self.extracting = None;
+
+    match result.result {
       Ok(()) => {
-        let name = entry.name.clone();
-        if delete_after {
-          // Delete the archive after successful extraction
-          if let Err(e) = std::fs::remove_file(&path) {
+        if result.delete_after {
+          if let Err(e) = std::fs::remove_file(&result.path) {
             self.set_status(format!("Extracted but failed to delete: {e}"));
           } else {
-            self.set_status(format!("Extracted and deleted: {name}"));
+            self.set_status(format!("Extracted and deleted: {}", result.name));
           }
         } else {
-          self.set_status(format!("Extracted: {name}"));
+          self.set_status(format!("Extracted: {}", result.name));
         }
         self.tree.reload()?;
         self.preview.invalidate();
@@ -964,7 +1027,7 @@ impl App {
 
   fn execute_extract_and_delete(&mut self) -> Result<()> {
     self.cancel_prompt();
-    self.extract_archive(true)
+    self.extract_archive_start(true)
   }
 
   fn reposition_cursor_to(&mut self, path: &PathBuf) {
@@ -2144,6 +2207,12 @@ mod tests {
 
     app.update(Action::ExtractArchive).unwrap();
 
+    // Wait for async extraction to complete
+    while app.extracting.is_some() {
+      std::thread::sleep(std::time::Duration::from_millis(10));
+      app.update(Action::Tick).unwrap();
+    }
+
     // Verify extraction
     assert!(dir.join("extracted.txt").exists());
     assert_eq!(fs::read_to_string(dir.join("extracted.txt")).unwrap(), "extracted content");
@@ -2213,6 +2282,12 @@ mod tests {
 
     // Confirm with 'y'
     app.update(Action::PromptInput('y')).unwrap();
+
+    // Wait for async extraction to complete
+    while app.extracting.is_some() {
+      std::thread::sleep(std::time::Duration::from_millis(10));
+      app.update(Action::Tick).unwrap();
+    }
 
     // Verify extraction and deletion
     assert!(dir.join("extracted.txt").exists());

@@ -1,46 +1,66 @@
 use std::io::{Read, Seek};
 use std::path::Path;
 
+use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use tar::Archive as TarArchive;
+use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
 /// Represents an entry within an archive
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ArchiveEntry {
   pub name: String,
   pub size: u64,
   pub is_dir: bool,
   /// Compressed size (for future use in displaying compression ratio)
-  #[allow(dead_code)]
   pub compressed_size: Option<u64>,
 }
 
 /// Detect if a path is a supported archive type
 pub fn is_archive(path: &Path) -> bool {
+  let name = path.file_name()
+    .and_then(|n| n.to_str())
+    .map(|s| s.to_lowercase())
+    .unwrap_or_default();
+
+  // Check for compound extensions first
+  if name.ends_with(".tar.gz") || name.ends_with(".tar.bz2") || name.ends_with(".tar.xz") {
+    return true;
+  }
+
   let ext = path.extension()
     .and_then(|e| e.to_str())
     .map(|s| s.to_lowercase());
 
-  matches!(ext.as_deref(), Some("zip" | "tar" | "gz" | "tgz"))
+  matches!(ext.as_deref(), Some("zip" | "tar" | "gz" | "tgz" | "tbz2" | "txz"))
 }
 
 /// Get the archive type from extension
 pub fn archive_type(path: &Path) -> Option<&'static str> {
-  let name = path.file_name()?.to_str()?;
+  let name = path.file_name()?.to_str()?.to_lowercase();
   let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase());
 
-  // Check for .tar.gz first
+  // Check for compound extensions first
   if name.ends_with(".tar.gz") || ext.as_deref() == Some("tgz") {
     return Some("tar.gz");
+  }
+  if name.ends_with(".tar.bz2") || ext.as_deref() == Some("tbz2") {
+    return Some("tar.bz2");
+  }
+  if name.ends_with(".tar.xz") || ext.as_deref() == Some("txz") {
+    return Some("tar.xz");
   }
 
   match ext.as_deref() {
     Some("zip") => Some("zip"),
     Some("tar") => Some("tar"),
     Some("gz") => Some("gz"),
+    Some("bz2") => Some("bz2"),
+    Some("xz") => Some("xz"),
     _ => None,
   }
 }
@@ -102,6 +122,24 @@ pub fn list_tar_gz(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
   list_tar(decoder)
 }
 
+/// List contents of a TAR.BZ2 file
+pub fn list_tar_bz2(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
+  let file = std::fs::File::open(path)
+    .map_err(|e| format!("Failed to open archive: {e}"))?;
+
+  let decoder = BzDecoder::new(file);
+  list_tar(decoder)
+}
+
+/// List contents of a TAR.XZ file
+pub fn list_tar_xz(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
+  let file = std::fs::File::open(path)
+    .map_err(|e| format!("Failed to open archive: {e}"))?;
+
+  let decoder = XzDecoder::new(file);
+  list_tar(decoder)
+}
+
 /// List contents of a plain TAR file
 pub fn list_tar_file(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
   let file = std::fs::File::open(path)
@@ -111,15 +149,17 @@ pub fn list_tar_file(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
 }
 
 /// List archive contents based on detected type
+#[allow(dead_code)]
 pub fn list_archive(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
   match archive_type(path) {
     Some("zip") => list_zip(path),
     Some("tar.gz") => list_tar_gz(path),
+    Some("tar.bz2") => list_tar_bz2(path),
+    Some("tar.xz") => list_tar_xz(path),
     Some("tar") => list_tar_file(path),
-    Some("gz") => {
-      // Plain .gz file - try to decompress and read as tar
-      list_tar_gz(path)
-    }
+    Some("gz") => list_tar_gz(path),
+    Some("bz2") => list_tar_bz2(path),
+    Some("xz") => list_tar_xz(path),
     _ => Err("Unsupported archive format".to_string()),
   }
 }
@@ -137,7 +177,45 @@ fn format_size(size: u64) -> String {
   }
 }
 
+/// Render a simple archive summary (without reading contents)
+pub fn render_archive_summary(archive_type: &str, file_size: u64) -> Vec<Line<'static>> {
+  let format_name = match archive_type {
+    "zip" => "ZIP",
+    "tar" => "TAR",
+    "tar.gz" => "TAR.GZ",
+    "tar.bz2" => "TAR.BZ2",
+    "tar.xz" => "TAR.XZ",
+    "gz" => "GZIP",
+    "bz2" => "BZIP2",
+    "xz" => "XZ",
+    _ => "Archive",
+  };
+
+  vec![
+    Line::from(""),
+    Line::from(vec![
+      Span::styled(
+        format!("  {format_name} archive"),
+        Style::default().fg(Color::Cyan),
+      ),
+    ]),
+    Line::from(""),
+    Line::from(vec![
+      Span::styled("  Size: ", Style::default().fg(Color::DarkGray)),
+      Span::styled(format_size(file_size), Style::default().fg(Color::Yellow)),
+    ]),
+    Line::from(""),
+    Line::from(vec![
+      Span::styled(
+        "  Press x to extract",
+        Style::default().fg(Color::DarkGray),
+      ),
+    ]),
+  ]
+}
+
 /// Render archive contents as styled lines for preview
+#[allow(dead_code)]
 pub fn render_archive_contents(entries: &[ArchiveEntry]) -> Vec<Line<'static>> {
   let mut lines = Vec::new();
 
@@ -270,6 +348,24 @@ pub fn extract_tar_gz(path: &Path, dest_dir: &Path) -> Result<(), String> {
   extract_tar(decoder, dest_dir)
 }
 
+/// Extract TAR.BZ2 archive
+pub fn extract_tar_bz2(path: &Path, dest_dir: &Path) -> Result<(), String> {
+  let file = std::fs::File::open(path)
+    .map_err(|e| format!("Failed to open archive: {e}"))?;
+
+  let decoder = BzDecoder::new(file);
+  extract_tar(decoder, dest_dir)
+}
+
+/// Extract TAR.XZ archive
+pub fn extract_tar_xz(path: &Path, dest_dir: &Path) -> Result<(), String> {
+  let file = std::fs::File::open(path)
+    .map_err(|e| format!("Failed to open archive: {e}"))?;
+
+  let decoder = XzDecoder::new(file);
+  extract_tar(decoder, dest_dir)
+}
+
 /// Extract plain TAR archive
 pub fn extract_tar_file(path: &Path, dest_dir: &Path) -> Result<(), String> {
   let file = std::fs::File::open(path)
@@ -283,8 +379,12 @@ pub fn extract_archive(path: &Path, dest_dir: &Path) -> Result<(), String> {
   match archive_type(path) {
     Some("zip") => extract_zip(path, dest_dir),
     Some("tar.gz") => extract_tar_gz(path, dest_dir),
+    Some("tar.bz2") => extract_tar_bz2(path, dest_dir),
+    Some("tar.xz") => extract_tar_xz(path, dest_dir),
     Some("tar") => extract_tar_file(path, dest_dir),
     Some("gz") => extract_tar_gz(path, dest_dir),
+    Some("bz2") => extract_tar_bz2(path, dest_dir),
+    Some("xz") => extract_tar_xz(path, dest_dir),
     _ => Err("Unsupported archive format".to_string()),
   }
 }
@@ -323,6 +423,10 @@ mod tests {
     assert!(is_archive(Path::new("test.tar.gz")));
     assert!(is_archive(Path::new("test.tgz")));
     assert!(is_archive(Path::new("test.gz")));
+    assert!(is_archive(Path::new("test.tar.bz2")));
+    assert!(is_archive(Path::new("test.tbz2")));
+    assert!(is_archive(Path::new("test.tar.xz")));
+    assert!(is_archive(Path::new("test.txz")));
   }
 
   #[test]
@@ -339,6 +443,12 @@ mod tests {
     assert_eq!(archive_type(Path::new("test.tar.gz")), Some("tar.gz"));
     assert_eq!(archive_type(Path::new("test.tgz")), Some("tar.gz"));
     assert_eq!(archive_type(Path::new("test.gz")), Some("gz"));
+    assert_eq!(archive_type(Path::new("test.tar.bz2")), Some("tar.bz2"));
+    assert_eq!(archive_type(Path::new("test.tbz2")), Some("tar.bz2"));
+    assert_eq!(archive_type(Path::new("test.bz2")), Some("bz2"));
+    assert_eq!(archive_type(Path::new("test.tar.xz")), Some("tar.xz"));
+    assert_eq!(archive_type(Path::new("test.txz")), Some("tar.xz"));
+    assert_eq!(archive_type(Path::new("test.xz")), Some("xz"));
     assert_eq!(archive_type(Path::new("test.txt")), None);
   }
 
@@ -432,6 +542,64 @@ mod tests {
   }
 
   #[test]
+  fn test_list_tar_bz2_contents() {
+    let dir = test_dir("list_tar_bz2");
+    let tar_bz2_path = dir.join("test.tar.bz2");
+
+    // Create a test TAR.BZ2 file
+    {
+      let file = fs::File::create(&tar_bz2_path).unwrap();
+      let encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::default());
+      let mut builder = tar::Builder::new(encoder);
+
+      let data = b"Hello TAR.BZ2";
+      let mut header = tar::Header::new_gnu();
+      header.set_size(data.len() as u64);
+      header.set_mode(0o644);
+      header.set_cksum();
+      builder.append_data(&mut header, "hello.txt", &data[..]).unwrap();
+
+      builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    let entries = list_tar_bz2(&tar_bz2_path).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "hello.txt");
+    assert_eq!(entries[0].size, 13);
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
+  fn test_list_tar_xz_contents() {
+    let dir = test_dir("list_tar_xz");
+    let tar_xz_path = dir.join("test.tar.xz");
+
+    // Create a test TAR.XZ file
+    {
+      let file = fs::File::create(&tar_xz_path).unwrap();
+      let encoder = xz2::write::XzEncoder::new(file, 6);
+      let mut builder = tar::Builder::new(encoder);
+
+      let data = b"Hello TAR.XZ";
+      let mut header = tar::Header::new_gnu();
+      header.set_size(data.len() as u64);
+      header.set_mode(0o644);
+      header.set_cksum();
+      builder.append_data(&mut header, "hello.txt", &data[..]).unwrap();
+
+      builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    let entries = list_tar_xz(&tar_xz_path).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "hello.txt");
+    assert_eq!(entries[0].size, 12);
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
   fn test_extract_zip() {
     let dir = test_dir("extract_zip");
     let zip_path = dir.join("test.zip");
@@ -491,6 +659,68 @@ mod tests {
 
     assert!(extract_dir.join("hello.txt").exists());
     assert_eq!(fs::read_to_string(extract_dir.join("hello.txt")).unwrap(), "Hello TAR.GZ");
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
+  fn test_extract_tar_bz2() {
+    let dir = test_dir("extract_tar_bz2");
+    let tar_bz2_path = dir.join("test.tar.bz2");
+    let extract_dir = dir.join("extracted");
+    fs::create_dir_all(&extract_dir).unwrap();
+
+    // Create a test TAR.BZ2 file
+    {
+      let file = fs::File::create(&tar_bz2_path).unwrap();
+      let encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::default());
+      let mut builder = tar::Builder::new(encoder);
+
+      let data = b"Hello TAR.BZ2";
+      let mut header = tar::Header::new_gnu();
+      header.set_size(data.len() as u64);
+      header.set_mode(0o644);
+      header.set_cksum();
+      builder.append_data(&mut header, "hello.txt", &data[..]).unwrap();
+
+      builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    extract_tar_bz2(&tar_bz2_path, &extract_dir).unwrap();
+
+    assert!(extract_dir.join("hello.txt").exists());
+    assert_eq!(fs::read_to_string(extract_dir.join("hello.txt")).unwrap(), "Hello TAR.BZ2");
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
+  fn test_extract_tar_xz() {
+    let dir = test_dir("extract_tar_xz");
+    let tar_xz_path = dir.join("test.tar.xz");
+    let extract_dir = dir.join("extracted");
+    fs::create_dir_all(&extract_dir).unwrap();
+
+    // Create a test TAR.XZ file
+    {
+      let file = fs::File::create(&tar_xz_path).unwrap();
+      let encoder = xz2::write::XzEncoder::new(file, 6);
+      let mut builder = tar::Builder::new(encoder);
+
+      let data = b"Hello TAR.XZ";
+      let mut header = tar::Header::new_gnu();
+      header.set_size(data.len() as u64);
+      header.set_mode(0o644);
+      header.set_cksum();
+      builder.append_data(&mut header, "hello.txt", &data[..]).unwrap();
+
+      builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    extract_tar_xz(&tar_xz_path, &extract_dir).unwrap();
+
+    assert!(extract_dir.join("hello.txt").exists());
+    assert_eq!(fs::read_to_string(extract_dir.join("hello.txt")).unwrap(), "Hello TAR.XZ");
 
     cleanup_dir(&dir);
   }
