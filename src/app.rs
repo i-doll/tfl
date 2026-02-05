@@ -236,6 +236,9 @@ impl App {
         self.show_help = !self.show_help;
         self.input_mode = if self.show_help { InputMode::Help } else { InputMode::Normal };
       }
+      Action::ToggleBlame => {
+        self.preview.toggle_blame();
+      }
       Action::CutFile => self.cut_file(),
       Action::CopyFile => self.copy_file(),
       Action::Paste => self.paste_clipboard()?,
@@ -2473,6 +2476,21 @@ mod tests {
   }
 
   #[test]
+  fn test_toggle_blame() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.preview.blame_enabled);
+
+    app.update(Action::ToggleBlame).unwrap();
+    assert!(app.preview.blame_enabled);
+
+    app.update(Action::ToggleBlame).unwrap();
+    assert!(!app.preview.blame_enabled);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_start_opens_dialog() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3000,6 +3018,18 @@ mod tests {
     let root_before = app.tree.root.clone();
     app.update(Action::HistoryForward).unwrap();
     assert_eq!(app.tree.root, root_before);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_blame_resets_scroll() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.preview.scroll_offset = 10;
+
+    app.update(Action::ToggleBlame).unwrap();
+    assert_eq!(app.preview.scroll_offset, 0);
 
     cleanup_test_dir(&dir);
   }

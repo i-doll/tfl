@@ -360,6 +360,7 @@ x = "extract_archive"
 [keys.g_prefix]
 g = "go_to_top"
 h = "go_home"
+b = "toggle_blame"
 
 [ignore]
 patterns = [
@@ -661,6 +662,8 @@ mod tests {
     assert_eq!(config.g_prefix_keys.get(&kb), Some(&Action::GoToTop));
     let kb_h = KeyBinding { code: KeyCode::Char('h'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.g_prefix_keys.get(&kb_h), Some(&Action::GoHome));
+    let kb_b = KeyBinding { code: KeyCode::Char('b'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.g_prefix_keys.get(&kb_b), Some(&Action::ToggleBlame));
   }
 
   // --- Config::load_from_str tests ---

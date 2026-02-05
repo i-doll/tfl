@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use git2::{BranchType, Repository, Status, StatusOptions};
+use git2::{BlameOptions, BranchType, Repository, Status, StatusOptions};
 
 use crate::fs::entry::{GitFileStatus, GitStatus};
+use crate::preview::blame::{BlameData, BlameLine};
 
 #[derive(Debug, Default)]
 pub struct GitRepoInfo {
@@ -187,6 +188,51 @@ impl GitRepo {
     }
 
     commits
+  }
+
+  pub fn get_file_blame(&self, path: &Path) -> Option<BlameData> {
+    let rel_path = path.strip_prefix(&self.root).ok()?;
+
+    // Read file content to get line contents
+    let content = std::fs::read_to_string(path).ok()?;
+    let file_lines: Vec<&str> = content.lines().collect();
+
+    let mut opts = BlameOptions::new();
+    let blame = self.repo.blame_file(rel_path, Some(&mut opts)).ok()?;
+
+    let mut blame_lines = Vec::new();
+
+    for (line_idx, line_content) in file_lines.iter().enumerate() {
+      let line_num = line_idx + 1;
+
+      if let Some(hunk) = blame.get_line(line_num) {
+        let commit_id = hunk.final_commit_id();
+        let hash = commit_id.to_string()[..7].to_string();
+
+        let (author, date) = if let Ok(commit) = self.repo.find_commit(commit_id) {
+          let author_name = commit.author().name().unwrap_or("").to_string();
+          let time = commit.time();
+          let date_str = format_relative_time(time.seconds());
+          (author_name, date_str)
+        } else {
+          ("".to_string(), "".to_string())
+        };
+
+        blame_lines.push(BlameLine {
+          line_num,
+          commit_hash: hash,
+          author,
+          date,
+          content: (*line_content).to_string(),
+        });
+      }
+    }
+
+    if blame_lines.is_empty() {
+      None
+    } else {
+      Some(BlameData::new(blame_lines))
+    }
   }
 }
 
@@ -479,5 +525,70 @@ mod tests {
     let status = convert_status(Status::CONFLICTED);
     assert_eq!(status.staged, Some(GitFileStatus::Conflicted));
     assert_eq!(status.unstaged, Some(GitFileStatus::Conflicted));
+  }
+
+  #[test]
+  fn test_get_file_blame_tracked_file() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+
+    // Create and commit a file
+    let file_path = dir.join("test.txt");
+    fs::write(&file_path, "line 1\nline 2\nline 3\n").unwrap();
+
+    let git_repo = Repository::open(&dir).unwrap();
+    let mut index = git_repo.index().unwrap();
+    index.add_path(Path::new("test.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repo.find_tree(tree_id).unwrap();
+    let sig = git_repo.signature().unwrap();
+    git_repo
+      .commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+      .unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let blame = repo.get_file_blame(&file_path);
+
+    assert!(blame.is_some());
+    let blame_data = blame.unwrap();
+    assert_eq!(blame_data.lines.len(), 3);
+    assert_eq!(blame_data.lines[0].line_num, 1);
+    assert_eq!(blame_data.lines[0].content, "line 1");
+    assert_eq!(blame_data.lines[1].line_num, 2);
+    assert_eq!(blame_data.lines[2].line_num, 3);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_get_file_blame_untracked_file() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+
+    // Create a file but don't commit it
+    let file_path = dir.join("untracked.txt");
+    fs::write(&file_path, "untracked content\n").unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let blame = repo.get_file_blame(&file_path);
+
+    // Untracked files return None
+    assert!(blame.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_get_file_blame_nonexistent_file() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let blame = repo.get_file_blame(&dir.join("nonexistent.txt"));
+
+    assert!(blame.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
   }
 }

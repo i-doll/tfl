@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod blame;
 pub mod directory;
 pub mod hex;
 pub mod image;
@@ -14,6 +15,7 @@ use ratatui::text::Line;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 
+use self::blame::BlameData;
 use self::metadata::{FileMetadata, ImageMetadata, get_file_metadata, get_file_metadata_with_lines, get_image_metadata, get_git_commits};
 use self::text::SyntaxHighlighter;
 use crate::git::{GitCommit, GitRepo};
@@ -45,6 +47,7 @@ pub struct PreviewContent {
   pub metadata: Option<FileMetadata>,
   pub image_metadata: Option<ImageMetadata>,
   pub git_commits: Vec<GitCommit>,
+  pub blame_data: Option<BlameData>,
 }
 
 pub struct PreviewState {
@@ -53,6 +56,7 @@ pub struct PreviewState {
   pub content: Option<PreviewContent>,
   pub image_protocol: Option<StatefulProtocol>,
   pub image_rx: Option<mpsc::Receiver<self::image::ImageLoadResult>>,
+  pub blame_enabled: bool,
   highlighter: SyntaxHighlighter,
   cache: HashMap<PathBuf, PreviewContent>,
   cache_order: Vec<PathBuf>,
@@ -67,11 +71,17 @@ impl PreviewState {
       content: None,
       image_protocol: None,
       image_rx: None,
+      blame_enabled: false,
       highlighter: SyntaxHighlighter::new(),
       cache: HashMap::new(),
       cache_order: Vec::new(),
       last_request: None,
     }
+  }
+
+  pub fn toggle_blame(&mut self) {
+    self.blame_enabled = !self.blame_enabled;
+    self.scroll_offset = 0;
   }
 
   pub fn request_preview(&mut self, path: &Path, picker: Option<&Picker>, git_repo: Option<&GitRepo>) {
@@ -129,6 +139,7 @@ impl PreviewState {
           metadata,
           image_metadata,
           git_commits,
+          blame_data: None,
         })
       }
       PreviewType::Binary => self.load_hex(path, git_repo),
@@ -145,6 +156,7 @@ impl PreviewState {
           metadata: get_file_metadata(path),
           image_metadata: None,
           git_commits,
+          blame_data: None,
         })
       }
       PreviewType::Empty => Some(PreviewContent {
@@ -156,6 +168,7 @@ impl PreviewState {
         metadata: get_file_metadata(path),
         image_metadata: None,
         git_commits,
+        blame_data: None,
       }),
       PreviewType::Error(ref msg) => Some(PreviewContent {
         lines: vec![Line::from(format!(" Error: {msg}"))],
@@ -166,6 +179,7 @@ impl PreviewState {
         metadata: None,
         image_metadata: None,
         git_commits: Vec::new(),
+        blame_data: None,
       }),
     };
 
@@ -187,6 +201,7 @@ impl PreviewState {
           metadata: None,
           image_metadata: None,
           git_commits: Vec::new(),
+          blame_data: None,
         });
       }
     };
@@ -198,6 +213,7 @@ impl PreviewState {
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let metadata = get_file_metadata_with_lines(path, line_count);
     let git_commits = get_git_commits(git_repo, path, 3);
+    let blame_data = git_repo.and_then(|repo| blame::get_blame(repo, path));
 
     Some(PreviewContent {
       lines,
@@ -208,6 +224,7 @@ impl PreviewState {
       metadata,
       image_metadata: None,
       git_commits,
+      blame_data,
     })
   }
 
@@ -224,6 +241,7 @@ impl PreviewState {
           metadata: None,
           image_metadata: None,
           git_commits: Vec::new(),
+          blame_data: None,
         });
       }
     };
@@ -243,6 +261,7 @@ impl PreviewState {
       metadata,
       image_metadata: None,
       git_commits,
+      blame_data: None,
     })
   }
 
@@ -259,6 +278,7 @@ impl PreviewState {
       metadata: None,
       image_metadata: None,
       git_commits: Vec::new(),
+      blame_data: None,
     })
   }
 
@@ -313,6 +333,7 @@ impl PreviewState {
                 metadata: None,
                 image_metadata: None,
                 git_commits: Vec::new(),
+                blame_data: None,
               };
               self.insert_cache(path.clone(), content);
             }
@@ -532,11 +553,33 @@ mod tests {
         metadata: None,
         image_metadata: None,
         git_commits: Vec::new(),
+        blame_data: None,
       };
       state.insert_cache(path, content);
     }
     assert_eq!(state.cache.len(), CACHE_SIZE);
     // First item should have been evicted
     assert!(!state.cache.contains_key(&PathBuf::from("/fake/path/0")));
+  }
+
+  #[test]
+  fn test_toggle_blame() {
+    let mut state = PreviewState::new();
+    assert!(!state.blame_enabled);
+
+    state.toggle_blame();
+    assert!(state.blame_enabled);
+
+    state.toggle_blame();
+    assert!(!state.blame_enabled);
+  }
+
+  #[test]
+  fn test_toggle_blame_resets_scroll() {
+    let mut state = PreviewState::new();
+    state.scroll_offset = 15;
+
+    state.toggle_blame();
+    assert_eq!(state.scroll_offset, 0);
   }
 }
