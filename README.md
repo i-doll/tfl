@@ -71,6 +71,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `gg` | Go to top |
 | `G` | Go to bottom |
 | `/` | Start search |
+| `Ctrl+d` | Start date filter |
 | `.` | Toggle hidden files |
 | `I` | Toggle custom ignore patterns |
 | `y` | Yank path to clipboard |
@@ -113,6 +114,28 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Enter` | Confirm search |
 | `Esc` | Cancel search |
 | `Backspace` | Delete character |
+
+### Date filter mode
+
+| Key | Action |
+|---|---|
+| Characters | Type date expression |
+| `Tab` | Cycle time type (modified/created/accessed) |
+| `Enter` | Confirm filter |
+| `Esc` | Cancel filter |
+| `Backspace` | Delete character |
+
+Date expressions:
+- `today` — files modified today
+- `yesterday` — files modified yesterday
+- `7d` — files modified in the last 7 days
+- `2w` — files modified in the last 2 weeks
+- `1m` — files modified in the last month
+- `2024-01-15` — files modified on that exact date
+- `>2024-01-01` — files modified after that date
+- `<2024-06-30` — files modified before that date
+- `<1w` — files modified more than 1 week ago
+- `2024-01-01..2024-01-31` — files modified in that date range
 
 ### g-prefix mode
 
@@ -285,6 +308,7 @@ pageup = "scroll_preview_up"
 "shift+g" = "go_to_bottom"
 g = "g_press"
 "/" = "search_start"
+"ctrl+d" = "date_filter_start"
 y = "yank_path"
 e = "open_editor"
 c = "open_claude"
@@ -387,6 +411,7 @@ src/
   action.rs        Action enum (all possible user actions)
   event.rs         Event loop, key mapping, input modes
   config.rs        Config loading, key binding parsing, defaults
+  date_filter.rs   Date expression parsing and file matching
   favorites.rs     Favorites persistence (load/save/add/remove)
   opener.rs        Open-with app detection and launching
   git.rs           Git operations via libgit2 (status, branch, commits)

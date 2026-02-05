@@ -7,6 +7,41 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use crate::app::{App, ClipboardOp};
 use crate::icons::{file_icon, file_name_color};
 
+/// Splits a name into spans with highlighted matches
+fn highlight_name<'a>(name: &'a str, ranges: &[(usize, usize)], base_style: Style, highlight_style: Style) -> Vec<Span<'a>> {
+  if ranges.is_empty() {
+    return vec![Span::styled(name.to_string(), base_style)];
+  }
+
+  let mut spans = Vec::new();
+  let mut last_end = 0;
+
+  for &(start, end) in ranges {
+    // Clamp to valid byte boundaries
+    let start = start.min(name.len());
+    let end = end.min(name.len());
+    if start >= end || start < last_end {
+      continue;
+    }
+
+    // Text before the match
+    if last_end < start {
+      spans.push(Span::styled(name[last_end..start].to_string(), base_style));
+    }
+
+    // The matched text
+    spans.push(Span::styled(name[start..end].to_string(), highlight_style));
+    last_end = end;
+  }
+
+  // Text after the last match
+  if last_end < name.len() {
+    spans.push(Span::styled(name[last_end..].to_string(), base_style));
+  }
+
+  spans
+}
+
 pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
   render_file_tree_with_active(app, area, buf, true, false);
 }
@@ -80,12 +115,26 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
       )
     };
 
-    let line = Line::from(vec![
+    // Get match ranges for highlighting (only if not selected, as selection has its own highlight)
+    let match_ranges = if is_selected {
+      Vec::new()
+    } else {
+      app.search_match_ranges(&entry.name)
+    };
+
+    // Highlight style for search matches (yellow/gold color, underlined)
+    let highlight_style = name_style
+      .fg(Color::Indexed(220))
+      .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+
+    let mut spans = vec![
       Span::styled(indent, name_style),
       Span::styled(icon.glyph, icon_style),
-      Span::styled(entry.name.clone(), name_style),
-      Span::styled(symlink_indicator, Style::default().fg(Color::DarkGray)),
-    ]);
+    ];
+    spans.extend(highlight_name(&entry.name, &match_ranges, name_style, highlight_style));
+    spans.push(Span::styled(symlink_indicator, Style::default().fg(Color::DarkGray)));
+
+    let line = Line::from(spans);
 
     lines.push(line);
   }

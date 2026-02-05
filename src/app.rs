@@ -5,15 +5,18 @@ use std::sync::mpsc;
 
 use anyhow::Result;
 use ratatui_image::picker::Picker;
+use regex::Regex;
 
 use crate::action::Action;
 use crate::config::Config;
+use crate::date_filter::{DateFilter, TimeType};
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
-use crate::fs::{FileProperties, FileTree};
+use crate::fs::{FileProperties, FileTree, SizeFilter};
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::{PreviewState, archive};
+use crate::saved_searches::{SavedSearch, SavedSearches};
 use crate::ui::breadcrumb::{BreadcrumbSegment, parse_breadcrumb_segments};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +127,14 @@ pub struct App {
   pub picker: Option<Picker>,
   pub input_mode: InputMode,
   pub search_query: String,
+  pub search_regex: bool,
+  pub search_case_sensitive: bool,
+  pub search_regex_error: Option<String>,
+  compiled_regex: Option<Regex>,
+  pub size_filter_query: String,
+  pub date_filter_query: String,
+  pub date_filter: Option<DateFilter>,
+  pub date_filter_time_type: TimeType,
   pub tree_ratio: u16,
   pub min_tree_ratio: u16,
   pub max_tree_ratio: u16,
@@ -162,6 +173,8 @@ pub struct App {
   pub dual_left_ratio: u16,
   pub dual_right_ratio: u16,
   pub file_properties: Option<FileProperties>,
+  pub saved_searches: SavedSearches,
+  pub saved_searches_cursor: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +198,14 @@ impl App {
       picker,
       input_mode: InputMode::Normal,
       search_query: String::new(),
+      search_regex: false,
+      search_case_sensitive: false,
+      search_regex_error: None,
+      compiled_regex: None,
+      size_filter_query: String::new(),
+      date_filter_query: String::new(),
+      date_filter: None,
+      date_filter_time_type: TimeType::Modified,
       tree_ratio: config.tree_ratio,
       min_tree_ratio: config.min_tree_ratio,
       max_tree_ratio: config.max_tree_ratio,
@@ -220,6 +241,8 @@ impl App {
       dual_left_ratio: config.tree_ratio,
       dual_right_ratio: config.tree_ratio,
       file_properties: None,
+      saved_searches: SavedSearches::load(),
+      saved_searches_cursor: 0,
     })
   }
 
@@ -284,6 +307,8 @@ impl App {
         } else {
           self.search_query.clear();
         }
+        self.search_regex_error = None;
+        self.compiled_regex = None;
       }
       Action::SearchInput(c) => {
         if self.dual_pane_mode && self.active_pane == 1 {
@@ -293,6 +318,7 @@ impl App {
         } else {
           self.search_query.push(c);
         }
+        self.compile_search_regex();
         self.apply_search_filter();
       }
       Action::SearchBackspace => {
@@ -303,6 +329,7 @@ impl App {
         } else {
           self.search_query.pop();
         }
+        self.compile_search_regex();
         self.apply_search_filter();
       }
       Action::SearchConfirm => {
@@ -317,6 +344,8 @@ impl App {
         } else {
           self.search_query.clear();
         }
+        self.search_regex_error = None;
+        self.compiled_regex = None;
       }
       Action::SearchCancel => {
         self.input_mode = InputMode::Normal;
@@ -327,6 +356,68 @@ impl App {
         } else {
           self.search_query.clear();
         }
+        self.search_regex_error = None;
+        self.compiled_regex = None;
+      }
+      Action::SearchToggleRegex => {
+        self.search_regex = !self.search_regex;
+        self.compile_search_regex();
+        self.apply_search_filter();
+      }
+      Action::SearchToggleCase => {
+        self.search_case_sensitive = !self.search_case_sensitive;
+        self.compile_search_regex();
+        self.apply_search_filter();
+      }
+      Action::SizeFilterStart => {
+        self.input_mode = InputMode::SizeFilter;
+        self.size_filter_query.clear();
+      }
+      Action::SizeFilterInput(c) => {
+        self.size_filter_query.push(c);
+        self.apply_size_filter();
+      }
+      Action::SizeFilterBackspace => {
+        self.size_filter_query.pop();
+        self.apply_size_filter();
+      }
+      Action::SizeFilterConfirm => {
+        self.input_mode = InputMode::Normal;
+        // Keep the filter active
+      }
+      Action::SizeFilterCancel => {
+        self.input_mode = InputMode::Normal;
+        self.size_filter_query.clear();
+      }
+      Action::DateFilterStart => {
+        self.input_mode = InputMode::DateFilter;
+        self.date_filter_query.clear();
+        self.date_filter = None;
+      }
+      Action::DateFilterInput(c) => {
+        self.date_filter_query.push(c);
+        self.apply_date_filter();
+      }
+      Action::DateFilterBackspace => {
+        self.date_filter_query.pop();
+        self.apply_date_filter();
+      }
+      Action::DateFilterConfirm => {
+        self.input_mode = InputMode::Normal;
+        // Keep the filter active
+      }
+      Action::DateFilterCancel => {
+        self.input_mode = InputMode::Normal;
+        self.date_filter_query.clear();
+        self.date_filter = None;
+      }
+      Action::DateFilterCycleTimeType => {
+        self.date_filter_time_type = match self.date_filter_time_type {
+          TimeType::Modified => TimeType::Created,
+          TimeType::Created => TimeType::Accessed,
+          TimeType::Accessed => TimeType::Modified,
+        };
+        self.apply_date_filter();
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -505,6 +596,7 @@ impl App {
             self.cancel_prompt();
             self.set_status("Extract cancelled".to_string());
           }
+          Some(PromptKind::SaveSearch) => self.execute_save_search()?,
           None => {}
         }
       }
@@ -523,6 +615,14 @@ impl App {
       Action::FavoritesClose => self.favorites_close(),
       Action::FavoritesRemove => self.favorites_remove(),
       Action::FavoritesAddCurrent => self.favorites_add_current(),
+      Action::SavedSearchesOpen => self.saved_searches_open(),
+      Action::SavedSearchesSave => self.saved_searches_save_start(),
+      Action::SavedSearchesDown => self.saved_searches_move(1),
+      Action::SavedSearchesUp => self.saved_searches_move(-1),
+      Action::SavedSearchesSelect => self.saved_searches_select(),
+      Action::SavedSearchesClose => self.saved_searches_close(),
+      Action::SavedSearchesRemove => self.saved_searches_remove()?,
+      Action::SavedSearchesQuickSelect(n) => self.saved_searches_quick_select(n),
       Action::OpenDefault => self.open_default_action()?,
       Action::OpenWithStart => self.open_with_start(),
       Action::OpenWithDown => self.open_with_move(1),
@@ -607,7 +707,7 @@ impl App {
       && segment.path.is_dir()
     {
       self.tree.navigate_to(&segment.path)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
@@ -621,7 +721,7 @@ impl App {
     if let Some(home) = dirs::home_dir() {
       self.push_history(self.tree.root.clone());
       self.tree.navigate_to(&home)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.input_mode = InputMode::Normal;
@@ -656,7 +756,7 @@ impl App {
         self.history_forward.push(current);
       }
       self.tree.navigate_to(&prev)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
@@ -675,7 +775,7 @@ impl App {
         self.history_back.push(current);
       }
       self.tree.navigate_to(&next)?;
-      self.search_query.clear();
+      self.clear_filters();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
@@ -820,6 +920,108 @@ impl App {
     }
     self.wrote_config = true;
     self.set_status("Added to favorites".to_string());
+  }
+
+  fn saved_searches_open(&mut self) {
+    self.input_mode = InputMode::SavedSearches;
+    self.saved_searches_cursor = 0;
+  }
+
+  fn saved_searches_close(&mut self) {
+    self.input_mode = InputMode::Normal;
+  }
+
+  fn saved_searches_move(&mut self, delta: i32) {
+    let len = self.saved_searches.len();
+    if len == 0 {
+      return;
+    }
+    if delta > 0 {
+      self.saved_searches_cursor = (self.saved_searches_cursor + delta as usize).min(len - 1);
+    } else {
+      self.saved_searches_cursor = self.saved_searches_cursor.saturating_sub((-delta) as usize);
+    }
+  }
+
+  fn saved_searches_select(&mut self) {
+    if let Some(search) = self.saved_searches.get(self.saved_searches_cursor).cloned() {
+      self.apply_saved_search(&search);
+      self.input_mode = InputMode::Normal;
+    }
+  }
+
+  fn saved_searches_quick_select(&mut self, n: u8) {
+    let index = (n - 1) as usize;
+    if let Some(search) = self.saved_searches.get(index).cloned() {
+      self.apply_saved_search(&search);
+      self.input_mode = InputMode::Normal;
+    }
+  }
+
+  fn apply_saved_search(&mut self, search: &SavedSearch) {
+    self.search_query = search.pattern.clone();
+    self.apply_search_filter();
+    self.set_status(format!("Applied: {}", search.name));
+  }
+
+  fn saved_searches_remove(&mut self) -> Result<()> {
+    if self.saved_searches_cursor < self.saved_searches.len() {
+      self.saved_searches.remove(self.saved_searches_cursor);
+      if let Err(e) = self.saved_searches.save() {
+        self.set_status(format!("Save failed: {e}"));
+        return Ok(());
+      }
+      self.wrote_config = true;
+      if !self.saved_searches.is_empty() {
+        self.saved_searches_cursor = self.saved_searches_cursor.min(self.saved_searches.len() - 1);
+      } else {
+        self.saved_searches_cursor = 0;
+      }
+    }
+    Ok(())
+  }
+
+  fn saved_searches_save_start(&mut self) {
+    if self.search_query.is_empty() {
+      self.set_status("No search to save".to_string());
+      return;
+    }
+    self.prompt_input.clear();
+    self.prompt_cursor = 0;
+    self.prompt_kind = Some(PromptKind::SaveSearch);
+    self.input_mode = InputMode::Prompt;
+  }
+
+  fn execute_save_search(&mut self) -> Result<()> {
+    let name = self.prompt_input.trim().to_string();
+    if name.is_empty() {
+      self.cancel_prompt();
+      self.set_status("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let search = SavedSearch::new(&name, &self.search_query);
+    self.saved_searches.add(search);
+
+    if let Err(e) = self.saved_searches.save() {
+      self.cancel_prompt();
+      self.set_status(format!("Save failed: {e}"));
+      return Ok(());
+    }
+
+    self.wrote_config = true;
+    self.cancel_prompt();
+    self.set_status(format!("Saved search: {name}"));
+    Ok(())
+  }
+
+  pub fn reload_saved_searches(&mut self) {
+    self.saved_searches = SavedSearches::load();
+    if self.saved_searches.is_empty() {
+      self.saved_searches_cursor = 0;
+    } else {
+      self.saved_searches_cursor = self.saved_searches_cursor.min(self.saved_searches.len() - 1);
+    }
   }
 
   fn open_default_action(&mut self) -> Result<()> {
@@ -1015,7 +1217,7 @@ impl App {
         if self.tree.entries[idx].is_dir {
           self.push_history(self.tree.root.clone());
           self.tree.enter_dir(idx)?;
-          self.search_query.clear();
+          self.clear_filters();
           self.cursor = 0;
           self.tree_scroll_offset = 0;
           self.preview.invalidate();
@@ -1100,7 +1302,7 @@ impl App {
         if self.history_forward.last() != Some(&old_root) {
           self.history_forward.push(old_root.clone());
         }
-        self.search_query.clear();
+        self.clear_filters();
         self.cursor = self
           .tree
           .entries
@@ -1144,6 +1346,31 @@ impl App {
     Ok(())
   }
 
+  fn compile_search_regex(&mut self) {
+    if !self.search_regex || self.search_query.is_empty() {
+      self.compiled_regex = None;
+      self.search_regex_error = None;
+      return;
+    }
+
+    let pattern = if self.search_case_sensitive {
+      self.search_query.clone()
+    } else {
+      format!("(?i){}", self.search_query)
+    };
+
+    match Regex::new(&pattern) {
+      Ok(re) => {
+        self.compiled_regex = Some(re);
+        self.search_regex_error = None;
+      }
+      Err(e) => {
+        self.compiled_regex = None;
+        self.search_regex_error = Some(e.to_string());
+      }
+    }
+  }
+
   fn apply_search_filter(&mut self) {
     // Move cursor to first matching entry
     if self.dual_pane_mode && self.active_pane == 1 {
@@ -1162,17 +1389,68 @@ impl App {
         }
       }
     } else if !self.search_query.is_empty() {
-      let query = self.search_query.to_lowercase();
       let entries = self.visible_entries();
-      for &idx in &entries {
-        if self.tree.entries[idx].name.to_lowercase().contains(&query) {
-          self.cursor = entries.iter().position(|&i| i == idx).unwrap_or(0);
-          self.adjust_scroll();
-          self.update_preview();
-          return;
-        }
+      if let Some(pos) = entries.first().copied()
+        && let Some(cursor_pos) = entries.iter().position(|&i| i == pos)
+      {
+        self.cursor = cursor_pos;
+        self.adjust_scroll();
+        self.update_preview();
       }
     }
+  }
+
+  fn apply_date_filter(&mut self) {
+    // Parse the date filter expression
+    self.date_filter = DateFilter::parse(&self.date_filter_query);
+
+    // Move cursor to first matching entry
+    let entries = self.visible_entries();
+    if !entries.is_empty() {
+      self.cursor = self.cursor.min(entries.len().saturating_sub(1));
+      self.adjust_scroll();
+      self.update_preview();
+    }
+  }
+
+  /// Returns true if any filter is currently active
+  #[allow(dead_code)]
+  pub fn has_active_filter(&self) -> bool {
+    !self.search_query.is_empty()
+      || !self.size_filter_query.is_empty()
+      || !self.date_filter_query.is_empty()
+  }
+
+  /// Returns a summary of active filters for display
+  pub fn active_filter_summary(&self) -> Option<String> {
+    let mut parts = Vec::new();
+    if !self.search_query.is_empty() {
+      let prefix = if self.search_regex { "re:" } else { "/" };
+      parts.push(format!("{}{}", prefix, self.search_query));
+    }
+    if !self.size_filter_query.is_empty() {
+      parts.push(format!("size:{}", self.size_filter_query));
+    }
+    if !self.date_filter_query.is_empty() {
+      parts.push(format!("date:{}", self.date_filter_query));
+    }
+    if parts.is_empty() {
+      None
+    } else {
+      Some(parts.join(" "))
+    }
+  }
+
+  /// Clears all active filters
+  pub fn clear_filters(&mut self) {
+    self.search_query.clear();
+    self.search_regex = false;
+    self.search_case_sensitive = false;
+    self.search_regex_error = None;
+    self.compiled_regex = None;
+    self.size_filter_query.clear();
+    self.date_filter_query.clear();
+    self.date_filter = None;
   }
 
   fn cut_file(&mut self) {
@@ -1615,18 +1893,144 @@ impl App {
 
   /// Returns indices into tree.entries for visible (filtered) entries
   pub fn visible_entries(&self) -> Vec<usize> {
-    if self.search_query.is_empty() {
+    let has_name_filter = !self.search_query.is_empty();
+    let size_filter = SizeFilter::parse(&self.size_filter_query);
+    let date_filter = DateFilter::parse(&self.date_filter_query);
+
+    if !has_name_filter && size_filter.is_none() && date_filter.is_none() {
       return (0..self.tree.entries.len()).collect();
     }
-    let query = self.search_query.to_lowercase();
+
+    // If regex mode with valid regex, use it for name filter
+    if self.search_regex {
+      if let Some(ref re) = self.compiled_regex {
+        return self
+          .tree
+          .entries
+          .iter()
+          .enumerate()
+          .filter(|(_, e)| {
+            // Regex name filter
+            if !re.is_match(&e.name) {
+              return false;
+            }
+            // Size filter (if active) - only apply to files, not directories
+            if let Some(ref sf) = size_filter
+              && !e.is_dir && !sf.matches(e.size)
+            {
+              return false;
+            }
+            // Date filter (if active)
+            if let Some(ref df) = date_filter
+              && !df.matches(&e.path, self.date_filter_time_type)
+            {
+              return false;
+            }
+            true
+          })
+          .map(|(i, _)| i)
+          .collect();
+      }
+      // If regex mode but no valid regex (error state), show nothing
+      if self.search_regex_error.is_some() {
+        return Vec::new();
+      }
+    }
+
+    // Standard substring search with size filter and date filter
+    let query = if self.search_case_sensitive {
+      self.search_query.clone()
+    } else {
+      self.search_query.to_lowercase()
+    };
+
     self
       .tree
       .entries
       .iter()
       .enumerate()
-      .filter(|(_, e)| e.name.to_lowercase().contains(&query))
+      .filter(|(_, e)| {
+        // Name filter (if active)
+        if has_name_filter {
+          let name = if self.search_case_sensitive {
+            e.name.clone()
+          } else {
+            e.name.to_lowercase()
+          };
+          if !name.contains(&query) {
+            return false;
+          }
+        }
+        // Size filter (if active) - only apply to files, not directories
+        if let Some(ref sf) = size_filter
+          && !e.is_dir && !sf.matches(e.size)
+        {
+          return false;
+        }
+        // Date filter (if active)
+        if let Some(ref df) = date_filter
+          && !df.matches(&e.path, self.date_filter_time_type)
+        {
+          return false;
+        }
+        true
+      })
       .map(|(i, _)| i)
       .collect()
+  }
+
+  /// Returns byte ranges of matches in the given name for search highlighting
+  pub fn search_match_ranges(&self, name: &str) -> Vec<(usize, usize)> {
+    if self.search_query.is_empty() {
+      return Vec::new();
+    }
+
+    if self.search_regex {
+      if let Some(ref re) = self.compiled_regex {
+        return re
+          .find_iter(name)
+          .map(|m| (m.start(), m.end()))
+          .collect();
+      }
+      return Vec::new();
+    }
+
+    // Substring search
+    if self.search_case_sensitive {
+      let mut ranges = Vec::new();
+      let mut start = 0;
+      while let Some(pos) = name[start..].find(&self.search_query) {
+        let match_start = start + pos;
+        let match_end = match_start + self.search_query.len();
+        ranges.push((match_start, match_end));
+        start = match_end;
+      }
+      ranges
+    } else {
+      let name_lower = name.to_lowercase();
+      let query_lower = self.search_query.to_lowercase();
+      let mut ranges = Vec::new();
+      let mut start = 0;
+      while let Some(pos) = name_lower[start..].find(&query_lower) {
+        let match_start = start + pos;
+        let match_end = match_start + self.search_query.len();
+        ranges.push((match_start, match_end));
+        start = match_end;
+      }
+      ranges
+    }
+  }
+
+  fn apply_size_filter(&mut self) {
+    // Move cursor to first matching entry
+    let entries = self.visible_entries();
+    if entries.is_empty() {
+      self.cursor = 0;
+    } else if self.cursor >= entries.len() {
+      self.cursor = entries.len().saturating_sub(1);
+    }
+    self.adjust_scroll();
+    self.update_preview();
   }
 
   pub fn set_status(&mut self, msg: String) {
@@ -2885,6 +3289,26 @@ mod tests {
     cleanup_test_dir(&dir);
   }
 
+  // --- Regex search tests ---
+
+  #[test]
+  fn test_search_regex_simple_pattern() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Enable regex mode and search for pattern matching .txt files
+    app.search_regex = true;
+    app.search_query = r"\.txt$".to_string();
+    app.compile_search_regex();
+
+    let visible = app.visible_entries();
+    // Should only match bbb.txt
+    assert_eq!(visible.len(), 1);
+    assert_eq!(app.tree.entries[visible[0]].name, "bbb.txt");
+
+    cleanup_test_dir(&dir);
+  }
+
   // --- Breadcrumb Tests ---
 
   #[test]
@@ -2927,6 +3351,27 @@ mod tests {
   }
 
   #[test]
+  fn test_search_regex_complex_pattern() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Enable regex mode and search for pattern matching files starting with letters a-c
+    app.search_regex = true;
+    app.search_query = r"^[a-c]".to_string();
+    app.compile_search_regex();
+
+    let visible = app.visible_entries();
+    // Should match aaa_dir, bbb.txt, ccc.rs
+    assert_eq!(visible.len(), 3);
+    let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
+    assert!(names.contains(&"aaa_dir"));
+    assert!(names.contains(&"bbb.txt"));
+    assert!(names.contains(&"ccc.rs"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_toggle_dual_pane_enables_mode() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2934,6 +3379,27 @@ mod tests {
     assert!(app.dual_pane_mode);
     assert_eq!(app.active_pane, 0);
     assert!(app.right_pane.is_some());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_regex_invalid_pattern_shows_error() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Enable regex mode with invalid pattern
+    app.search_regex = true;
+    app.search_query = r"[invalid".to_string();
+    app.compile_search_regex();
+
+    // Should have error and no valid regex
+    assert!(app.search_regex_error.is_some());
+    assert!(app.compiled_regex.is_none());
+
+    // visible_entries should return empty when regex error
+    let visible = app.visible_entries();
+    assert!(visible.is_empty());
+
     cleanup_test_dir(&dir);
   }
 
@@ -3505,6 +3971,35 @@ mod tests {
     // Reload tree to apply new patterns
     app.tree.reload().unwrap();
     assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".tmp")));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_case_sensitive_toggle() {
+    let dir = setup_test_dir();
+    // Create files with different cases
+    fs::write(dir.join("Test.txt"), "test").unwrap();
+    fs::write(dir.join("test.md"), "test").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.tree.reload().unwrap();
+
+    // Case insensitive search (default)
+    app.search_query = "test".to_string();
+    let visible = app.visible_entries();
+    // Should match both Test.txt and test.md
+    let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
+    assert!(names.contains(&"Test.txt"));
+    assert!(names.contains(&"test.md"));
+
+    // Case sensitive search
+    app.search_case_sensitive = true;
+    let visible = app.visible_entries();
+    // Should only match test.md
+    let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
+    assert!(!names.contains(&"Test.txt"));
+    assert!(names.contains(&"test.md"));
+
     cleanup_test_dir(&dir);
   }
 
@@ -3531,6 +4026,28 @@ mod tests {
   }
 
   #[test]
+  fn test_search_regex_with_case_insensitive() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("Test.TXT"), "test").unwrap();
+    fs::write(dir.join("other.txt"), "other").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.tree.reload().unwrap();
+
+    // Regex mode, case insensitive (default)
+    app.search_regex = true;
+    app.search_query = r"\.txt$".to_string();
+    app.compile_search_regex();
+
+    let visible = app.visible_entries();
+    // Should match both Test.TXT and other.txt due to case insensitivity
+    let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
+    assert!(names.contains(&"Test.TXT"));
+    assert!(names.contains(&"other.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_breadcrumb_select_navigates_to_parent() {
     let dir = setup_test_dir();
     let child_dir = dir.join("aaa_dir");
@@ -3552,6 +4069,29 @@ mod tests {
   }
 
   #[test]
+  fn test_search_regex_with_case_sensitive() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("Test.TXT"), "test").unwrap();
+    fs::write(dir.join("other.txt"), "other").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.tree.reload().unwrap();
+
+    // Regex mode, case sensitive
+    app.search_regex = true;
+    app.search_case_sensitive = true;
+    app.search_query = r"\.txt$".to_string();
+    app.compile_search_regex();
+
+    let visible = app.visible_entries();
+    // Should only match other.txt (not Test.TXT)
+    let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
+    assert!(!names.contains(&"Test.TXT"));
+    assert!(names.contains(&"other.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_go_home_adds_to_history() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3562,6 +4102,26 @@ mod tests {
     // Go back should return to original dir
     app.update(Action::HistoryBack).unwrap();
     assert_eq!(app.tree.root, dir);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_toggle_regex_action() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start search mode
+    app.update(Action::SearchStart).unwrap();
+    assert!(!app.search_regex);
+
+    // Toggle regex mode
+    app.update(Action::SearchToggleRegex).unwrap();
+    assert!(app.search_regex);
+
+    // Toggle back
+    app.update(Action::SearchToggleRegex).unwrap();
+    assert!(!app.search_regex);
 
     cleanup_test_dir(&dir);
   }
@@ -3588,6 +4148,26 @@ mod tests {
   }
 
   #[test]
+  fn test_search_toggle_case_action() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start search mode
+    app.update(Action::SearchStart).unwrap();
+    assert!(!app.search_case_sensitive);
+
+    // Toggle case sensitivity
+    app.update(Action::SearchToggleCase).unwrap();
+    assert!(app.search_case_sensitive);
+
+    // Toggle back
+    app.update(Action::SearchToggleCase).unwrap();
+    assert!(!app.search_case_sensitive);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_history_back_on_empty_history_is_noop() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3596,6 +4176,29 @@ mod tests {
     let root_before = app.tree.root.clone();
     app.update(Action::HistoryBack).unwrap();
     assert_eq!(app.tree.root, root_before);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_cancel_clears_regex_state() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start search, enable regex, enter invalid pattern
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchToggleRegex).unwrap();
+    app.search_query = "[invalid".to_string();
+    app.compile_search_regex();
+    assert!(app.search_regex_error.is_some());
+
+    // Cancel search
+    app.update(Action::SearchCancel).unwrap();
+
+    // Regex error should be cleared
+    assert!(app.search_regex_error.is_none());
+    assert!(app.compiled_regex.is_none());
+    assert!(app.search_query.is_empty());
 
     cleanup_test_dir(&dir);
   }
@@ -3629,6 +4232,29 @@ mod tests {
   }
 
   #[test]
+  fn test_search_confirm_clears_regex_state() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start search, enable regex
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchToggleRegex).unwrap();
+    app.search_query = r"\.txt$".to_string();
+    app.compile_search_regex();
+    assert!(app.compiled_regex.is_some());
+
+    // Confirm search
+    app.update(Action::SearchConfirm).unwrap();
+
+    // Regex state should be cleared
+    assert!(app.search_regex_error.is_none());
+    assert!(app.compiled_regex.is_none());
+    assert!(app.search_query.is_empty());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_breadcrumb_select_out_of_bounds_is_noop() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3650,6 +4276,21 @@ mod tests {
 
     app.update(Action::ToggleBlame).unwrap();
     assert_eq!(app.preview.scroll_offset, 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_match_ranges_substring() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Simple substring search
+    app.search_query = "bb".to_string();
+    let ranges = app.search_match_ranges("bbb.txt");
+    // Should match "bb" at position 0 (first two b's)
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0], (0, 2));
 
     cleanup_test_dir(&dir);
   }
@@ -3696,6 +4337,20 @@ mod tests {
   }
 
   #[test]
+  fn test_search_match_ranges_case_insensitive() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Case insensitive substring search
+    app.search_query = "TEST".to_string();
+    let ranges = app.search_match_ranges("MyTestFile.txt");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0], (2, 6)); // "Test" at position 2
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_history_forward_updates_breadcrumbs() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
@@ -3722,6 +4377,26 @@ mod tests {
   }
 
   #[test]
+  fn test_search_match_ranges_case_sensitive() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Case sensitive substring search
+    app.search_query = "TEST".to_string();
+    app.search_case_sensitive = true;
+    let ranges = app.search_match_ranges("MyTestFile.txt");
+    // Should not match "Test" because case doesn't match
+    assert!(ranges.is_empty());
+
+    // But should match when case is correct
+    let ranges = app.search_match_ranges("MyTESTFile.txt");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0], (2, 6));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_toggle_preserves_left_pane_state() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3740,6 +4415,25 @@ mod tests {
   }
 
   #[test]
+  fn test_search_match_ranges_regex() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Regex search
+    app.search_regex = true;
+    app.search_query = r"\d+".to_string();
+    app.compile_search_regex();
+
+    let ranges = app.search_match_ranges("file123test456.txt");
+    // Should match "123" and "456"
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0], (4, 7));  // "123"
+    assert_eq!(ranges[1], (11, 14)); // "456"
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_properties_close() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3748,6 +4442,94 @@ mod tests {
     app.update(Action::PropertiesClose).unwrap();
     assert_eq!(app.input_mode, InputMode::Normal);
     assert!(app.file_properties.is_none());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_search_match_ranges_empty_query() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Empty query should return no ranges
+    let ranges = app.search_match_ranges("anyfile.txt");
+    assert!(ranges.is_empty());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_today() {
+    let dir = setup_test_dir();
+    // The test files were just created, so they should match "today"
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Verify we have some entries
+    let all_entries = app.visible_entries();
+    assert!(!all_entries.is_empty(), "Should have entries before filtering");
+    let count_before = all_entries.len();
+
+    // Apply date filter for "today"
+    app.date_filter_query = "today".to_string();
+    app.apply_date_filter();
+
+    // Verify date_filter was parsed
+    assert!(app.date_filter.is_some(), "Date filter should be parsed");
+
+    // All files were just created, so they should all match "today"
+    let filtered = app.visible_entries();
+    assert!(!filtered.is_empty(), "Should have entries matching 'today'");
+    assert_eq!(filtered.len(), count_before, "All entries should match 'today' since they were just created");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_flow() {
+    use crate::event::InputMode;
+
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start date filter mode
+    app.update(Action::DateFilterStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::DateFilter);
+    assert!(app.date_filter_query.is_empty());
+
+    // Type "today"
+    for c in "today".chars() {
+      app.update(Action::DateFilterInput(c)).unwrap();
+    }
+    assert_eq!(app.date_filter_query, "today");
+    assert!(app.date_filter.is_some(), "Date filter should be parsed after input");
+
+    // Confirm
+    app.update(Action::DateFilterConfirm).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.date_filter_query, "today", "Filter should remain after confirm");
+
+    // Filter should still be active
+    let filtered = app.visible_entries();
+    assert!(!filtered.is_empty(), "Should have entries after confirm");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_date_filter_clears_on_navigation() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Set a date filter
+    app.date_filter_query = "today".to_string();
+    app.apply_date_filter();
+    assert!(!app.date_filter_query.is_empty());
+
+    // Navigate to a directory
+    app.update(Action::EnterDir).unwrap();
+
+    // Date filter should be cleared
+    assert!(app.date_filter_query.is_empty(), "Date filter should be cleared on navigation");
+
     cleanup_test_dir(&dir);
   }
 }

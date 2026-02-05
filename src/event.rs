@@ -6,13 +6,13 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use notify::{RecommendedWatcher, Watcher};
 
 use crate::action::Action;
 use crate::config::{Config, normalize_key_event};
 
-const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites"];
+const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites", "searches.toml"];
 
 pub enum Event {
   Key(KeyEvent),
@@ -125,6 +125,8 @@ impl EventLoop {
 pub enum InputMode {
   Normal,
   Search,
+  SizeFilter,
+  DateFilter,
   GPrefix,
   Help,
   Prompt,
@@ -132,6 +134,7 @@ pub enum InputMode {
   OpenWith,
   Chmod,
   Properties,
+  SavedSearches,
   Error,
 }
 
@@ -142,6 +145,7 @@ pub enum PromptKind {
   NewDir,
   ConfirmDelete,
   ConfirmExtractAndDelete,
+  SaveSearch,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
@@ -150,7 +154,24 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Esc => Action::SearchCancel,
       KeyCode::Enter => Action::SearchConfirm,
       KeyCode::Backspace => Action::SearchBackspace,
+      KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::SearchToggleRegex,
+      KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::SearchToggleCase,
       KeyCode::Char(c) => Action::SearchInput(c),
+      _ => Action::None,
+    },
+    InputMode::SizeFilter => match key.code {
+      KeyCode::Esc => Action::SizeFilterCancel,
+      KeyCode::Enter => Action::SizeFilterConfirm,
+      KeyCode::Backspace => Action::SizeFilterBackspace,
+      KeyCode::Char(c) => Action::SizeFilterInput(c),
+      _ => Action::None,
+    },
+    InputMode::DateFilter => match key.code {
+      KeyCode::Esc => Action::DateFilterCancel,
+      KeyCode::Enter => Action::DateFilterConfirm,
+      KeyCode::Backspace => Action::DateFilterBackspace,
+      KeyCode::Tab => Action::DateFilterCycleTimeType,
+      KeyCode::Char(c) => Action::DateFilterInput(c),
       _ => Action::None,
     },
     InputMode::GPrefix => {
@@ -214,6 +235,16 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
     },
     InputMode::Properties => match key.code {
       KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => Action::PropertiesClose,
+      _ => Action::None,
+    },
+    InputMode::SavedSearches => match key.code {
+      KeyCode::Char('j') | KeyCode::Down => Action::SavedSearchesDown,
+      KeyCode::Char('k') | KeyCode::Up => Action::SavedSearchesUp,
+      KeyCode::Enter => Action::SavedSearchesSelect,
+      KeyCode::Esc | KeyCode::Char('q') => Action::SavedSearchesClose,
+      KeyCode::Char('d') | KeyCode::Delete => Action::SavedSearchesRemove,
+      KeyCode::Char('s') => Action::SavedSearchesSave,
+      KeyCode::Char(c @ '1'..='9') => Action::SavedSearchesQuickSelect(c as u8 - b'0'),
       _ => Action::None,
     },
     InputMode::Error => match key.code {
@@ -314,6 +345,24 @@ mod tests {
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Search, &c), Action::SearchConfirm);
     assert_eq!(map_key(key(KeyCode::Esc), InputMode::Search, &c), Action::SearchCancel);
     assert_eq!(map_key(key(KeyCode::Backspace), InputMode::Search, &c), Action::SearchBackspace);
+  }
+
+  #[test]
+  fn test_search_mode_toggle_regex() {
+    let c = cfg();
+    assert_eq!(
+      map_key(key_with_mod(KeyCode::Char('r'), KeyModifiers::CONTROL), InputMode::Search, &c),
+      Action::SearchToggleRegex
+    );
+  }
+
+  #[test]
+  fn test_search_mode_toggle_case() {
+    let c = cfg();
+    assert_eq!(
+      map_key(key_with_mod(KeyCode::Char('i'), KeyModifiers::CONTROL), InputMode::Search, &c),
+      Action::SearchToggleCase
+    );
   }
 
   #[test]
@@ -490,5 +539,25 @@ mod tests {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Properties, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Properties, &c), Action::None);
+  }
+
+  #[test]
+  fn test_size_filter_mode() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('5')), InputMode::SizeFilter, &c), Action::SizeFilterInput('5'));
+    assert_eq!(map_key(key(KeyCode::Char('>')), InputMode::SizeFilter, &c), Action::SizeFilterInput('>'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::SizeFilter, &c), Action::SizeFilterConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::SizeFilter, &c), Action::SizeFilterCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::SizeFilter, &c), Action::SizeFilterBackspace);
+  }
+
+  #[test]
+  fn test_date_filter_mode() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::DateFilter, &c), Action::DateFilterInput('a'));
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::DateFilter, &c), Action::DateFilterConfirm);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::DateFilter, &c), Action::DateFilterCancel);
+    assert_eq!(map_key(key(KeyCode::Backspace), InputMode::DateFilter, &c), Action::DateFilterBackspace);
+    assert_eq!(map_key(key(KeyCode::Tab), InputMode::DateFilter, &c), Action::DateFilterCycleTimeType);
   }
 }

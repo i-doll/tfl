@@ -5,9 +5,19 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::app::App;
+use crate::date_filter::TimeType;
 use crate::event::{InputMode, PromptKind};
 use crate::fs::{GitFileStatus, GitStatus};
 use crate::preview::directory::format_size;
+
+fn truncate_error(err: &str) -> String {
+  let first_line = err.lines().next().unwrap_or(err);
+  if first_line.len() > 50 {
+    format!("{}...", &first_line[..47])
+  } else {
+    first_line.to_string()
+  }
+}
 
 fn git_status_label(status: &GitStatus) -> Option<&'static str> {
   if status.is_clean() {
@@ -67,13 +77,62 @@ fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color) -> Vec<Sp
   }
 }
 
+fn time_type_label(tt: TimeType) -> &'static str {
+  match tt {
+    TimeType::Modified => "mod",
+    TimeType::Created => "cre",
+    TimeType::Accessed => "acc",
+  }
+}
+
 pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
   let line = match app.input_mode {
     InputMode::Search => {
-      Line::from(vec![
+      let mut spans = vec![
         Span::styled(" /", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled(&app.search_query, Style::default().fg(Color::Indexed(252))),
-        Span::styled("▌", Style::default().fg(Color::Indexed(75))),
+      ];
+
+      // Mode indicators
+      if app.search_regex {
+        spans.push(Span::styled("[re]", Style::default().fg(Color::Indexed(208))));
+      }
+      if app.search_case_sensitive {
+        spans.push(Span::styled("[Aa]", Style::default().fg(Color::Indexed(114))));
+      }
+
+      spans.push(Span::styled(&app.search_query, Style::default().fg(Color::Indexed(252))));
+      spans.push(Span::styled("▌", Style::default().fg(Color::Indexed(75))));
+
+      // Show regex error if present
+      if let Some(ref err) = app.search_regex_error {
+        spans.push(Span::styled(
+          format!(" Error: {}", truncate_error(err)),
+          Style::default().fg(Color::Indexed(167)),
+        ));
+      }
+
+      Line::from(spans)
+    }
+    InputMode::SizeFilter => {
+      Line::from(vec![
+        Span::styled(" Size: ", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
+        Span::styled(&app.size_filter_query, Style::default().fg(Color::Indexed(252))),
+        Span::styled("▌", Style::default().fg(Color::Indexed(208))),
+        Span::styled(" (e.g. >1M, <100K, 1M-10M, =0)", Style::default().fg(Color::DarkGray)),
+      ])
+    }
+    InputMode::DateFilter => {
+      let tt_label = time_type_label(app.date_filter_time_type);
+      let valid = app.date_filter.is_some() || app.date_filter_query.is_empty();
+      let query_color = if valid { Color::Indexed(252) } else { Color::Indexed(167) };
+      Line::from(vec![
+        Span::styled(
+          format!(" d[{tt_label}]:"),
+          Style::default().fg(Color::Indexed(178)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(&app.date_filter_query, Style::default().fg(query_color)),
+        Span::styled("▌", Style::default().fg(Color::Indexed(178))),
+        Span::styled(" (Tab:type)", Style::default().fg(Color::DarkGray)),
       ])
     }
     InputMode::GPrefix => {
@@ -129,6 +188,13 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
             ),
           ])
         }
+        Some(PromptKind::SaveSearch) => {
+          let mut spans = vec![
+            Span::styled(" Save search: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          Line::from(spans)
+        }
         None => {
           Line::from(vec![
             Span::styled(" ...", Style::default().fg(Color::DarkGray)),
@@ -160,6 +226,12 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("i/q/Esc:close", Style::default().fg(Color::DarkGray)),
       ])
     }
+    InputMode::SavedSearches => {
+      Line::from(vec![
+        Span::styled(" Saved searches ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
+        Span::styled("s:save  d:remove  Enter:apply  1-9:quick  Esc:close", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::Error => {
       Line::from(vec![
         Span::styled(" Error ", Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD)),
@@ -172,16 +244,25 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           Span::styled(format!(" {msg}"), Style::default().fg(Color::Indexed(150))),
         ])
       } else if let Some(entry) = app.selected_entry() {
-        let mut spans = vec![
-          Span::styled(
-            format!(" {}", entry.name),
-            Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
-          ),
-          Span::styled(
-            format!(" | {}", format_size(entry.size)),
-            Style::default().fg(Color::DarkGray),
-          ),
-        ];
+        let mut spans = Vec::new();
+
+        // Show active filter indicator
+        if let Some(filter_summary) = app.active_filter_summary() {
+          spans.push(Span::styled(
+            format!(" [{}]", filter_summary),
+            Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+          ));
+          spans.push(Span::styled(" ", Style::default()));
+        }
+
+        spans.push(Span::styled(
+          format!(" {}", entry.name),
+          Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+          format!(" | {}", format_size(entry.size)),
+          Style::default().fg(Color::DarkGray),
+        ));
 
         // Per-file git status label
         if let Some(label) = git_status_label(&entry.git_status) {

@@ -18,6 +18,19 @@ pub enum Action {
   SearchBackspace,
   SearchConfirm,
   SearchCancel,
+  SearchToggleRegex,
+  SearchToggleCase,
+  SizeFilterStart,
+  SizeFilterInput(char),
+  SizeFilterBackspace,
+  SizeFilterConfirm,
+  SizeFilterCancel,
+  DateFilterStart,
+  DateFilterInput(char),
+  DateFilterBackspace,
+  DateFilterConfirm,
+  DateFilterCancel,
+  DateFilterCycleTimeType,
   YankPath,
   OpenEditor,
   OpenClaude,
@@ -82,6 +95,15 @@ pub enum Action {
   PrevHunk,
   ShowProperties,
   PropertiesClose,
+  // Saved searches
+  SavedSearchesOpen,
+  SavedSearchesSave,
+  SavedSearchesDown,
+  SavedSearchesUp,
+  SavedSearchesSelect,
+  SavedSearchesClose,
+  SavedSearchesRemove,
+  SavedSearchesQuickSelect(u8),
   Resize(u16, u16),
   Tick,
   None,
@@ -104,6 +126,8 @@ impl Action {
       "go_to_top" => Some(Action::GoToTop),
       "go_to_bottom" => Some(Action::GoToBottom),
       "search_start" => Some(Action::SearchStart),
+      "size_filter_start" => Some(Action::SizeFilterStart),
+      "date_filter_start" => Some(Action::DateFilterStart),
       "yank_path" => Some(Action::YankPath),
       "open_editor" => Some(Action::OpenEditor),
       "open_claude" => Some(Action::OpenClaude),
@@ -139,6 +163,8 @@ impl Action {
       "next_hunk" => Some(Action::NextHunk),
       "prev_hunk" => Some(Action::PrevHunk),
       "show_properties" => Some(Action::ShowProperties),
+      "saved_searches_open" => Some(Action::SavedSearchesOpen),
+      "saved_searches_save" => Some(Action::SavedSearchesSave),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -165,6 +191,7 @@ mod tests {
     assert_eq!(Action::from_name("go_to_top"), Some(Action::GoToTop));
     assert_eq!(Action::from_name("go_to_bottom"), Some(Action::GoToBottom));
     assert_eq!(Action::from_name("search_start"), Some(Action::SearchStart));
+    assert_eq!(Action::from_name("date_filter_start"), Some(Action::DateFilterStart));
     assert_eq!(Action::from_name("yank_path"), Some(Action::YankPath));
     assert_eq!(Action::from_name("open_editor"), Some(Action::OpenEditor));
     assert_eq!(Action::from_name("open_claude"), Some(Action::OpenClaude));
