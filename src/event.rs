@@ -12,7 +12,7 @@ use notify::{RecommendedWatcher, Watcher};
 use crate::action::Action;
 use crate::config::{Config, normalize_key_event};
 
-const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites"];
+const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites", "searches.toml"];
 
 pub enum Event {
   Key(KeyEvent),
@@ -121,6 +121,7 @@ pub enum InputMode {
   Prompt,
   Favorites,
   OpenWith,
+  SavedSearches,
   Error,
 }
 
@@ -130,6 +131,7 @@ pub enum PromptKind {
   NewFile,
   NewDir,
   ConfirmDelete,
+  SaveSearch,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
@@ -176,6 +178,22 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Char('k') | KeyCode::Up => Action::OpenWithUp,
       KeyCode::Enter => Action::OpenWithSelect,
       KeyCode::Esc | KeyCode::Char('q') => Action::OpenWithClose,
+      _ => Action::None,
+    },
+    InputMode::SavedSearches => match key.code {
+      KeyCode::Char('j') | KeyCode::Down => Action::SavedSearchesDown,
+      KeyCode::Char('k') | KeyCode::Up => Action::SavedSearchesUp,
+      KeyCode::Enter => Action::SavedSearchesSelect,
+      KeyCode::Esc | KeyCode::Char('q') => Action::SavedSearchesClose,
+      KeyCode::Char('d') | KeyCode::Delete => Action::SavedSearchesRemove,
+      KeyCode::Char(c) if c.is_ascii_digit() => {
+        let n = c.to_digit(10).unwrap() as u8;
+        if (1..=9).contains(&n) {
+          Action::SavedSearchesQuickSelect(n)
+        } else {
+          Action::None
+        }
+      }
       _ => Action::None,
     },
     InputMode::Error => match key.code {
@@ -373,5 +391,36 @@ mod tests {
     };
     c.normal_keys.insert(kb, Action::Quit);
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Normal, &c), Action::Quit);
+  }
+
+  #[test]
+  fn test_saved_searches_mode_navigation() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::SavedSearches, &c), Action::SavedSearchesDown);
+    assert_eq!(map_key(key(KeyCode::Down), InputMode::SavedSearches, &c), Action::SavedSearchesDown);
+    assert_eq!(map_key(key(KeyCode::Char('k')), InputMode::SavedSearches, &c), Action::SavedSearchesUp);
+    assert_eq!(map_key(key(KeyCode::Up), InputMode::SavedSearches, &c), Action::SavedSearchesUp);
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::SavedSearches, &c), Action::SavedSearchesSelect);
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::SavedSearches, &c), Action::SavedSearchesClose);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::SavedSearches, &c), Action::SavedSearchesClose);
+    assert_eq!(map_key(key(KeyCode::Char('d')), InputMode::SavedSearches, &c), Action::SavedSearchesRemove);
+    assert_eq!(map_key(key(KeyCode::Delete), InputMode::SavedSearches, &c), Action::SavedSearchesRemove);
+  }
+
+  #[test]
+  fn test_saved_searches_mode_quick_select() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('1')), InputMode::SavedSearches, &c), Action::SavedSearchesQuickSelect(1));
+    assert_eq!(map_key(key(KeyCode::Char('5')), InputMode::SavedSearches, &c), Action::SavedSearchesQuickSelect(5));
+    assert_eq!(map_key(key(KeyCode::Char('9')), InputMode::SavedSearches, &c), Action::SavedSearchesQuickSelect(9));
+    // 0 should be None
+    assert_eq!(map_key(key(KeyCode::Char('0')), InputMode::SavedSearches, &c), Action::None);
+  }
+
+  #[test]
+  fn test_saved_searches_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::SavedSearches, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::SavedSearches, &c), Action::None);
   }
 }
