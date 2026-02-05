@@ -68,6 +68,7 @@ pub enum Action {
   ChmodToggleRecursive,
   ChmodApply,
   ChmodClose,
+  ToggleCustomIgnore,
   Resize(u16, u16),
   Tick,
   None,
@@ -113,6 +114,7 @@ impl Action {
       "extract_archive" => Some(Action::ExtractArchive),
       "extract_and_delete" => Some(Action::ExtractAndDelete),
       "chmod" => Some(Action::ChmodStart),
+      "toggle_custom_ignore" => Some(Action::ToggleCustomIgnore),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -160,6 +162,7 @@ mod tests {
     assert_eq!(Action::from_name("open_default"), Some(Action::OpenDefault));
     assert_eq!(Action::from_name("open_with"), Some(Action::OpenWithStart));
     assert_eq!(Action::from_name("chmod"), Some(Action::ChmodStart));
+    assert_eq!(Action::from_name("toggle_custom_ignore"), Some(Action::ToggleCustomIgnore));
   }
 
   #[test]

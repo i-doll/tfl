@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use globset::GlobSet;
 
 use super::entry::{FileEntry, GitStatus};
 use crate::git::{GitRepo, GitRepoInfo};
@@ -57,13 +58,20 @@ pub struct FileTree {
   pub root: PathBuf,
   pub entries: Vec<FileEntry>,
   pub show_hidden: bool,
+  pub show_custom_ignored: bool,
   pub git_statuses: HashMap<PathBuf, GitStatus>,
   pub git_info: GitRepoInfo,
   git_repo: Option<GitRepo>,
+  ignore_glob_set: GlobSet,
 }
 
 impl FileTree {
+  #[allow(dead_code)] // Used in tests only
   pub fn new(root: PathBuf) -> Result<Self> {
+    Self::with_ignore_patterns(root, GlobSet::empty())
+  }
+
+  pub fn with_ignore_patterns(root: PathBuf, ignore_glob_set: GlobSet) -> Result<Self> {
     let git_repo = GitRepo::open(&root);
     let (git_statuses, git_info) = git_repo
       .as_ref()
@@ -73,13 +81,19 @@ impl FileTree {
       root: root.clone(),
       entries: Vec::new(),
       show_hidden: false,
+      show_custom_ignored: false,
       git_statuses,
       git_info,
       git_repo,
+      ignore_glob_set,
     };
     tree.load_dir(&root, 0)?;
     propagate_git_status(&mut tree.entries);
     Ok(tree)
+  }
+
+  pub fn set_ignore_patterns(&mut self, glob_set: GlobSet) {
+    self.ignore_glob_set = glob_set;
   }
 
   pub fn git_repo(&self) -> Option<&GitRepo> {
@@ -108,6 +122,9 @@ impl FileTree {
     for entry in read_dir.flatten() {
       let child = FileEntry::from_path(entry.path(), depth);
       if !self.show_hidden && child.is_hidden() {
+        continue;
+      }
+      if !self.show_custom_ignored && self.ignore_glob_set.is_match(&child.name) {
         continue;
       }
       children.push(child);
@@ -160,6 +177,9 @@ impl FileTree {
       if !self.show_hidden && child.is_hidden() {
         continue;
       }
+      if !self.show_custom_ignored && self.ignore_glob_set.is_match(&child.name) {
+        continue;
+      }
       children.push(child);
     }
 
@@ -200,6 +220,11 @@ impl FileTree {
 
   pub fn toggle_hidden(&mut self) -> Result<()> {
     self.show_hidden = !self.show_hidden;
+    self.reload()
+  }
+
+  pub fn toggle_custom_ignored(&mut self) -> Result<()> {
+    self.show_custom_ignored = !self.show_custom_ignored;
     self.reload()
   }
 
@@ -759,6 +784,132 @@ mod tests {
 
     // Out of bounds should return None
     assert_eq!(tree.find_parent_index(100), None);
+
+    cleanup(&dir);
+  }
+
+  // --- Custom ignore patterns tests ---
+
+  fn make_glob_set(patterns: &[&str]) -> GlobSet {
+    use globset::{Glob, GlobSetBuilder};
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+      builder.add(Glob::new(pattern).unwrap());
+    }
+    builder.build().unwrap()
+  }
+
+  #[test]
+  fn test_ignore_patterns_filter_entries() {
+    let dir = setup_test_dir();
+    // Create some files that should be ignored
+    fs::write(dir.join("debug.log"), "log data").unwrap();
+    fs::write(dir.join("error.log"), "error data").unwrap();
+
+    let glob_set = make_glob_set(&["*.log"]);
+    let tree = FileTree::with_ignore_patterns(dir.clone(), glob_set).unwrap();
+
+    // .log files should be filtered out
+    assert!(!tree.entries.iter().any(|e| e.name.ends_with(".log")));
+    // Other files should still be present
+    assert!(tree.entries.iter().any(|e| e.name == "charlie.txt"));
+    assert!(tree.entries.iter().any(|e| e.name == "delta.rs"));
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_ignore_patterns_filter_dirs() {
+    let dir = setup_test_dir();
+    // Create a node_modules dir
+    fs::create_dir_all(dir.join("node_modules")).unwrap();
+    fs::write(dir.join("node_modules").join("package.json"), "{}").unwrap();
+
+    let glob_set = make_glob_set(&["node_modules"]);
+    let tree = FileTree::with_ignore_patterns(dir.clone(), glob_set).unwrap();
+
+    // node_modules should be filtered out
+    assert!(!tree.entries.iter().any(|e| e.name == "node_modules"));
+    // Other dirs should still be present
+    assert!(tree.entries.iter().any(|e| e.name == "alpha_dir"));
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_toggle_custom_ignored_shows_hidden() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("debug.log"), "log data").unwrap();
+
+    let glob_set = make_glob_set(&["*.log"]);
+    let mut tree = FileTree::with_ignore_patterns(dir.clone(), glob_set).unwrap();
+
+    // Initially, .log files should be hidden
+    assert!(!tree.entries.iter().any(|e| e.name.ends_with(".log")));
+    assert!(!tree.show_custom_ignored);
+
+    // Toggle to show ignored files
+    tree.toggle_custom_ignored().unwrap();
+    assert!(tree.show_custom_ignored);
+    assert!(tree.entries.iter().any(|e| e.name == "debug.log"));
+
+    // Toggle back to hide ignored files
+    tree.toggle_custom_ignored().unwrap();
+    assert!(!tree.show_custom_ignored);
+    assert!(!tree.entries.iter().any(|e| e.name.ends_with(".log")));
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_ignore_patterns_on_expand() {
+    let dir = setup_test_dir();
+    // Create a log file inside alpha_dir
+    fs::write(dir.join("alpha_dir").join("inner.txt"), "text").unwrap();
+    fs::write(dir.join("alpha_dir").join("app.log"), "log").unwrap();
+
+    let glob_set = make_glob_set(&["*.log"]);
+    let mut tree = FileTree::with_ignore_patterns(dir.clone(), glob_set).unwrap();
+
+    // Expand alpha_dir
+    tree.toggle_expand(0).unwrap();
+
+    // inner.txt should be visible, app.log should not
+    assert!(tree.entries.iter().any(|e| e.name == "inner.txt"));
+    assert!(!tree.entries.iter().any(|e| e.name == "app.log"));
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_empty_glob_set_no_filtering() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("debug.log"), "log data").unwrap();
+
+    let tree = FileTree::with_ignore_patterns(dir.clone(), GlobSet::empty()).unwrap();
+
+    // All files should be visible with empty glob set
+    assert!(tree.entries.iter().any(|e| e.name == "debug.log"));
+    assert!(tree.entries.iter().any(|e| e.name == "charlie.txt"));
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_multiple_ignore_patterns() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("debug.log"), "log").unwrap();
+    fs::write(dir.join("cache.tmp"), "tmp").unwrap();
+    fs::write(dir.join("readme.md"), "readme").unwrap();
+
+    let glob_set = make_glob_set(&["*.log", "*.tmp"]);
+    let tree = FileTree::with_ignore_patterns(dir.clone(), glob_set).unwrap();
+
+    // .log and .tmp files should be hidden
+    assert!(!tree.entries.iter().any(|e| e.name == "debug.log"));
+    assert!(!tree.entries.iter().any(|e| e.name == "cache.tmp"));
+    // .md file should be visible
+    assert!(tree.entries.iter().any(|e| e.name == "readme.md"));
 
     cleanup(&dir);
   }

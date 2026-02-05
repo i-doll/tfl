@@ -226,6 +226,10 @@ fn reload_config(config: &mut config::Config, app: &mut App) {
   config.g_prefix_keys = new.g_prefix_keys;
   config.custom_apps = new.custom_apps;
   config.claude_yolo = new.claude_yolo;
+  config.ignore_patterns = new.ignore_patterns;
+  config.use_gitignore = new.use_gitignore;
+  config.use_custom_ignore = new.use_custom_ignore;
+  config.ignore_glob_set = new.ignore_glob_set;
   app.apply_config(config);
   app.reload_favorites();
   if errors.is_empty() {

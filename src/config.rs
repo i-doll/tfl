@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
 use crate::action::Action;
@@ -52,12 +53,24 @@ pub struct Config {
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
+  pub ignore_patterns: Vec<String>,
+  pub use_gitignore: bool,
+  pub use_custom_ignore: bool,
+  pub ignore_glob_set: GlobSet,
 }
 
 #[derive(Deserialize, Default)]
 struct TomlConfig {
   general: Option<GeneralConfig>,
   keys: Option<KeysConfig>,
+  ignore: Option<IgnoreConfig>,
+}
+
+#[derive(Deserialize, Default)]
+struct IgnoreConfig {
+  patterns: Option<Vec<String>>,
+  use_gitignore: Option<bool>,
+  use_custom: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -196,6 +209,10 @@ impl Config {
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       custom_apps: Vec::new(),
+      ignore_patterns: Vec::new(),
+      use_gitignore: true,
+      use_custom_ignore: true,
+      ignore_glob_set: GlobSet::empty(),
     }
   }
 
@@ -251,6 +268,35 @@ impl Config {
       }
     }
 
+    if let Some(ignore) = toml_config.ignore {
+      if let Some(patterns) = ignore.patterns {
+        self.ignore_patterns = patterns;
+      }
+      if let Some(use_git) = ignore.use_gitignore {
+        self.use_gitignore = use_git;
+      }
+      if let Some(use_custom) = ignore.use_custom {
+        self.use_custom_ignore = use_custom;
+      }
+    }
+
+    // Compile ignore patterns into a GlobSet
+    self.ignore_glob_set = self.compile_glob_set(errors);
+  }
+
+  fn compile_glob_set(&self, errors: &mut Vec<String>) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in &self.ignore_patterns {
+      match Glob::new(pattern) {
+        Ok(glob) => {
+          builder.add(glob);
+        }
+        Err(e) => {
+          errors.push(format!("invalid ignore pattern {pattern:?}: {e}"));
+        }
+      }
+    }
+    builder.build().unwrap_or_else(|_| GlobSet::empty())
   }
 
   pub fn default_toml() -> &'static str {
@@ -302,10 +348,21 @@ f = "favorites_open"
 x = "extract_archive"
 "shift+x" = "extract_and_delete"
 "ctrl+p" = "chmod"
+"shift+i" = "toggle_custom_ignore"
 
 [keys.g_prefix]
 g = "go_to_top"
 h = "go_home"
+
+[ignore]
+patterns = [
+  "*.log",
+  "node_modules",
+  "__pycache__",
+  ".DS_Store",
+]
+use_gitignore = true   # respect .gitignore files
+use_custom = true      # apply custom patterns (toggle with I)
 "#
   }
 
@@ -395,6 +452,11 @@ h = "go_home"
   pub fn load_from_str(s: &str) -> Config {
     let mut errors = Vec::new();
     Self::load_from_str_with_errors(s, &mut errors)
+  }
+
+  #[cfg(test)]
+  pub fn load_from_str_collecting_errors(s: &str, errors: &mut Vec<String>) -> Config {
+    Self::load_from_str_with_errors(s, errors)
   }
 
   fn load_from_str_with_errors(s: &str, errors: &mut Vec<String>) -> Config {
@@ -970,5 +1032,85 @@ claude_yolo = false
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('?'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleHelp));
+  }
+
+  // --- Custom ignore patterns tests ---
+
+  #[test]
+  fn test_ignore_patterns_default() {
+    let config = Config::default();
+    assert_eq!(config.ignore_patterns.len(), 4);
+    assert!(config.ignore_patterns.contains(&"*.log".to_string()));
+    assert!(config.ignore_patterns.contains(&"node_modules".to_string()));
+    assert!(config.ignore_patterns.contains(&"__pycache__".to_string()));
+    assert!(config.ignore_patterns.contains(&".DS_Store".to_string()));
+    assert!(config.use_gitignore);
+    assert!(config.use_custom_ignore);
+  }
+
+  #[test]
+  fn test_ignore_patterns_parsed() {
+    let toml = r#"
+[ignore]
+patterns = ["*.log", "node_modules", "__pycache__"]
+"#;
+    let config = Config::load_from_str(toml);
+    assert_eq!(config.ignore_patterns.len(), 3);
+    assert!(config.ignore_patterns.contains(&"*.log".to_string()));
+    assert!(config.ignore_patterns.contains(&"node_modules".to_string()));
+    assert!(config.ignore_patterns.contains(&"__pycache__".to_string()));
+  }
+
+  #[test]
+  fn test_ignore_use_gitignore_false() {
+    let toml = r#"
+[ignore]
+use_gitignore = false
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(!config.use_gitignore);
+  }
+
+  #[test]
+  fn test_ignore_use_custom_false() {
+    let toml = r#"
+[ignore]
+use_custom = false
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(!config.use_custom_ignore);
+  }
+
+  #[test]
+  fn test_ignore_glob_set_compiled() {
+    let toml = r#"
+[ignore]
+patterns = ["*.log", "node_modules"]
+"#;
+    let config = Config::load_from_str(toml);
+    // The compiled GlobSet should match these patterns
+    assert!(config.ignore_glob_set.is_match("debug.log"));
+    assert!(config.ignore_glob_set.is_match("node_modules"));
+    assert!(!config.ignore_glob_set.is_match("main.rs"));
+  }
+
+  #[test]
+  fn test_ignore_invalid_pattern_logged() {
+    let toml = r#"
+[ignore]
+patterns = ["[invalid", "valid.log"]
+"#;
+    let mut errors = Vec::new();
+    Config::load_from_str_collecting_errors(toml, &mut errors);
+    // Invalid pattern should generate an error
+    assert!(!errors.is_empty());
+    assert!(errors.iter().any(|e| e.contains("invalid ignore pattern")));
+  }
+
+  #[test]
+  fn test_default_shift_i_binds_toggle_custom_ignore() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('I'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleCustomIgnore));
   }
 }
