@@ -1640,7 +1640,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file (after dirs)
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenEditor).unwrap();
@@ -1733,7 +1733,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move cursor to a file (past the dirs)
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let root_before = app.tree.root.clone();
@@ -1881,7 +1881,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -1896,7 +1896,7 @@ mod tests {
   fn test_copy_stores_path_in_clipboard() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -1912,7 +1912,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CopyFile).unwrap();
@@ -1933,7 +1933,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CutFile).unwrap();
@@ -1956,7 +1956,7 @@ mod tests {
     fs::write(dir.join("aaa_dir").join("bbb.txt"), "existing").unwrap();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Copy bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CopyFile).unwrap();
@@ -1986,7 +1986,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CutFile).unwrap();
@@ -2003,7 +2003,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     assert!(dir.join("bbb.txt").exists());
@@ -2023,7 +2023,7 @@ mod tests {
   fn test_delete_cancel_does_not_remove() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::DeleteFile).unwrap();
@@ -2038,7 +2038,7 @@ mod tests {
   fn test_delete_cancel_with_esc() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::DeleteFile).unwrap();
@@ -2052,7 +2052,7 @@ mod tests {
   fn test_rename_file() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::RenameStart).unwrap();
@@ -2074,7 +2074,7 @@ mod tests {
   fn test_rename_to_existing_shows_error() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::RenameStart).unwrap();
@@ -2092,7 +2092,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file so current_dir() returns the root
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::NewFileStart).unwrap();
@@ -2112,7 +2112,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file so current_dir() returns the root
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::NewDirStart).unwrap();
@@ -2156,7 +2156,7 @@ mod tests {
   fn test_cursor_repositions_after_rename() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::RenameStart).unwrap();
@@ -2189,7 +2189,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenWithStart).unwrap();
@@ -2213,7 +2213,7 @@ mod tests {
   fn test_open_with_cursor_movement() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenWithStart).unwrap();
@@ -2237,7 +2237,7 @@ mod tests {
   fn test_open_with_close() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenWithStart).unwrap();
@@ -2251,7 +2251,7 @@ mod tests {
   fn test_open_with_select_tui_suspends() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     // Inject a fake TUI app so we can test the suspend path
@@ -2442,7 +2442,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a text file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ExtractArchive).unwrap();
@@ -2477,7 +2477,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -2527,7 +2527,7 @@ mod tests {
 
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Find and select the zip file
-    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+    while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
     assert_eq!(app.selected_entry().unwrap().name, "test.zip");
@@ -2632,7 +2632,7 @@ mod tests {
     }
 
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+    while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
 
@@ -2652,7 +2652,7 @@ mod tests {
   fn test_chmod_toggle_bit() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ChmodStart).unwrap();
@@ -2671,7 +2671,7 @@ mod tests {
   fn test_chmod_toggle_recursive_only_for_dirs() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ChmodStart).unwrap();
@@ -2723,7 +2723,7 @@ mod tests {
     }
 
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+    while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
 
@@ -2749,7 +2749,7 @@ mod tests {
   fn test_chmod_apply_changes_permissions() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -2851,7 +2851,7 @@ mod tests {
 
     // Now go back - we should be able to go back at most 50 times (the limit)
     let mut back_count = 0;
-    let final_root = loop {
+    let _final_root = loop {
       let before = app.tree.root.clone();
       app.update(Action::HistoryBack).unwrap();
       if app.tree.root == before {
