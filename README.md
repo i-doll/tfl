@@ -38,6 +38,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Resizable panes** with adjustable tree/preview ratio
 - **Preview cache** with LRU eviction and debounced loading
 - **Favorites** — save directories, jump to them from a picker overlay
+- **Breadcrumb navigation** — clickable path segments in header to jump to parent directories, keyboard nav with `g1`-`g9`
 - **Home shortcut** — jump to home directory with `~` or `gh`
 - **Directory history** — back/forward navigation through visited directories with `-`/`+`
 - **Configurable keybindings** via TOML config file
@@ -107,6 +108,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 |---|---|
 | `g` | Go to top (`gg`) |
 | `h` | Go to home directory (`gh`) |
+| `1`-`9` | Jump to nth breadcrumb segment |
 | Any other | Cancel |
 
 ### Prompt mode (rename, new file, new dir)
@@ -375,6 +377,7 @@ src/
     metadata.rs    File/image metadata extraction, formatting
   ui/
     mod.rs         Layout: header, tree/preview split, status bar
+    breadcrumb.rs  Breadcrumb path parsing and click detection
     chmod.rs       Chmod dialog for changing file permissions
     favorites.rs   Favorites picker floating overlay
     open_with.rs   Open-with picker floating overlay

@@ -14,6 +14,7 @@ use crate::fs::FileTree;
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::{PreviewState, archive};
+use crate::ui::breadcrumb::{BreadcrumbSegment, parse_breadcrumb_segments};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipboardOp {
@@ -104,6 +105,8 @@ pub struct App {
   history_back: Vec<PathBuf>,
   /// Stack of directories to return to (for forward navigation)
   history_forward: Vec<PathBuf>,
+  pub breadcrumb_segments: Vec<BreadcrumbSegment>,
+  pub breadcrumb_truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +122,7 @@ impl App {
     let mut tree = FileTree::with_ignore_patterns(root, config.ignore_glob_set.clone())?;
     // Initialize custom ignore state from config
     tree.show_custom_ignored = !config.use_custom_ignore;
+    let breadcrumb_segments = parse_breadcrumb_segments(&tree.root);
     Ok(Self {
       tree,
       cursor: 0,
@@ -153,7 +157,13 @@ impl App {
       chmod_state: ChmodState::default(),
       history_back: Vec::new(),
       history_forward: Vec::new(),
+      breadcrumb_segments,
+      breadcrumb_truncated: false,
     })
+  }
+
+  pub fn update_breadcrumbs(&mut self) {
+    self.breadcrumb_segments = parse_breadcrumb_segments(&self.tree.root);
   }
 
   pub fn update(&mut self, action: Action) -> Result<()> {
@@ -400,11 +410,28 @@ impl App {
       Action::ToggleCustomIgnore => self.toggle_custom_ignore()?,
       Action::HistoryBack => self.history_go_back()?,
       Action::HistoryForward => self.history_go_forward()?,
+      Action::BreadcrumbSelect(index) => self.breadcrumb_select(index)?,
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
       }
       Action::None => {}
+    }
+    Ok(())
+  }
+
+  fn breadcrumb_select(&mut self, index: usize) -> Result<()> {
+    if let Some(segment) = self.breadcrumb_segments.get(index)
+      && segment.path != self.tree.root
+      && segment.path.is_dir()
+    {
+      self.tree.navigate_to(&segment.path)?;
+      self.search_query.clear();
+      self.cursor = 0;
+      self.tree_scroll_offset = 0;
+      self.preview.invalidate();
+      self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -419,6 +446,7 @@ impl App {
       self.input_mode = InputMode::Normal;
       self.preview.invalidate();
       self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -452,6 +480,7 @@ impl App {
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
       self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -470,6 +499,7 @@ impl App {
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
       self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -520,6 +550,7 @@ impl App {
         self.tree_scroll_offset = 0;
         self.preview.invalidate();
         self.update_preview();
+        self.update_breadcrumbs();
         self.input_mode = InputMode::Normal;
       } else {
         self.set_status("Directory no longer exists".to_string());
@@ -698,6 +729,7 @@ impl App {
         self.tree_scroll_offset = 0;
         self.preview.invalidate();
         self.update_preview();
+        self.update_breadcrumbs();
       } else {
         self.update_preview();
       }
@@ -746,6 +778,7 @@ impl App {
       self.adjust_scroll();
       self.preview.invalidate();
       self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -2475,6 +2508,20 @@ mod tests {
     cleanup_test_dir(&dir);
   }
 
+  // --- Breadcrumb Tests ---
+
+  #[test]
+  fn test_breadcrumb_segments_initialized() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Breadcrumb segments should be populated
+    assert!(!app.breadcrumb_segments.is_empty());
+    // Last segment should point to the root path
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.path, dir);
+    cleanup_test_dir(&dir);
+  }
+
   #[test]
   fn test_toggle_blame() {
     let dir = setup_test_dir();
@@ -2961,6 +3008,27 @@ mod tests {
   }
 
   #[test]
+  fn test_breadcrumb_select_navigates_to_parent() {
+    let dir = setup_test_dir();
+    let child_dir = dir.join("aaa_dir");
+    fs::write(child_dir.join("inner.txt"), "data").unwrap();
+    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.tree.root, child_dir);
+
+    // Find the parent segment index (the one before last)
+    let parent_idx = app.breadcrumb_segments.len().saturating_sub(2);
+
+    // Select parent breadcrumb
+    app.update(Action::BreadcrumbSelect(parent_idx)).unwrap();
+    assert_eq!(app.tree.root, dir);
+    assert_eq!(app.cursor, 0);
+    // Breadcrumbs should be updated
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.path, dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_go_home_adds_to_history() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3010,6 +3078,21 @@ mod tests {
   }
 
   #[test]
+  fn test_breadcrumb_select_current_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let root_before = app.tree.root.clone();
+
+    // Select the last segment (current directory)
+    let last_idx = app.breadcrumb_segments.len().saturating_sub(1);
+    app.update(Action::BreadcrumbSelect(last_idx)).unwrap();
+
+    // Should remain in the same directory
+    assert_eq!(app.tree.root, root_before);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_history_forward_on_empty_forward_is_noop() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3023,6 +3106,20 @@ mod tests {
   }
 
   #[test]
+  fn test_breadcrumb_select_out_of_bounds_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let root_before = app.tree.root.clone();
+
+    // Select an index way out of bounds
+    app.update(Action::BreadcrumbSelect(100)).unwrap();
+
+    // Should remain in the same directory
+    assert_eq!(app.tree.root, root_before);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_toggle_blame_resets_scroll() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -3030,6 +3127,73 @@ mod tests {
 
     app.update(Action::ToggleBlame).unwrap();
     assert_eq!(app.preview.scroll_offset, 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_breadcrumb_updates_on_enter_dir() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    let initial_len = app.breadcrumb_segments.len();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
+    // Breadcrumbs should have grown by one
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.name, "aaa_dir");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_back_updates_breadcrumbs() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    let initial_len = app.breadcrumb_segments.len();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+
+    // Go back - breadcrumbs should shrink
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+    assert_eq!(app.breadcrumb_segments.len(), initial_len);
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.path, dir);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_forward_updates_breadcrumbs() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    let initial_len = app.breadcrumb_segments.len();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+
+    // Go back
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.breadcrumb_segments.len(), initial_len);
+
+    // Go forward - breadcrumbs should grow again
+    app.update(Action::HistoryForward).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.name, "aaa_dir");
 
     cleanup_test_dir(&dir);
   }

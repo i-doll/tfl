@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use crossterm::event::EnableMouseCapture;
+use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
 use crossterm::terminal::{
   EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -25,7 +27,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 
 use crate::app::{App, SuspendAction};
-use crate::event::{Event, EventLoop, map_key};
+use crate::event::{Event, EventLoop, map_breadcrumb_click, map_key};
 
 fn main() -> Result<()> {
   let args: Vec<String> = std::env::args().skip(1).collect();
@@ -155,6 +157,14 @@ If no path is given, opens the current directory."
         let action = map_key(key, app.input_mode, &config);
         app.update(action)?;
       }
+      Event::Mouse(mouse) => {
+        // Handle mouse clicks in the header row (row 0) for breadcrumb navigation
+        if mouse.row == 0
+          && let Some(action) = map_breadcrumb_click(mouse.column, &app.breadcrumb_segments)
+        {
+          app.update(action)?;
+        }
+      }
       Event::Resize(w, h) => {
         app.update(crate::action::Action::Resize(w, h))?;
       }
@@ -210,13 +220,13 @@ If no path is given, opens the current directory."
 
 fn setup_terminal() -> Result<()> {
   enable_raw_mode()?;
-  execute!(io::stdout(), EnterAlternateScreen)?;
+  execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
   Ok(())
 }
 
 fn restore_terminal() -> Result<()> {
   disable_raw_mode()?;
-  execute!(io::stdout(), LeaveAlternateScreen)?;
+  execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
   Ok(())
 }
 

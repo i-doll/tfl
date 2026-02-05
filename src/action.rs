@@ -72,6 +72,7 @@ pub enum Action {
   ToggleCustomIgnore,
   HistoryBack,
   HistoryForward,
+  BreadcrumbSelect(usize),
   Resize(u16, u16),
   Tick,
   None,
