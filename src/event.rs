@@ -129,6 +129,7 @@ pub enum PromptKind {
   Rename,
   NewFile,
   NewDir,
+  NewSymlink,
   ConfirmDelete,
 }
 

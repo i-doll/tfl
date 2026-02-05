@@ -214,6 +214,15 @@ impl App {
         self.prompt_kind = Some(PromptKind::NewDir);
         self.input_mode = InputMode::Prompt;
       }
+      Action::NewSymlinkStart => {
+        if let Some(entry) = self.selected_entry() {
+          // Suggest a link name based on the target
+          self.prompt_input = format!("link_to_{}", entry.name);
+          self.prompt_cursor = self.prompt_input.chars().count();
+          self.prompt_kind = Some(PromptKind::NewSymlink);
+          self.input_mode = InputMode::Prompt;
+        }
+      }
       Action::PromptInput(c) => {
         match self.prompt_kind {
           Some(PromptKind::ConfirmDelete) => {
@@ -276,6 +285,7 @@ impl App {
           Some(PromptKind::Rename) => self.execute_rename()?,
           Some(PromptKind::NewFile) => self.execute_new_file()?,
           Some(PromptKind::NewDir) => self.execute_new_dir()?,
+          Some(PromptKind::NewSymlink) => self.execute_new_symlink()?,
           Some(PromptKind::ConfirmDelete) => {
             self.cancel_prompt();
             self.set_status("Delete cancelled".to_string());
@@ -877,6 +887,50 @@ impl App {
       Err(e) => {
         self.cancel_prompt();
         self.set_status(format!("Create dir failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn execute_new_symlink(&mut self) -> Result<()> {
+    let name = self.prompt_input.trim().to_string();
+    if name.is_empty() {
+      self.cancel_prompt();
+      self.set_status("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let entry = self.selected_entry().cloned();
+    let Some(entry) = entry else {
+      self.cancel_prompt();
+      return Ok(());
+    };
+
+    let dir = if let Some(parent) = entry.path.parent() {
+      parent.to_path_buf()
+    } else {
+      self.tree.root.clone()
+    };
+    let link_path = dir.join(&name);
+
+    if link_path.exists() {
+      self.cancel_prompt();
+      self.set_status(format!("{name} already exists"));
+      return Ok(());
+    }
+
+    match std::os::unix::fs::symlink(&entry.path, &link_path) {
+      Ok(()) => {
+        self.cancel_prompt();
+        self.tree.reload()?;
+        self.reposition_cursor_to(&link_path);
+        self.set_status(format!("Created symlink: {name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.set_status(format!("Create symlink failed: {e}"));
       }
     }
     Ok(())
@@ -2018,6 +2072,135 @@ mod tests {
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
 
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_start_prompts() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewSymlinkStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::NewSymlink));
+    // Prompt should be pre-filled with a suggested name
+    assert!(!app.prompt_input.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_to_file_creates_symlink() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewSymlinkStart).unwrap();
+    // Set a custom symlink name
+    app.prompt_input = "link_to_bbb.txt".to_string();
+    app.prompt_cursor = app.prompt_input.chars().count();
+    app.update(Action::PromptConfirm).unwrap();
+
+    let link_path = dir.join("link_to_bbb.txt");
+    assert!(link_path.exists());
+    assert!(link_path.symlink_metadata().unwrap().file_type().is_symlink());
+    // Symlink should point to the original file
+    let target = std::fs::read_link(&link_path).unwrap();
+    assert_eq!(target, dir.join("bbb.txt"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_to_directory_creates_symlink() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry should be aaa_dir
+    assert!(app.tree.entries[0].is_dir);
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+    app.update(Action::NewSymlinkStart).unwrap();
+    app.prompt_input = "link_to_aaa_dir".to_string();
+    app.prompt_cursor = app.prompt_input.chars().count();
+    app.update(Action::PromptConfirm).unwrap();
+
+    let link_path = dir.join("link_to_aaa_dir");
+    assert!(link_path.exists());
+    assert!(link_path.symlink_metadata().unwrap().file_type().is_symlink());
+    let target = std::fs::read_link(&link_path).unwrap();
+    assert_eq!(target, dir.join("aaa_dir"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_appears_in_tree() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewSymlinkStart).unwrap();
+    app.prompt_input = "my_link.txt".to_string();
+    app.prompt_cursor = app.prompt_input.chars().count();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // The tree should now contain the symlink
+    assert!(app.tree.entries.iter().any(|e| e.name == "my_link.txt" && e.is_symlink));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_conflict_shows_error() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewSymlinkStart).unwrap();
+    // Try to create a symlink with a name that already exists
+    app.prompt_input = "ccc.rs".to_string();
+    app.prompt_cursor = app.prompt_input.chars().count();
+    app.update(Action::PromptConfirm).unwrap();
+
+    // Should show an error, file should not be overwritten
+    assert!(app.status_message.as_ref().unwrap().contains("already exists"));
+    assert!(dir.join("ccc.rs").exists());
+    // ccc.rs should not be a symlink
+    assert!(!dir.join("ccc.rs").symlink_metadata().unwrap().file_type().is_symlink());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_cancel_does_not_create() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewSymlinkStart).unwrap();
+    app.prompt_input = "canceled_link.txt".to_string();
+    app.update(Action::PromptCancel).unwrap();
+
+    assert!(!dir.join("canceled_link.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_new_symlink_empty_name_rejected() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::NewSymlinkStart).unwrap();
+    app.prompt_input = "  ".to_string();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert_eq!(app.status_message.as_deref(), Some("Name cannot be empty"));
+    assert_eq!(app.input_mode, InputMode::Normal);
     cleanup_test_dir(&dir);
   }
 }
