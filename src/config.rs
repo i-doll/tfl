@@ -356,6 +356,7 @@ x = "extract_archive"
 "shift+i" = "toggle_custom_ignore"
 "-" = "history_back"
 "+" = "history_forward"
+m = "toggle_markdown_mode"
 
 [keys.g_prefix]
 g = "go_to_top"

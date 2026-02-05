@@ -3,6 +3,7 @@ pub mod blame;
 pub mod directory;
 pub mod hex;
 pub mod image;
+pub mod markdown;
 pub mod metadata;
 pub mod text;
 
@@ -29,6 +30,7 @@ const DEBOUNCE_MS: u128 = 80;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreviewType {
   Text,
+  Markdown,
   Image,
   Binary,
   Directory,
@@ -57,10 +59,13 @@ pub struct PreviewState {
   pub image_protocol: Option<StatefulProtocol>,
   pub image_rx: Option<mpsc::Receiver<self::image::ImageLoadResult>>,
   pub blame_enabled: bool,
+  pub markdown_rendered: bool,
   highlighter: SyntaxHighlighter,
   cache: HashMap<PathBuf, PreviewContent>,
   cache_order: Vec<PathBuf>,
   last_request: Option<(PathBuf, Instant)>,
+  /// Cache for raw markdown content (when toggling between raw/rendered)
+  markdown_raw_cache: HashMap<PathBuf, PreviewContent>,
 }
 
 impl PreviewState {
@@ -72,10 +77,12 @@ impl PreviewState {
       image_protocol: None,
       image_rx: None,
       blame_enabled: false,
+      markdown_rendered: true,
       highlighter: SyntaxHighlighter::new(),
       cache: HashMap::new(),
       cache_order: Vec::new(),
       last_request: None,
+      markdown_raw_cache: HashMap::new(),
     }
   }
 
@@ -123,6 +130,7 @@ impl PreviewState {
     let git_commits = get_git_commits(git_repo, path, 3);
     let content = match preview_type {
       PreviewType::Text => self.load_text(path, git_repo),
+      PreviewType::Markdown => self.load_markdown(path, git_repo),
       PreviewType::Image => {
         if let Some(picker) = picker {
           self.image_rx = Some(self::image::load_image_async(path, picker));
@@ -218,6 +226,52 @@ impl PreviewState {
     Some(PreviewContent {
       lines,
       preview_type: PreviewType::Text,
+      line_count,
+      file_size,
+      extension: ext,
+      metadata,
+      image_metadata: None,
+      git_commits,
+      blame_data,
+    })
+  }
+
+  fn load_markdown(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
+    let content = match std::fs::read_to_string(path) {
+      Ok(c) => c,
+      Err(e) => {
+        return Some(PreviewContent {
+          lines: vec![Line::from(format!(" Error reading file: {e}"))],
+          preview_type: PreviewType::Error(e.to_string()),
+          line_count: 0,
+          file_size: 0,
+          extension: String::new(),
+          metadata: None,
+          image_metadata: None,
+          git_commits: Vec::new(),
+          blame_data: None,
+        });
+      }
+    };
+
+    let line_count = content.lines().count();
+    let truncated: String = content.lines().take(MAX_TEXT_LINES).collect::<Vec<_>>().join("\n");
+    let ext = get_extension(path);
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let metadata = get_file_metadata_with_lines(path, line_count);
+    let git_commits = get_git_commits(git_repo, path, 3);
+    let blame_data = git_repo.and_then(|repo| blame::get_blame(repo, path));
+
+    // Render markdown if in rendered mode, otherwise show raw with syntax highlighting
+    let lines = if self.markdown_rendered {
+      markdown::render_markdown(&truncated, &self.highlighter)
+    } else {
+      self.highlighter.highlight(&truncated, &ext)
+    };
+
+    Some(PreviewContent {
+      lines,
+      preview_type: PreviewType::Markdown,
       line_count,
       file_size,
       extension: ext,
@@ -358,11 +412,47 @@ impl PreviewState {
   pub fn invalidate(&mut self) {
     self.cache.clear();
     self.cache_order.clear();
+    self.markdown_raw_cache.clear();
     self.current_path = None;
     self.content = None;
     self.image_protocol = None;
     self.image_rx = None;
   }
+
+  /// Toggle between raw and rendered markdown mode
+  /// Returns true if the current file is markdown and was toggled
+  pub fn toggle_markdown_mode(&mut self) -> bool {
+    let path = match self.current_path.clone() {
+      Some(p) => p,
+      None => return false,
+    };
+
+    let ext = get_extension(&path);
+    if !MARKDOWN_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+      return false;
+    }
+
+    // Preserve scroll position
+    let scroll = self.scroll_offset;
+
+    // Toggle the mode
+    self.markdown_rendered = !self.markdown_rendered;
+
+    // Remove from cache to force reload
+    self.cache.remove(&path);
+    self.cache_order.retain(|p| p != &path);
+
+    // Reload with new mode
+    self.load_preview(&path, None, None);
+
+    // Restore scroll position (clamped to new content length)
+    if let Some(content) = self.get_content() {
+      self.scroll_offset = scroll.min(content.lines.len().saturating_sub(1));
+    }
+
+    true
+  }
+
 }
 
 fn get_extension(path: &Path) -> String {
@@ -373,6 +463,7 @@ fn get_extension(path: &Path) -> String {
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "ico", "svg"];
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"];
 
 pub fn detect_preview_type(path: &Path) -> PreviewType {
   if path.is_dir() {
@@ -406,6 +497,11 @@ pub fn detect_preview_type(path: &Path) -> PreviewType {
   let ext = get_extension(path);
   if IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
     return PreviewType::Image;
+  }
+
+  // Check extension for markdown
+  if MARKDOWN_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+    return PreviewType::Markdown;
   }
 
   // Try to detect if binary using infer
@@ -513,6 +609,32 @@ mod tests {
     // Just create a fake file - detection is by extension
     fs::write(&file, "fake tar.gz data").unwrap();
     assert_eq!(detect_preview_type(&file), PreviewType::Archive);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_detect_markdown_file() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_markdown");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("README.md");
+    fs::write(&file, "# Hello World").unwrap();
+    assert_eq!(detect_preview_type(&file), PreviewType::Markdown);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_detect_markdown_extensions() {
+    let dir = std::env::temp_dir().join("tui_explorer_test_md_ext");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    for ext in &["md", "markdown", "mdown", "mkd", "mkdn"] {
+      let file = dir.join(format!("test.{ext}"));
+      fs::write(&file, "# Test").unwrap();
+      assert_eq!(detect_preview_type(&file), PreviewType::Markdown, "Failed for extension: {ext}");
+    }
+
     let _ = fs::remove_dir_all(&dir);
   }
 
