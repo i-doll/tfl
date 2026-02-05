@@ -360,6 +360,9 @@ m = "toggle_markdown_mode"
 tab = "switch_pane"
 f6 = "toggle_dual_pane"
 "shift+p" = "toggle_formatted"
+d = "show_diff"
+n = "next_hunk"
+"shift+n" = "prev_hunk"
 
 [keys.g_prefix]
 g = "go_to_top"
