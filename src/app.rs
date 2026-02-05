@@ -11,7 +11,7 @@ use crate::action::Action;
 use crate::config::Config;
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
-use crate::fs::{FileProperties, FileTree};
+use crate::fs::{FileProperties, FileTree, SizeFilter};
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::{PreviewState, archive};
@@ -129,6 +129,7 @@ pub struct App {
   pub search_case_sensitive: bool,
   pub search_regex_error: Option<String>,
   compiled_regex: Option<Regex>,
+  pub size_filter_query: String,
   pub tree_ratio: u16,
   pub min_tree_ratio: u16,
   pub max_tree_ratio: u16,
@@ -194,6 +195,7 @@ impl App {
       search_case_sensitive: false,
       search_regex_error: None,
       compiled_regex: None,
+      size_filter_query: String::new(),
       tree_ratio: config.tree_ratio,
       min_tree_ratio: config.min_tree_ratio,
       max_tree_ratio: config.max_tree_ratio,
@@ -330,6 +332,8 @@ impl App {
         } else {
           self.search_query.clear();
         }
+        self.search_regex_error = None;
+        self.compiled_regex = None;
       }
       Action::SearchCancel => {
         self.input_mode = InputMode::Normal;
@@ -352,6 +356,26 @@ impl App {
         self.search_case_sensitive = !self.search_case_sensitive;
         self.compile_search_regex();
         self.apply_search_filter();
+      }
+      Action::SizeFilterStart => {
+        self.input_mode = InputMode::SizeFilter;
+        self.size_filter_query.clear();
+      }
+      Action::SizeFilterInput(c) => {
+        self.size_filter_query.push(c);
+        self.apply_size_filter();
+      }
+      Action::SizeFilterBackspace => {
+        self.size_filter_query.pop();
+        self.apply_size_filter();
+      }
+      Action::SizeFilterConfirm => {
+        self.input_mode = InputMode::Normal;
+        // Keep the filter active
+      }
+      Action::SizeFilterCancel => {
+        self.input_mode = InputMode::Normal;
+        self.size_filter_query.clear();
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -1663,11 +1687,14 @@ impl App {
 
   /// Returns indices into tree.entries for visible (filtered) entries
   pub fn visible_entries(&self) -> Vec<usize> {
-    if self.search_query.is_empty() {
+    let has_name_filter = !self.search_query.is_empty();
+    let size_filter = SizeFilter::parse(&self.size_filter_query);
+
+    if !has_name_filter && size_filter.is_none() {
       return (0..self.tree.entries.len()).collect();
     }
 
-    // If regex mode with valid regex, use it
+    // If regex mode with valid regex, use it for name filter
     if self.search_regex {
       if let Some(ref re) = self.compiled_regex {
         return self
@@ -1675,7 +1702,19 @@ impl App {
           .entries
           .iter()
           .enumerate()
-          .filter(|(_, e)| re.is_match(&e.name))
+          .filter(|(_, e)| {
+            // Regex name filter
+            if !re.is_match(&e.name) {
+              return false;
+            }
+            // Size filter (if active) - only apply to files, not directories
+            if let Some(ref sf) = size_filter
+              && !e.is_dir && !sf.matches(e.size)
+            {
+              return false;
+            }
+            true
+          })
           .map(|(i, _)| i)
           .collect();
       }
@@ -1685,27 +1724,40 @@ impl App {
       }
     }
 
-    // Standard substring search
-    if self.search_case_sensitive {
-      self
-        .tree
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.name.contains(&self.search_query))
-        .map(|(i, _)| i)
-        .collect()
+    // Standard substring search with size filter
+    let query = if self.search_case_sensitive {
+      self.search_query.clone()
     } else {
-      let query = self.search_query.to_lowercase();
-      self
-        .tree
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.name.to_lowercase().contains(&query))
-        .map(|(i, _)| i)
-        .collect()
-    }
+      self.search_query.to_lowercase()
+    };
+
+    self
+      .tree
+      .entries
+      .iter()
+      .enumerate()
+      .filter(|(_, e)| {
+        // Name filter (if active)
+        if has_name_filter {
+          let name = if self.search_case_sensitive {
+            e.name.clone()
+          } else {
+            e.name.to_lowercase()
+          };
+          if !name.contains(&query) {
+            return false;
+          }
+        }
+        // Size filter (if active) - only apply to files, not directories
+        if let Some(ref sf) = size_filter
+          && !e.is_dir && !sf.matches(e.size)
+        {
+          return false;
+        }
+        true
+      })
+      .map(|(i, _)| i)
+      .collect()
   }
 
   /// Returns byte ranges of matches in the given name for search highlighting
@@ -1748,6 +1800,18 @@ impl App {
       }
       ranges
     }
+  }
+
+  fn apply_size_filter(&mut self) {
+    // Move cursor to first matching entry
+    let entries = self.visible_entries();
+    if entries.is_empty() {
+      self.cursor = 0;
+    } else if self.cursor >= entries.len() {
+      self.cursor = entries.len().saturating_sub(1);
+    }
+    self.adjust_scroll();
+    self.update_preview();
   }
 
   pub fn set_status(&mut self, msg: String) {
@@ -3688,30 +3752,34 @@ mod tests {
     // Reload tree to apply new patterns
     app.tree.reload().unwrap();
     assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".tmp")));
-=======
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_search_case_sensitive_toggle() {
     let dir = setup_test_dir();
     // Create files with different cases
     fs::write(dir.join("Test.txt"), "test").unwrap();
-    fs::write(dir.join("test.log"), "test").unwrap();
+    fs::write(dir.join("test.md"), "test").unwrap();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     app.tree.reload().unwrap();
 
     // Case insensitive search (default)
     app.search_query = "test".to_string();
     let visible = app.visible_entries();
-    // Should match both Test.txt and test.log
+    // Should match both Test.txt and test.md
     let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
     assert!(names.contains(&"Test.txt"));
-    assert!(names.contains(&"test.log"));
+    assert!(names.contains(&"test.md"));
 
     // Case sensitive search
     app.search_case_sensitive = true;
     let visible = app.visible_entries();
-    // Should only match test.log
+    // Should only match test.md
     let names: Vec<&str> = visible.iter().map(|&idx| app.tree.entries[idx].name.as_str()).collect();
     assert!(!names.contains(&"Test.txt"));
-    assert!(names.contains(&"test.log"));
+    assert!(names.contains(&"test.md"));
 
     cleanup_test_dir(&dir);
   }

@@ -125,6 +125,7 @@ impl EventLoop {
 pub enum InputMode {
   Normal,
   Search,
+  SizeFilter,
   GPrefix,
   Help,
   Prompt,
@@ -153,6 +154,13 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::SearchToggleRegex,
       KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::SearchToggleCase,
       KeyCode::Char(c) => Action::SearchInput(c),
+      _ => Action::None,
+    },
+    InputMode::SizeFilter => match key.code {
+      KeyCode::Esc => Action::SizeFilterCancel,
+      KeyCode::Enter => Action::SizeFilterConfirm,
+      KeyCode::Backspace => Action::SizeFilterBackspace,
+      KeyCode::Char(c) => Action::SizeFilterInput(c),
       _ => Action::None,
     },
     InputMode::GPrefix => {
