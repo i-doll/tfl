@@ -38,7 +38,10 @@ impl std::fmt::Debug for GitRepo {
 impl GitRepo {
   pub fn open(path: &Path) -> Option<Self> {
     Repository::discover(path).ok().map(|repo| {
-      let root = repo.workdir().map(|p| p.to_path_buf()).unwrap_or_default();
+      let root = repo
+        .workdir()
+        .and_then(|p| p.canonicalize().ok())
+        .unwrap_or_default();
       Self { repo, root }
     })
   }
@@ -336,7 +339,8 @@ mod tests {
     let dir = std::env::temp_dir().join(format!("tfl_git_test_{id}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    // Canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+    dir.canonicalize().unwrap()
   }
 
   fn init_git_repo(dir: &Path) {
