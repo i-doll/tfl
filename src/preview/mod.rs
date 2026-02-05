@@ -447,7 +447,7 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let file = dir.join("binary.bin");
-    fs::write(&file, &[0u8, 1, 2, 3, 0, 0, 0, 0]).unwrap();
+    fs::write(&file, [0u8, 1, 2, 3, 0, 0, 0, 0]).unwrap();
     assert_eq!(detect_preview_type(&file), PreviewType::Binary);
     let _ = fs::remove_dir_all(&dir);
   }

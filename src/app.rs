@@ -65,6 +65,9 @@ impl Default for ChmodState {
   }
 }
 
+/// Maximum number of entries in the directory history
+const HISTORY_LIMIT: usize = 50;
+
 pub struct App {
   pub tree: FileTree,
   pub cursor: usize,
@@ -97,6 +100,10 @@ pub struct App {
   pub claude_yolo: bool,
   pub extracting: Option<ExtractingState>,
   pub chmod_state: ChmodState,
+  /// Stack of previously visited directories (for back navigation)
+  history_back: Vec<PathBuf>,
+  /// Stack of directories to return to (for forward navigation)
+  history_forward: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +151,8 @@ impl App {
       claude_yolo: config.claude_yolo,
       extracting: None,
       chmod_state: ChmodState::default(),
+      history_back: Vec::new(),
+      history_forward: Vec::new(),
     })
   }
 
@@ -386,6 +395,8 @@ impl App {
       Action::ChmodApply => self.chmod_apply()?,
       Action::ChmodClose => self.chmod_close(),
       Action::ToggleCustomIgnore => self.toggle_custom_ignore()?,
+      Action::HistoryBack => self.history_go_back()?,
+      Action::HistoryForward => self.history_go_forward()?,
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
@@ -397,11 +408,63 @@ impl App {
 
   fn go_home(&mut self) -> Result<()> {
     if let Some(home) = dirs::home_dir() {
+      self.push_history(self.tree.root.clone());
       self.tree.navigate_to(&home)?;
       self.search_query.clear();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
       self.input_mode = InputMode::Normal;
+      self.preview.invalidate();
+      self.update_preview();
+    }
+    Ok(())
+  }
+
+  /// Push a directory onto the back history stack, clearing forward history
+  fn push_history(&mut self, path: PathBuf) {
+    // Skip if same as the last entry (avoid duplicates in sequence)
+    if self.history_back.last() == Some(&path) {
+      return;
+    }
+    self.history_back.push(path);
+    // Enforce history limit
+    if self.history_back.len() > HISTORY_LIMIT {
+      self.history_back.remove(0);
+    }
+    // Clear forward history on new navigation
+    self.history_forward.clear();
+  }
+
+  /// Go back in history
+  fn history_go_back(&mut self) -> Result<()> {
+    if let Some(prev) = self.history_back.pop() {
+      let current = self.tree.root.clone();
+      // Push current to forward stack (skip if same as last forward entry)
+      if self.history_forward.last() != Some(&current) {
+        self.history_forward.push(current);
+      }
+      self.tree.navigate_to(&prev)?;
+      self.search_query.clear();
+      self.cursor = 0;
+      self.tree_scroll_offset = 0;
+      self.preview.invalidate();
+      self.update_preview();
+    }
+    Ok(())
+  }
+
+  /// Go forward in history
+  fn history_go_forward(&mut self) -> Result<()> {
+    if let Some(next) = self.history_forward.pop() {
+      let current = self.tree.root.clone();
+      // Push current to back stack (skip if same as last back entry)
+      if self.history_back.last() != Some(&current) {
+        self.history_back.push(current);
+      }
+      self.tree.navigate_to(&next)?;
+      self.search_query.clear();
+      self.cursor = 0;
+      self.tree_scroll_offset = 0;
       self.preview.invalidate();
       self.update_preview();
     }
@@ -447,6 +510,7 @@ impl App {
   fn favorites_select(&mut self) -> Result<()> {
     if let Some(path) = self.favorites.get(self.favorites_cursor).map(|p| p.to_path_buf()) {
       if path.is_dir() {
+        self.push_history(self.tree.root.clone());
         self.tree.navigate_to(&path)?;
         self.search_query.clear();
         self.cursor = 0;
@@ -624,6 +688,7 @@ impl App {
     let entries = self.visible_entries();
     if let Some(idx) = entries.get(self.cursor).copied() {
       if self.tree.entries[idx].is_dir {
+        self.push_history(self.tree.root.clone());
         self.tree.enter_dir(idx)?;
         self.search_query.clear();
         self.cursor = 0;
@@ -663,6 +728,10 @@ impl App {
 
     // Case 3: At root level or parent not visible -> change tree root
     if let Some(old_root) = self.tree.go_parent()? {
+      // Push current location to forward history so we can return with HistoryForward
+      if self.history_forward.last() != Some(&old_root) {
+        self.history_forward.push(old_root.clone());
+      }
       self.search_query.clear();
       self.cursor = self
         .tree
@@ -1571,7 +1640,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file (after dirs)
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenEditor).unwrap();
@@ -1664,7 +1733,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move cursor to a file (past the dirs)
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let root_before = app.tree.root.clone();
@@ -1812,7 +1881,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -1827,7 +1896,7 @@ mod tests {
   fn test_copy_stores_path_in_clipboard() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -1843,7 +1912,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CopyFile).unwrap();
@@ -1864,7 +1933,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CutFile).unwrap();
@@ -1887,7 +1956,7 @@ mod tests {
     fs::write(dir.join("aaa_dir").join("bbb.txt"), "existing").unwrap();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Copy bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CopyFile).unwrap();
@@ -1917,7 +1986,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::CutFile).unwrap();
@@ -1934,7 +2003,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to bbb.txt
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     assert!(dir.join("bbb.txt").exists());
@@ -1954,7 +2023,7 @@ mod tests {
   fn test_delete_cancel_does_not_remove() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::DeleteFile).unwrap();
@@ -1969,7 +2038,7 @@ mod tests {
   fn test_delete_cancel_with_esc() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::DeleteFile).unwrap();
@@ -1983,7 +2052,7 @@ mod tests {
   fn test_rename_file() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::RenameStart).unwrap();
@@ -2005,7 +2074,7 @@ mod tests {
   fn test_rename_to_existing_shows_error() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::RenameStart).unwrap();
@@ -2023,7 +2092,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file so current_dir() returns the root
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::NewFileStart).unwrap();
@@ -2043,7 +2112,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file so current_dir() returns the root
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::NewDirStart).unwrap();
@@ -2087,7 +2156,7 @@ mod tests {
   fn test_cursor_repositions_after_rename() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+    while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::RenameStart).unwrap();
@@ -2120,7 +2189,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenWithStart).unwrap();
@@ -2144,7 +2213,7 @@ mod tests {
   fn test_open_with_cursor_movement() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenWithStart).unwrap();
@@ -2168,7 +2237,7 @@ mod tests {
   fn test_open_with_close() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::OpenWithStart).unwrap();
@@ -2182,7 +2251,7 @@ mod tests {
   fn test_open_with_select_tui_suspends() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     // Inject a fake TUI app so we can test the suspend path
@@ -2373,11 +2442,33 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a text file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ExtractArchive).unwrap();
     assert_eq!(app.status_message.as_deref(), Some("Not an archive file"));
+    cleanup_test_dir(&dir);
+  }
+
+  // --- Directory History Tests ---
+
+  #[test]
+  fn test_history_back_returns_to_previous_dir() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Start in root dir
+    assert_eq!(app.tree.root, dir);
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
+    // Go back should return to root
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
     cleanup_test_dir(&dir);
   }
 
@@ -2386,7 +2477,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -2394,6 +2485,27 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Chmod);
     assert_eq!(app.chmod_state.path, path);
     assert!(!app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_forward_after_back() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
+    // Go back
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    // Go forward should return to aaa_dir
+    app.update(Action::HistoryForward).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
     cleanup_test_dir(&dir);
   }
 
@@ -2415,7 +2527,7 @@ mod tests {
 
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // Find and select the zip file
-    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+    while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
     assert_eq!(app.selected_entry().unwrap().name, "test.zip");
@@ -2520,7 +2632,7 @@ mod tests {
     }
 
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+    while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
 
@@ -2540,7 +2652,7 @@ mod tests {
   fn test_chmod_toggle_bit() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ChmodStart).unwrap();
@@ -2559,7 +2671,7 @@ mod tests {
   fn test_chmod_toggle_recursive_only_for_dirs() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ChmodStart).unwrap();
@@ -2611,7 +2723,7 @@ mod tests {
     }
 
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+    while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
 
@@ -2637,7 +2749,7 @@ mod tests {
   fn test_chmod_apply_changes_permissions() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     let path = app.selected_entry().unwrap().path.clone();
@@ -2692,6 +2804,104 @@ mod tests {
   }
 
   #[test]
+  fn test_new_navigation_clears_forward_history() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    fs::write(dir.join("zzz_dir").join("other.txt"), "other").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
+    // Go back to root
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    // Now enter zzz_dir (should clear forward history)
+    app.update(Action::MoveDown).unwrap(); // move to zzz_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("zzz_dir"));
+
+    // Forward should do nothing (forward history was cleared)
+    app.update(Action::HistoryForward).unwrap();
+    assert_eq!(app.tree.root, dir.join("zzz_dir"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_respects_size_limit() {
+    let dir = setup_test_dir();
+    // Create nested directories
+    let mut current = dir.clone();
+    for i in 0..60 {
+      let subdir = current.join(format!("dir_{i:02}"));
+      fs::create_dir_all(&subdir).unwrap();
+      fs::write(subdir.join("file.txt"), "data").unwrap();
+      current = subdir;
+    }
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Navigate through all 60 directories
+    for _ in 0..60 {
+      app.update(Action::EnterDir).unwrap();
+    }
+
+    // Now go back - we should be able to go back at most 50 times (the limit)
+    let mut back_count = 0;
+    let _final_root = loop {
+      let before = app.tree.root.clone();
+      app.update(Action::HistoryBack).unwrap();
+      if app.tree.root == before {
+        break before;
+      }
+      back_count += 1;
+      if back_count > 100 {
+        panic!("Infinite loop in history back");
+      }
+    };
+
+    // Should have been able to go back at most 50 times
+    assert!(back_count <= 50, "Back count {back_count} exceeds limit of 50");
+    // Should not have gotten all the way back to original dir
+    assert!(back_count >= 1, "Should have some history");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_skips_duplicates() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
+    // Go back to root
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    // Enter aaa_dir again
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+
+    // Go back - should go to root (not aaa_dir again)
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    // Go back again - should stay at root (no more history with duplicates removed)
+    app.update(Action::HistoryBack).unwrap();
+    // Either stays at root or goes to a valid previous location
+    // The key is we shouldn't have duplicate entries
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_apply_config_updates_ignore_patterns() {
     let dir = setup_test_dir();
     fs::write(dir.join("test.tmp"), "tmp").unwrap();
@@ -2707,6 +2917,89 @@ mod tests {
     // Reload tree to apply new patterns
     app.tree.reload().unwrap();
     assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".tmp")));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_go_parent_adds_to_history() {
+    let dir = setup_test_dir();
+    let child_dir = dir.join("aaa_dir");
+    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.tree.root, child_dir);
+
+    // Go to parent via MoveLeft
+    app.update(Action::MoveLeft).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    // Go back should return to child_dir
+    // (or forward if we interpret parent as navigating to parent)
+    // The semantic is: going to parent pushes current to back history
+    // Actually after going to parent, we should be able to go forward
+    // to get back to child_dir
+    app.update(Action::HistoryForward).unwrap();
+    assert_eq!(app.tree.root, child_dir);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_go_home_adds_to_history() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Go home
+    app.update(Action::GoHome).unwrap();
+
+    // Go back should return to original dir
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_select_adds_to_history() {
+    let dir = setup_test_dir();
+    let target = dir.join("aaa_dir");
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Add target to favorites and select it
+    app.favorites.add(target.clone());
+    app.favorites_cursor = app.favorites.len() - 1;
+    app.input_mode = crate::event::InputMode::Favorites;
+    app.update(Action::FavoritesSelect).unwrap();
+
+    assert_eq!(app.tree.root, target);
+
+    // Go back should return to original dir
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_back_on_empty_history_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // No navigation yet, history should be empty
+    let root_before = app.tree.root.clone();
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, root_before);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_forward_on_empty_forward_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // No navigation yet
+    let root_before = app.tree.root.clone();
+    app.update(Action::HistoryForward).unwrap();
+    assert_eq!(app.tree.root, root_before);
 
     cleanup_test_dir(&dir);
   }

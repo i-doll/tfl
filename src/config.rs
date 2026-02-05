@@ -105,6 +105,11 @@ pub fn parse_key_binding(s: &str) -> Option<KeyBinding> {
     return None;
   }
 
+  // Special case: just "+" is a literal plus key
+  if s == "+" {
+    return Some(KeyBinding { code: KeyCode::Char('+'), modifiers: KeyModifiers::NONE });
+  }
+
   let parts: Vec<&str> = s.split('+').collect();
 
   if parts.len() == 1 {
@@ -349,6 +354,8 @@ x = "extract_archive"
 "shift+x" = "extract_and_delete"
 "ctrl+p" = "chmod"
 "shift+i" = "toggle_custom_ignore"
+"-" = "history_back"
+"+" = "history_forward"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -524,6 +531,13 @@ mod tests {
   }
 
   #[test]
+  fn test_parse_plus_key() {
+    let kb = parse_key_binding("+").unwrap();
+    assert_eq!(kb.code, KeyCode::Char('+'));
+    assert_eq!(kb.modifiers, KeyModifiers::NONE);
+  }
+
+  #[test]
   fn test_parse_empty_string() {
     assert!(parse_key_binding("").is_none());
   }
@@ -626,6 +640,8 @@ mod tests {
       (KeyCode::Char('x'), n, Action::ExtractArchive),
       (KeyCode::Char('X'), n, Action::ExtractAndDelete),
       (KeyCode::Char('p'), KeyModifiers::CONTROL, Action::ChmodStart),
+      (KeyCode::Char('-'), n, Action::HistoryBack),
+      (KeyCode::Char('+'), n, Action::HistoryForward),  // shift+= produces '+'
     ];
 
     for (code, mods, action) in expected {
