@@ -895,6 +895,7 @@ mod tests {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      diff_hunks: Vec::new(),
     };
     state.insert_cache(path.clone(), content);
     state.current_path = Some(path);
@@ -921,6 +922,7 @@ mod tests {
       blame_data: None,
       raw_lines: Some(vec![Line::from("raw")]),
       is_structured: true,
+      diff_hunks: Vec::new(),
     };
     state.insert_cache(path.clone(), content);
     state.current_path = Some(path);
@@ -950,6 +952,7 @@ mod tests {
       blame_data: None,
       raw_lines: Some(vec![Line::from("raw")]),
       is_structured: true,
+      diff_hunks: Vec::new(),
     };
     state.insert_cache(path.clone(), content);
     state.current_path = Some(path);

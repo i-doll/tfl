@@ -99,8 +99,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Tab` | Switch active pane (dual-pane mode) |
 | `F6` | Toggle dual-pane mode |
 | `d` | Show git diff for current file |
-| `]` | Jump to next diff hunk |
-| `[` | Jump to previous diff hunk |
+| `n` | Jump to next diff hunk |
+| `N` | Jump to previous diff hunk |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
