@@ -1,6 +1,66 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Returns the tfl-specific trash directory, creating it if needed.
+/// Uses ~/.local/share/tfl/trash on Linux/macOS.
+pub fn trash_dir() -> io::Result<PathBuf> {
+  let base = dirs::data_local_dir()
+    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "could not find local data directory"))?;
+  let trash = base.join("tfl").join("trash");
+  std::fs::create_dir_all(&trash)?;
+  Ok(trash)
+}
+
+/// Move a file or directory to the tfl trash.
+/// Returns the path where the file was moved to in the trash.
+pub fn move_to_trash(path: &Path) -> io::Result<PathBuf> {
+  let trash = trash_dir()?;
+  let file_name = path.file_name().ok_or_else(|| {
+    io::Error::new(io::ErrorKind::InvalidInput, "path has no filename")
+  })?;
+
+  // Create unique trash path using timestamp to avoid conflicts
+  let timestamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis())
+    .unwrap_or(0);
+  let trash_name = format!("{}.{}", timestamp, file_name.to_string_lossy());
+  let trash_path = trash.join(&trash_name);
+
+  // Try rename first, fall back to copy+delete for cross-filesystem moves
+  if std::fs::rename(path, &trash_path).is_err() {
+    copy_path(path, &trash_path)?;
+    delete_path(path)?;
+  }
+  Ok(trash_path)
+}
+
+/// Restore a file from trash to its original location.
+pub fn restore_from_trash(trash_path: &Path, original: &Path) -> io::Result<()> {
+  // If original location already exists, find a unique path
+  let dest = if original.exists() {
+    unique_dest_path(original)
+  } else {
+    original.to_path_buf()
+  };
+
+  // Try rename first, fall back to copy+delete for cross-filesystem moves
+  if std::fs::rename(trash_path, &dest).is_err() {
+    copy_path(trash_path, &dest)?;
+    delete_path(trash_path)?;
+  }
+  Ok(())
+}
+
+/// Delete a path (file or directory) permanently.
+pub fn delete_path(path: &Path) -> io::Result<()> {
+  if path.is_dir() {
+    std::fs::remove_dir_all(path)
+  } else {
+    std::fs::remove_file(path)
+  }
+}
+
 /// Returns a unique destination path by appending `_copy`, `_copy2`, etc.
 /// if the path already exists.
 pub fn unique_dest_path(dest: &Path) -> PathBuf {
@@ -148,6 +208,111 @@ mod tests {
     assert!(dst.join("sub").join("b.txt").exists());
     assert_eq!(fs::read_to_string(dst.join("a.txt")).unwrap(), "aaa");
     assert_eq!(fs::read_to_string(dst.join("sub").join("b.txt")).unwrap(), "bbb");
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_trash_dir_created() {
+    let trash = trash_dir().unwrap();
+    assert!(trash.exists());
+    assert!(trash.is_dir());
+  }
+
+  #[test]
+  fn test_move_to_trash_file() {
+    let dir = test_dir("trash_file");
+    let file = dir.join("delete_me.txt");
+    fs::write(&file, "goodbye").unwrap();
+    assert!(file.exists());
+
+    let trash_path = move_to_trash(&file).unwrap();
+    assert!(!file.exists());
+    assert!(trash_path.exists());
+    assert_eq!(fs::read_to_string(&trash_path).unwrap(), "goodbye");
+
+    // Cleanup
+    let _ = fs::remove_file(&trash_path);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_move_to_trash_dir() {
+    let dir = test_dir("trash_dir");
+    let subdir = dir.join("delete_me_dir");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join("inner.txt"), "inner").unwrap();
+    assert!(subdir.exists());
+
+    let trash_path = move_to_trash(&subdir).unwrap();
+    assert!(!subdir.exists());
+    assert!(trash_path.exists());
+    assert!(trash_path.join("inner.txt").exists());
+
+    // Cleanup
+    let _ = fs::remove_dir_all(&trash_path);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_restore_from_trash() {
+    let dir = test_dir("restore_trash");
+    let file = dir.join("restore_me.txt");
+    fs::write(&file, "restore this").unwrap();
+
+    let trash_path = move_to_trash(&file).unwrap();
+    assert!(!file.exists());
+
+    restore_from_trash(&trash_path, &file).unwrap();
+    assert!(file.exists());
+    assert!(!trash_path.exists());
+    assert_eq!(fs::read_to_string(&file).unwrap(), "restore this");
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_restore_conflict_gets_unique_name() {
+    let dir = test_dir("restore_conflict");
+    let file = dir.join("conflict.txt");
+    fs::write(&file, "original").unwrap();
+
+    let trash_path = move_to_trash(&file).unwrap();
+
+    // Create a new file at the original location
+    fs::write(&file, "new file").unwrap();
+
+    // Restore should succeed with a unique name
+    restore_from_trash(&trash_path, &file).unwrap();
+    assert!(file.exists());
+    assert!(dir.join("conflict_copy.txt").exists());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_delete_path_file() {
+    let dir = test_dir("delete_file_perm");
+    let file = dir.join("perm_delete.txt");
+    fs::write(&file, "delete").unwrap();
+    assert!(file.exists());
+
+    delete_path(&file).unwrap();
+    assert!(!file.exists());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_delete_path_dir() {
+    let dir = test_dir("delete_dir_perm");
+    let subdir = dir.join("perm_delete_dir");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join("inner.txt"), "inner").unwrap();
+    assert!(subdir.exists());
+
+    delete_path(&subdir).unwrap();
+    assert!(!subdir.exists());
+
     let _ = fs::remove_dir_all(&dir);
   }
 }
