@@ -69,6 +69,54 @@ impl Default for ChmodState {
 /// Maximum number of entries in the directory history
 const HISTORY_LIMIT: usize = 50;
 
+/// State for a single pane in dual-pane mode
+pub struct Pane {
+  pub tree: FileTree,
+  pub cursor: usize,
+  pub scroll_offset: usize,
+  pub search_query: String,
+}
+
+impl Pane {
+  pub fn new(root: PathBuf) -> Result<Self> {
+    let tree = FileTree::new(root)?;
+    Ok(Self {
+      tree,
+      cursor: 0,
+      scroll_offset: 0,
+      search_query: String::new(),
+    })
+  }
+
+  pub fn visible_entries(&self) -> Vec<usize> {
+    if self.search_query.is_empty() {
+      return (0..self.tree.entries.len()).collect();
+    }
+    let query = self.search_query.to_lowercase();
+    self
+      .tree
+      .entries
+      .iter()
+      .enumerate()
+      .filter(|(_, e)| e.name.to_lowercase().contains(&query))
+      .map(|(i, _)| i)
+      .collect()
+  }
+
+  pub fn adjust_scroll(&mut self, viewport_height: usize) {
+    let visible = viewport_height.saturating_sub(2); // borders
+    if visible == 0 {
+      return;
+    }
+    if self.cursor < self.scroll_offset {
+      self.scroll_offset = self.cursor;
+    } else if self.cursor >= self.scroll_offset + visible {
+      self.scroll_offset = self.cursor - visible + 1;
+    }
+  }
+}
+
+
 pub struct App {
   pub tree: FileTree,
   pub cursor: usize,
@@ -107,6 +155,12 @@ pub struct App {
   history_forward: Vec<PathBuf>,
   pub breadcrumb_segments: Vec<BreadcrumbSegment>,
   pub breadcrumb_truncated: bool,
+  // Dual-pane state
+  pub dual_pane_mode: bool,
+  pub active_pane: usize,
+  pub right_pane: Option<Pane>,
+  pub dual_left_ratio: u16,
+  pub dual_right_ratio: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +213,11 @@ impl App {
       history_forward: Vec::new(),
       breadcrumb_segments,
       breadcrumb_truncated: false,
+      dual_pane_mode: false,
+      active_pane: 0,
+      right_pane: None,
+      dual_left_ratio: config.tree_ratio,
+      dual_right_ratio: config.tree_ratio,
     })
   }
 
@@ -179,31 +238,63 @@ impl App {
       Action::ScrollPreviewUp => self.preview.scroll_up(3),
       Action::ToggleHidden => self.toggle_hidden()?,
       Action::GoToTop => {
-        self.cursor = 0;
-        self.tree_scroll_offset = 0;
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.cursor = 0;
+            pane.scroll_offset = 0;
+          }
+        } else {
+          self.cursor = 0;
+          self.tree_scroll_offset = 0;
+        }
         self.input_mode = InputMode::Normal;
         self.update_preview();
       }
       Action::GoToBottom => {
-        if !self.tree.entries.is_empty() {
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane
+            && !pane.tree.entries.is_empty()
+          {
+            pane.cursor = pane.visible_entries().len().saturating_sub(1);
+            pane.adjust_scroll(self.viewport_height);
+          }
+        } else if !self.tree.entries.is_empty() {
           self.cursor = self.visible_entries().len().saturating_sub(1);
           self.adjust_scroll();
-          self.update_preview();
         }
+        self.update_preview();
       }
       Action::GPress => {
         self.input_mode = InputMode::GPrefix;
       }
       Action::SearchStart => {
         self.input_mode = InputMode::Search;
-        self.search_query.clear();
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.search_query.clear();
+          }
+        } else {
+          self.search_query.clear();
+        }
       }
       Action::SearchInput(c) => {
-        self.search_query.push(c);
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.search_query.push(c);
+          }
+        } else {
+          self.search_query.push(c);
+        }
         self.apply_search_filter();
       }
       Action::SearchBackspace => {
-        self.search_query.pop();
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.search_query.pop();
+          }
+        } else {
+          self.search_query.pop();
+        }
         self.apply_search_filter();
       }
       Action::SearchConfirm => {
@@ -211,11 +302,23 @@ impl App {
         // Enter directory while filter is still active so cursor resolves correctly
         self.enter_directory()?;
         // Clear query for non-dir entries (enter_directory already clears for dirs)
-        self.search_query.clear();
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.search_query.clear();
+          }
+        } else {
+          self.search_query.clear();
+        }
       }
       Action::SearchCancel => {
         self.input_mode = InputMode::Normal;
-        self.search_query.clear();
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.search_query.clear();
+          }
+        } else {
+          self.search_query.clear();
+        }
       }
       Action::YankPath => self.yank_path(),
       Action::OpenEditor => {
@@ -237,10 +340,37 @@ impl App {
         self.should_suspend = Some(SuspendAction::Shell(dir));
       }
       Action::ShrinkTree => {
-        self.tree_ratio = self.tree_ratio.saturating_sub(self.ratio_step).max(self.min_tree_ratio);
+        if self.dual_pane_mode {
+          if self.active_pane == 0 {
+            // Shrink left pane (right edge moves left)
+            self.dual_left_ratio = self.dual_left_ratio
+              .saturating_sub(self.ratio_step)
+              .max(self.min_tree_ratio);
+          } else {
+            // Shrink right pane (right edge moves left, preview grows)
+            self.dual_right_ratio = self.dual_right_ratio
+              .saturating_sub(self.ratio_step)
+              .max(self.min_tree_ratio);
+          }
+        } else {
+          self.tree_ratio = self.tree_ratio.saturating_sub(self.ratio_step).max(self.min_tree_ratio);
+        }
       }
       Action::GrowTree => {
-        self.tree_ratio = (self.tree_ratio + self.ratio_step).min(self.max_tree_ratio);
+        if self.dual_pane_mode {
+          let preview_min = 10u16;
+          if self.active_pane == 0 {
+            // Grow left pane (right edge moves right, right pane shrinks)
+            let max_left = (100 - self.dual_right_ratio - preview_min).min(self.max_tree_ratio);
+            self.dual_left_ratio = (self.dual_left_ratio + self.ratio_step).min(max_left);
+          } else {
+            // Grow right pane (right edge moves right, preview shrinks)
+            let max_right = (100 - self.dual_left_ratio - preview_min).min(self.max_tree_ratio);
+            self.dual_right_ratio = (self.dual_right_ratio + self.ratio_step).min(max_right);
+          }
+        } else {
+          self.tree_ratio = (self.tree_ratio + self.ratio_step).min(self.max_tree_ratio);
+        }
       }
       Action::ToggleHelp => {
         self.show_help = !self.show_help;
@@ -411,6 +541,8 @@ impl App {
       Action::HistoryBack => self.history_go_back()?,
       Action::HistoryForward => self.history_go_forward()?,
       Action::BreadcrumbSelect(index) => self.breadcrumb_select(index)?,
+      Action::SwitchPane => self.switch_pane(),
+      Action::ToggleDualPane => self.toggle_dual_pane()?,
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
@@ -508,6 +640,57 @@ impl App {
       self.update_breadcrumbs();
     }
     Ok(())
+  }
+
+  fn switch_pane(&mut self) {
+    if !self.dual_pane_mode || self.right_pane.is_none() {
+      return;
+    }
+
+    // Save current pane state
+    if self.active_pane == 0 {
+      // Store left pane state and switch to right
+      self.active_pane = 1;
+    } else {
+      // Store right pane state and switch to left
+      self.active_pane = 0;
+    }
+    self.preview.invalidate();
+    self.update_preview();
+    self.set_status(format!("Pane: {}", if self.active_pane == 0 { "left" } else { "right" }));
+  }
+
+  fn toggle_dual_pane(&mut self) -> Result<()> {
+    if self.dual_pane_mode {
+      // Disable dual-pane mode
+      self.dual_pane_mode = false;
+      self.active_pane = 0;
+      self.right_pane = None;
+      self.set_status("Dual-pane mode: off".to_string());
+    } else {
+      // Enable dual-pane mode
+      let root = self.tree.root.clone();
+      self.right_pane = Some(Pane::new(root)?);
+      self.dual_pane_mode = true;
+      self.active_pane = 0;
+      self.set_status("Dual-pane mode: on".to_string());
+    }
+    self.preview.invalidate();
+    self.update_preview();
+    Ok(())
+  }
+
+  /// Returns the inactive pane's current directory (for copy/move destination)
+  #[allow(dead_code)] // Used in tests, will be used for copy/move operations
+  pub fn inactive_pane_dir(&self) -> Option<PathBuf> {
+    if !self.dual_pane_mode {
+      return None;
+    }
+    if self.active_pane == 0 {
+      self.right_pane.as_ref().map(|p| p.tree.root.clone())
+    } else {
+      Some(self.tree.root.clone())
+    }
   }
 
   fn favorites_add(&mut self) {
@@ -673,18 +856,35 @@ impl App {
   }
 
   fn move_cursor(&mut self, delta: i32) {
-    let entries = self.visible_entries();
-    if entries.is_empty() {
-      return;
-    }
-    let len = entries.len();
-    if delta > 0 {
-      self.cursor = (self.cursor + delta as usize).min(len - 1);
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if entries.is_empty() {
+          return;
+        }
+        let len = entries.len();
+        if delta > 0 {
+          pane.cursor = (pane.cursor + delta as usize).min(len - 1);
+        } else {
+          pane.cursor = pane.cursor.saturating_sub((-delta) as usize);
+        }
+        pane.adjust_scroll(self.viewport_height);
+        self.update_preview();
+      }
     } else {
-      self.cursor = self.cursor.saturating_sub((-delta) as usize);
+      let entries = self.visible_entries();
+      if entries.is_empty() {
+        return;
+      }
+      let len = entries.len();
+      if delta > 0 {
+        self.cursor = (self.cursor + delta as usize).min(len - 1);
+      } else {
+        self.cursor = self.cursor.saturating_sub((-delta) as usize);
+      }
+      self.adjust_scroll();
+      self.update_preview();
     }
-    self.adjust_scroll();
-    self.update_preview();
   }
 
   fn adjust_scroll(&mut self) {
@@ -700,100 +900,194 @@ impl App {
   }
 
   fn enter_or_expand(&mut self) -> Result<()> {
-    let entries = self.visible_entries();
-    if let Some(idx) = entries.get(self.cursor).copied() {
-      if self.tree.entries[idx].is_dir {
-        self.tree.toggle_expand(idx)?;
-        self.update_preview();
-      } else {
-        // File selected - just update preview
-        self.update_preview();
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if let Some(idx) = entries.get(pane.cursor).copied() {
+          if pane.tree.entries[idx].is_dir {
+            pane.tree.toggle_expand(idx)?;
+            self.update_preview();
+          } else {
+            self.update_preview();
+          }
+        }
+      }
+    } else {
+      let entries = self.visible_entries();
+      if let Some(idx) = entries.get(self.cursor).copied() {
+        if self.tree.entries[idx].is_dir {
+          self.tree.toggle_expand(idx)?;
+          self.update_preview();
+        } else {
+          self.update_preview();
+        }
       }
     }
     Ok(())
   }
 
   fn expand_only(&mut self) -> Result<()> {
-    let entries = self.visible_entries();
-    if let Some(idx) = entries.get(self.cursor).copied() {
-      if self.tree.entries[idx].is_dir && !self.tree.entries[idx].expanded {
-        self.tree.toggle_expand(idx)?;
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if let Some(idx) = entries.get(pane.cursor).copied() {
+          if pane.tree.entries[idx].is_dir && !pane.tree.entries[idx].expanded {
+            pane.tree.toggle_expand(idx)?;
+          }
+          self.update_preview();
+        }
       }
-      self.update_preview();
+    } else {
+      let entries = self.visible_entries();
+      if let Some(idx) = entries.get(self.cursor).copied() {
+        if self.tree.entries[idx].is_dir && !self.tree.entries[idx].expanded {
+          self.tree.toggle_expand(idx)?;
+        }
+        self.update_preview();
+      }
     }
     Ok(())
   }
 
   fn enter_directory(&mut self) -> Result<()> {
-    let entries = self.visible_entries();
-    if let Some(idx) = entries.get(self.cursor).copied() {
-      if self.tree.entries[idx].is_dir {
-        self.push_history(self.tree.root.clone());
-        self.tree.enter_dir(idx)?;
-        self.search_query.clear();
-        self.cursor = 0;
-        self.tree_scroll_offset = 0;
-        self.preview.invalidate();
-        self.update_preview();
-        self.update_breadcrumbs();
-      } else {
-        self.update_preview();
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if let Some(idx) = entries.get(pane.cursor).copied() {
+          if pane.tree.entries[idx].is_dir {
+            pane.tree.enter_dir(idx)?;
+            pane.search_query.clear();
+            pane.cursor = 0;
+            pane.scroll_offset = 0;
+            self.preview.invalidate();
+            self.update_preview();
+          } else {
+            self.update_preview();
+          }
+        }
+      }
+    } else {
+      let entries = self.visible_entries();
+      if let Some(idx) = entries.get(self.cursor).copied() {
+        if self.tree.entries[idx].is_dir {
+          self.push_history(self.tree.root.clone());
+          self.tree.enter_dir(idx)?;
+          self.search_query.clear();
+          self.cursor = 0;
+          self.tree_scroll_offset = 0;
+          self.preview.invalidate();
+          self.update_preview();
+          self.update_breadcrumbs();
+        } else {
+          self.update_preview();
+        }
       }
     }
     Ok(())
   }
 
   fn go_parent_or_collapse(&mut self) -> Result<()> {
-    let entries = self.visible_entries();
-    if let Some(&idx) = entries.get(self.cursor) {
-      let entry = &self.tree.entries[idx];
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if let Some(&idx) = entries.get(pane.cursor) {
+          let entry = &pane.tree.entries[idx];
 
-      // Case 1: Nested item (depth > 0) -> move cursor to parent, keep tree expanded
-      if entry.depth > 0
-        && let Some(parent_idx) = self.tree.find_parent_index(idx)
-        && let Some(cursor_pos) = entries.iter().position(|&i| i == parent_idx)
-      {
-        self.cursor = cursor_pos;
+          // Case 1: Nested item (depth > 0) -> move cursor to parent
+          if entry.depth > 0
+            && let Some(parent_idx) = pane.tree.find_parent_index(idx)
+            && let Some(cursor_pos) = entries.iter().position(|&i| i == parent_idx)
+          {
+            pane.cursor = cursor_pos;
+            pane.adjust_scroll(self.viewport_height);
+            self.update_preview();
+            return Ok(());
+          }
+
+          // Case 2: Root-level expanded directory -> collapse it
+          if entry.is_dir && entry.expanded {
+            pane.tree.toggle_expand(idx)?;
+            self.update_preview();
+            return Ok(());
+          }
+        }
+
+        // Case 3: At root level or parent not visible -> change tree root
+        if let Some(old_root) = pane.tree.go_parent()? {
+          pane.search_query.clear();
+          pane.cursor = pane
+            .tree
+            .entries
+            .iter()
+            .position(|e| e.path == old_root)
+            .unwrap_or(0);
+          pane.scroll_offset = 0;
+          pane.adjust_scroll(self.viewport_height);
+          self.preview.invalidate();
+          self.update_preview();
+        }
+      }
+    } else {
+      let entries = self.visible_entries();
+      if let Some(&idx) = entries.get(self.cursor) {
+        let entry = &self.tree.entries[idx];
+
+        // Case 1: Nested item (depth > 0) -> move cursor to parent, keep tree expanded
+        if entry.depth > 0
+          && let Some(parent_idx) = self.tree.find_parent_index(idx)
+          && let Some(cursor_pos) = entries.iter().position(|&i| i == parent_idx)
+        {
+          self.cursor = cursor_pos;
+          self.adjust_scroll();
+          self.update_preview();
+          return Ok(());
+        }
+
+        // Case 2: Root-level expanded directory -> collapse it
+        if entry.is_dir && entry.expanded {
+          self.tree.toggle_expand(idx)?;
+          self.update_preview();
+          return Ok(());
+        }
+      }
+
+      // Case 3: At root level or parent not visible -> change tree root
+      if let Some(old_root) = self.tree.go_parent()? {
+        // Push current location to forward history so we can return with HistoryForward
+        if self.history_forward.last() != Some(&old_root) {
+          self.history_forward.push(old_root.clone());
+        }
+        self.search_query.clear();
+        self.cursor = self
+          .tree
+          .entries
+          .iter()
+          .position(|e| e.path == old_root)
+          .unwrap_or(0);
+        self.tree_scroll_offset = 0;
         self.adjust_scroll();
+        self.preview.invalidate();
         self.update_preview();
-        return Ok(());
+        self.update_breadcrumbs();
       }
-
-      // Case 2: Root-level expanded directory -> collapse it
-      if entry.is_dir && entry.expanded {
-        self.tree.toggle_expand(idx)?;
-        self.update_preview();
-        return Ok(());
-      }
-    }
-
-    // Case 3: At root level or parent not visible -> change tree root
-    if let Some(old_root) = self.tree.go_parent()? {
-      // Push current location to forward history so we can return with HistoryForward
-      if self.history_forward.last() != Some(&old_root) {
-        self.history_forward.push(old_root.clone());
-      }
-      self.search_query.clear();
-      self.cursor = self
-        .tree
-        .entries
-        .iter()
-        .position(|e| e.path == old_root)
-        .unwrap_or(0);
-      self.tree_scroll_offset = 0;
-      self.adjust_scroll();
-      self.preview.invalidate();
-      self.update_preview();
-      self.update_breadcrumbs();
     }
     Ok(())
   }
 
   fn toggle_hidden(&mut self) -> Result<()> {
-    self.tree.toggle_hidden()?;
-    self.cursor = self.cursor.min(self.tree.entries.len().saturating_sub(1));
-    self.preview.invalidate();
-    self.update_preview();
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        pane.tree.toggle_hidden()?;
+        pane.cursor = pane.cursor.min(pane.tree.entries.len().saturating_sub(1));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+    } else {
+      self.tree.toggle_hidden()?;
+      self.cursor = self.cursor.min(self.tree.entries.len().saturating_sub(1));
+      self.preview.invalidate();
+      self.update_preview();
+    }
     Ok(())
   }
 
@@ -809,7 +1103,22 @@ impl App {
 
   fn apply_search_filter(&mut self) {
     // Move cursor to first matching entry
-    if !self.search_query.is_empty() {
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane
+        && !pane.search_query.is_empty()
+      {
+        let query = pane.search_query.to_lowercase();
+        let entries = pane.visible_entries();
+        for &idx in &entries {
+          if pane.tree.entries[idx].name.to_lowercase().contains(&query) {
+            pane.cursor = entries.iter().position(|&i| i == idx).unwrap_or(0);
+            pane.adjust_scroll(self.viewport_height);
+            self.update_preview();
+            return;
+          }
+        }
+      }
+    } else if !self.search_query.is_empty() {
       let query = self.search_query.to_lowercase();
       let entries = self.visible_entries();
       for &idx in &entries {
@@ -1216,14 +1525,33 @@ impl App {
   }
 
   fn update_preview(&mut self) {
-    let entries = self.visible_entries();
-    if let Some(&idx) = entries.get(self.cursor) {
-      let path = self.tree.entries[idx].path.clone();
-      self.preview.request_preview(&path, self.picker.as_ref(), self.tree.git_repo());
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if let Some(&idx) = entries.get(pane.cursor) {
+          let path = pane.tree.entries[idx].path.clone();
+          self.preview.request_preview(&path, self.picker.as_ref(), pane.tree.git_repo());
+        }
+      }
+    } else {
+      let entries = self.visible_entries();
+      if let Some(&idx) = entries.get(self.cursor) {
+        let path = self.tree.entries[idx].path.clone();
+        self.preview.request_preview(&path, self.picker.as_ref(), self.tree.git_repo());
+      }
     }
   }
 
   pub fn selected_entry(&self) -> Option<&crate::fs::FileEntry> {
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        return entries
+          .get(pane.cursor)
+          .and_then(|&idx| pane.tree.entries.get(idx));
+      }
+      return None;
+    }
     let entries = self.visible_entries();
     entries
       .get(self.cursor)
@@ -2528,6 +2856,18 @@ mod tests {
     cleanup_test_dir(&dir);
   }
 
+  // === Dual-pane tests ===
+
+  #[test]
+  fn test_app_starts_in_single_pane_mode() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.dual_pane_mode);
+    assert_eq!(app.active_pane, 0);
+    assert!(app.right_pane.is_none());
+    cleanup_test_dir(&dir);
+  }
+
   #[test]
   fn test_toggle_blame() {
     let dir = setup_test_dir();
@@ -2544,6 +2884,17 @@ mod tests {
   }
 
   #[test]
+  fn test_toggle_dual_pane_enables_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    assert!(app.dual_pane_mode);
+    assert_eq!(app.active_pane, 0);
+    assert!(app.right_pane.is_some());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_start_opens_dialog() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2556,6 +2907,19 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Chmod);
     assert_eq!(app.chmod_state.path, path);
     assert!(!app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_dual_pane_twice_disables_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    assert!(app.dual_pane_mode);
+    app.update(Action::ToggleDualPane).unwrap();
+    assert!(!app.dual_pane_mode);
+    assert!(app.right_pane.is_none());
+    assert_eq!(app.active_pane, 0);
     cleanup_test_dir(&dir);
   }
 
@@ -2662,6 +3026,16 @@ mod tests {
   }
 
   #[test]
+  fn test_switch_pane_in_single_mode_is_noop() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.active_pane, 0);
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 0); // Should not change
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_toggle_custom_ignore_action() {
     let dir = setup_test_dir();
     fs::write(dir.join("debug.log"), "log").unwrap();
@@ -2739,6 +3113,21 @@ mod tests {
   }
 
   #[test]
+  fn test_switch_pane_toggles_active_pane() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    assert_eq!(app.active_pane, 0);
+
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 1);
+
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_toggle_recursive_only_for_dirs() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2749,6 +3138,17 @@ mod tests {
     assert!(!app.chmod_state.is_dir);
     app.update(Action::ChmodToggleRecursive).unwrap();
     assert!(!app.chmod_state.recursive); // Should not toggle for files
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_right_pane_initialized_with_same_root() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    let right_pane = app.right_pane.as_ref().unwrap();
+    assert_eq!(right_pane.tree.root, app.tree.root);
     cleanup_test_dir(&dir);
   }
 
@@ -2767,6 +3167,25 @@ mod tests {
   }
 
   #[test]
+  fn test_pane_navigates_independently() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    // Move left pane cursor
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    assert_eq!(app.cursor, 2);
+
+    // Switch to right pane
+    app.update(Action::SwitchPane).unwrap();
+    // Right pane cursor should still be at 0
+    let right_pane = app.right_pane.as_ref().unwrap();
+    assert_eq!(right_pane.cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_chmod_close() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
@@ -2774,6 +3193,34 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Chmod);
     app.update(Action::ChmodClose).unwrap();
     assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_inactive_pane_dir_returns_none_in_single_mode() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.inactive_pane_dir().is_none());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_inactive_pane_dir_returns_other_pane_root() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    // Active pane is left (0), inactive is right
+    let inactive_dir = app.inactive_pane_dir();
+    assert!(inactive_dir.is_some());
+    assert_eq!(inactive_dir.unwrap(), dir);
+
+    // Switch to right pane
+    app.update(Action::SwitchPane).unwrap();
+    // Now inactive pane is left
+    let inactive_dir = app.inactive_pane_dir();
+    assert!(inactive_dir.is_some());
+    assert_eq!(inactive_dir.unwrap(), dir);
     cleanup_test_dir(&dir);
   }
 
@@ -3201,6 +3648,24 @@ mod tests {
     let last = app.breadcrumb_segments.last().unwrap();
     assert_eq!(last.name, "aaa_dir");
 
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_preserves_left_pane_state() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move cursor and expand a dir
+    app.update(Action::MoveDown).unwrap();
+    let cursor_before = app.cursor;
+
+    // Enable dual-pane
+    app.update(Action::ToggleDualPane).unwrap();
+    assert_eq!(app.cursor, cursor_before);
+
+    // Disable dual-pane
+    app.update(Action::ToggleDualPane).unwrap();
+    assert_eq!(app.cursor, cursor_before);
     cleanup_test_dir(&dir);
   }
 }

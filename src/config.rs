@@ -357,6 +357,8 @@ x = "extract_archive"
 "-" = "history_back"
 "+" = "history_forward"
 m = "toggle_markdown_mode"
+tab = "switch_pane"
+f6 = "toggle_dual_pane"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -644,6 +646,8 @@ mod tests {
       (KeyCode::Char('p'), KeyModifiers::CONTROL, Action::ChmodStart),
       (KeyCode::Char('-'), n, Action::HistoryBack),
       (KeyCode::Char('+'), n, Action::HistoryForward),  // shift+= produces '+'
+      (KeyCode::Tab, n, Action::SwitchPane),
+      (KeyCode::F(6), n, Action::ToggleDualPane),
     ];
 
     for (code, mods, action) in expected {
@@ -1132,5 +1136,19 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('I'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleCustomIgnore));
+  }
+
+  #[test]
+  fn test_default_tab_binds_switch_pane() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Tab, modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::SwitchPane));
+  }
+
+  #[test]
+  fn test_default_f6_binds_toggle_dual_pane() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::F(6), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleDualPane));
   }
 }
