@@ -908,6 +908,108 @@ impl App {
     self.set_status("Added to favorites".to_string());
   }
 
+  fn saved_searches_open(&mut self) {
+    self.input_mode = InputMode::SavedSearches;
+    self.saved_searches_cursor = 0;
+  }
+
+  fn saved_searches_close(&mut self) {
+    self.input_mode = InputMode::Normal;
+  }
+
+  fn saved_searches_move(&mut self, delta: i32) {
+    let len = self.saved_searches.len();
+    if len == 0 {
+      return;
+    }
+    if delta > 0 {
+      self.saved_searches_cursor = (self.saved_searches_cursor + delta as usize).min(len - 1);
+    } else {
+      self.saved_searches_cursor = self.saved_searches_cursor.saturating_sub((-delta) as usize);
+    }
+  }
+
+  fn saved_searches_select(&mut self) {
+    if let Some(search) = self.saved_searches.get(self.saved_searches_cursor).cloned() {
+      self.apply_saved_search(&search);
+      self.input_mode = InputMode::Normal;
+    }
+  }
+
+  fn saved_searches_quick_select(&mut self, n: u8) {
+    let index = (n - 1) as usize;
+    if let Some(search) = self.saved_searches.get(index).cloned() {
+      self.apply_saved_search(&search);
+      self.input_mode = InputMode::Normal;
+    }
+  }
+
+  fn apply_saved_search(&mut self, search: &SavedSearch) {
+    self.search_query = search.pattern.clone();
+    self.apply_search_filter();
+    self.set_status(format!("Applied: {}", search.name));
+  }
+
+  fn saved_searches_remove(&mut self) -> Result<()> {
+    if self.saved_searches_cursor < self.saved_searches.len() {
+      self.saved_searches.remove(self.saved_searches_cursor);
+      if let Err(e) = self.saved_searches.save() {
+        self.set_status(format!("Save failed: {e}"));
+        return Ok(());
+      }
+      self.wrote_config = true;
+      if !self.saved_searches.is_empty() {
+        self.saved_searches_cursor = self.saved_searches_cursor.min(self.saved_searches.len() - 1);
+      } else {
+        self.saved_searches_cursor = 0;
+      }
+    }
+    Ok(())
+  }
+
+  fn saved_searches_save_start(&mut self) {
+    if self.search_query.is_empty() {
+      self.set_status("No search to save".to_string());
+      return;
+    }
+    self.prompt_input.clear();
+    self.prompt_cursor = 0;
+    self.prompt_kind = Some(PromptKind::SaveSearch);
+    self.input_mode = InputMode::Prompt;
+  }
+
+  fn execute_save_search(&mut self) -> Result<()> {
+    let name = self.prompt_input.trim().to_string();
+    if name.is_empty() {
+      self.cancel_prompt();
+      self.set_status("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let search = SavedSearch::new(&name, &self.search_query);
+    self.saved_searches.add(search);
+
+    if let Err(e) = self.saved_searches.save() {
+      self.cancel_prompt();
+      self.set_status(format!("Save failed: {e}"));
+      return Ok(());
+    }
+
+    self.wrote_config = true;
+    self.cancel_prompt();
+    self.set_status(format!("Saved search: {name}"));
+    Ok(())
+  }
+
+  pub fn reload_saved_searches(&mut self) {
+    self.saved_searches = SavedSearches::load();
+    if self.saved_searches.is_empty() {
+      self.saved_searches_cursor = 0;
+    } else {
+      self.saved_searches_cursor = self.saved_searches_cursor.min(self.saved_searches.len() - 1);
+    }
+  }
+
   fn open_default_action(&mut self) -> Result<()> {
     let entries = self.visible_entries();
     if let Some(idx) = entries.get(self.cursor).copied() {

@@ -12,7 +12,7 @@ use notify::{RecommendedWatcher, Watcher};
 use crate::action::Action;
 use crate::config::{Config, normalize_key_event};
 
-const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites"];
+const WATCHED_FILES: &[&str] = &["config.toml", "apps.toml", "favorites", "searches.toml"];
 
 pub enum Event {
   Key(KeyEvent),
