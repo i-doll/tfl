@@ -5,6 +5,7 @@ pub mod hex;
 pub mod image;
 pub mod markdown;
 pub mod metadata;
+pub mod structured;
 pub mod text;
 
 use std::collections::HashMap;
@@ -50,6 +51,10 @@ pub struct PreviewContent {
   pub image_metadata: Option<ImageMetadata>,
   pub git_commits: Vec<GitCommit>,
   pub blame_data: Option<BlameData>,
+  /// Raw (unformatted) lines for structured data files, if formatting was applied.
+  pub raw_lines: Option<Vec<Line<'static>>>,
+  /// Whether this file is a structured data file (JSON/TOML).
+  pub is_structured: bool,
 }
 
 pub struct PreviewState {
@@ -60,6 +65,8 @@ pub struct PreviewState {
   pub image_rx: Option<mpsc::Receiver<self::image::ImageLoadResult>>,
   pub blame_enabled: bool,
   pub markdown_rendered: bool,
+  /// Whether to show formatted (pretty-printed) view for structured data.
+  pub show_formatted: bool,
   highlighter: SyntaxHighlighter,
   cache: HashMap<PathBuf, PreviewContent>,
   cache_order: Vec<PathBuf>,
@@ -78,6 +85,7 @@ impl PreviewState {
       image_rx: None,
       blame_enabled: false,
       markdown_rendered: true,
+      show_formatted: true,
       highlighter: SyntaxHighlighter::new(),
       cache: HashMap::new(),
       cache_order: Vec::new(),
@@ -89,6 +97,30 @@ impl PreviewState {
   pub fn toggle_blame(&mut self) {
     self.blame_enabled = !self.blame_enabled;
     self.scroll_offset = 0;
+  }
+
+  /// Toggles between formatted and raw view for structured data files.
+  /// Returns true if the current file is a structured data file.
+  pub fn toggle_formatted(&mut self) -> bool {
+    if let Some(content) = self.current_path.as_ref().and_then(|p| self.cache.get(p))
+      && content.is_structured
+    {
+      self.show_formatted = !self.show_formatted;
+      self.scroll_offset = 0;
+      return true;
+    }
+    false
+  }
+
+  /// Returns the appropriate lines to display based on formatted/raw mode.
+  pub fn get_display_lines(&self) -> Option<&Vec<Line<'static>>> {
+    let content = self.get_content()?;
+    if content.is_structured && !self.show_formatted {
+      // Show raw lines if available and not in formatted mode
+      content.raw_lines.as_ref().or(Some(&content.lines))
+    } else {
+      Some(&content.lines)
+    }
   }
 
   pub fn request_preview(&mut self, path: &Path, picker: Option<&Picker>, git_repo: Option<&GitRepo>) {
@@ -148,6 +180,8 @@ impl PreviewState {
           image_metadata,
           git_commits,
           blame_data: None,
+          raw_lines: None,
+          is_structured: false,
         })
       }
       PreviewType::Binary => self.load_hex(path, git_repo),
@@ -165,6 +199,8 @@ impl PreviewState {
           image_metadata: None,
           git_commits,
           blame_data: None,
+          raw_lines: None,
+          is_structured: false,
         })
       }
       PreviewType::Empty => Some(PreviewContent {
@@ -177,6 +213,8 @@ impl PreviewState {
         image_metadata: None,
         git_commits,
         blame_data: None,
+        raw_lines: None,
+        is_structured: false,
       }),
       PreviewType::Error(ref msg) => Some(PreviewContent {
         lines: vec![Line::from(format!(" Error: {msg}"))],
@@ -188,6 +226,8 @@ impl PreviewState {
         image_metadata: None,
         git_commits: Vec::new(),
         blame_data: None,
+        raw_lines: None,
+        is_structured: false,
       }),
     };
 
@@ -210,6 +250,8 @@ impl PreviewState {
           image_metadata: None,
           git_commits: Vec::new(),
           blame_data: None,
+          raw_lines: None,
+          is_structured: false,
         });
       }
     };
@@ -217,11 +259,40 @@ impl PreviewState {
     let line_count = content.lines().count();
     let truncated: String = content.lines().take(MAX_TEXT_LINES).collect::<Vec<_>>().join("\n");
     let ext = get_extension(path);
-    let lines = self.highlighter.highlight(&truncated, &ext);
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let metadata = get_file_metadata_with_lines(path, line_count);
     let git_commits = get_git_commits(git_repo, path, 3);
     let blame_data = git_repo.and_then(|repo| blame::get_blame(repo, path));
+
+    // Check if this is a structured data file (JSON/TOML)
+    let is_structured = structured::is_structured_data(&ext);
+
+    let (lines, raw_lines) = if is_structured {
+      // Try to format the content
+      match structured::format_structured(&content, &ext) {
+        Some(structured::FormatResult::Formatted { content: formatted, extension: fmt_ext }) => {
+          // Truncate formatted content too
+          let fmt_truncated: String = formatted.lines().take(MAX_TEXT_LINES).collect::<Vec<_>>().join("\n");
+          let formatted_lines = self.highlighter.highlight(&fmt_truncated, &fmt_ext);
+          let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
+          (formatted_lines, Some(raw_highlighted))
+        }
+        Some(structured::FormatResult::Error(_)) => {
+          // Formatting failed, show raw content
+          let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
+          (raw_highlighted, None)
+        }
+        None => {
+          // Not a structured format (shouldn't happen given is_structured check)
+          let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
+          (raw_highlighted, None)
+        }
+      }
+    } else {
+      // Regular text file
+      let highlighted = self.highlighter.highlight(&truncated, &ext);
+      (highlighted, None)
+    };
 
     Some(PreviewContent {
       lines,
@@ -233,6 +304,8 @@ impl PreviewState {
       image_metadata: None,
       git_commits,
       blame_data,
+      raw_lines,
+      is_structured,
     })
   }
 
@@ -250,6 +323,8 @@ impl PreviewState {
           image_metadata: None,
           git_commits: Vec::new(),
           blame_data: None,
+          raw_lines: None,
+          is_structured: false,
         });
       }
     };
@@ -279,6 +354,8 @@ impl PreviewState {
       image_metadata: None,
       git_commits,
       blame_data,
+      raw_lines: None,
+      is_structured: false,
     })
   }
 
@@ -296,6 +373,8 @@ impl PreviewState {
           image_metadata: None,
           git_commits: Vec::new(),
           blame_data: None,
+          raw_lines: None,
+          is_structured: false,
         });
       }
     };
@@ -316,6 +395,8 @@ impl PreviewState {
       image_metadata: None,
       git_commits,
       blame_data: None,
+      raw_lines: None,
+      is_structured: false,
     })
   }
 
@@ -333,6 +414,8 @@ impl PreviewState {
       image_metadata: None,
       git_commits: Vec::new(),
       blame_data: None,
+      raw_lines: None,
+      is_structured: false,
     })
   }
 
@@ -353,6 +436,8 @@ impl PreviewState {
       image_metadata: None,
       git_commits,
       blame_data: None,
+      raw_lines: None,
+      is_structured: false,
     })
   }
 
@@ -389,6 +474,8 @@ impl PreviewState {
                 image_metadata: None,
                 git_commits: Vec::new(),
                 blame_data: None,
+                raw_lines: None,
+                is_structured: false,
               };
               self.insert_cache(path.clone(), content);
             }
@@ -677,6 +764,8 @@ mod tests {
         image_metadata: None,
         git_commits: Vec::new(),
         blame_data: None,
+        raw_lines: None,
+        is_structured: false,
       };
       state.insert_cache(path, content);
     }
@@ -704,5 +793,92 @@ mod tests {
 
     state.toggle_blame();
     assert_eq!(state.scroll_offset, 0);
+  }
+
+  #[test]
+  fn test_toggle_formatted_on_non_structured() {
+    let mut state = PreviewState::new();
+    let path = PathBuf::from("/fake/path/test.rs");
+    let content = PreviewContent {
+      lines: vec![],
+      preview_type: PreviewType::Text,
+      line_count: 0,
+      file_size: 0,
+      extension: "rs".to_string(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+
+    // Should return false for non-structured files
+    assert!(!state.toggle_formatted());
+    // show_formatted should remain true
+    assert!(state.show_formatted);
+  }
+
+  #[test]
+  fn test_toggle_formatted_on_structured() {
+    let mut state = PreviewState::new();
+    let path = PathBuf::from("/fake/path/test.json");
+    let content = PreviewContent {
+      lines: vec![Line::from("formatted")],
+      preview_type: PreviewType::Text,
+      line_count: 1,
+      file_size: 10,
+      extension: "json".to_string(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: Some(vec![Line::from("raw")]),
+      is_structured: true,
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+
+    assert!(state.show_formatted);
+    // Should return true for structured files
+    assert!(state.toggle_formatted());
+    assert!(!state.show_formatted);
+    // Toggle again
+    assert!(state.toggle_formatted());
+    assert!(state.show_formatted);
+  }
+
+  #[test]
+  fn test_get_display_lines_formatted() {
+    let mut state = PreviewState::new();
+    let path = PathBuf::from("/fake/path/test.json");
+    let content = PreviewContent {
+      lines: vec![Line::from("formatted")],
+      preview_type: PreviewType::Text,
+      line_count: 1,
+      file_size: 10,
+      extension: "json".to_string(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: Some(vec![Line::from("raw")]),
+      is_structured: true,
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+
+    // Should return formatted lines by default
+    let lines = state.get_display_lines().unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].spans[0].content, "formatted");
+
+    // Toggle to raw
+    state.toggle_formatted();
+    let lines = state.get_display_lines().unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].spans[0].content, "raw");
   }
 }

@@ -80,11 +80,10 @@ pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
     return;
   }
 
-  // Text-based preview
-  let lines: Vec<Line> = if let Some(content) = app.preview.get_content() {
+  // Text-based preview - use get_display_lines() for formatted/raw toggle
+  let lines: Vec<Line> = if let Some(display_lines) = app.preview.get_display_lines() {
     let scroll = app.preview.scroll_offset;
-    content
-      .lines
+    display_lines
       .iter()
       .skip(scroll)
       .take(content_area.height as usize)

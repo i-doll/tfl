@@ -3099,6 +3099,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "serde",
+ "serde_json",
  "syntect",
  "tar",
  "thiserror 2.0.18",
