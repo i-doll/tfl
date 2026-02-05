@@ -73,6 +73,7 @@ pub enum Action {
   HistoryBack,
   HistoryForward,
   BreadcrumbSelect(usize),
+  ToggleMarkdownMode,
   Resize(u16, u16),
   Tick,
   None,
@@ -122,6 +123,7 @@ impl Action {
       "history_back" => Some(Action::HistoryBack),
       "history_forward" => Some(Action::HistoryForward),
       "toggle_blame" => Some(Action::ToggleBlame),
+      "toggle_markdown_mode" => Some(Action::ToggleMarkdownMode),
       "none" => Some(Action::None),
       _ => None,
     }

@@ -415,6 +415,12 @@ impl App {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
       }
+      Action::ToggleMarkdownMode => {
+        if self.preview.toggle_markdown_mode() {
+          let mode = if self.preview.markdown_rendered { "rendered" } else { "raw" };
+          self.set_status(format!("Markdown: {mode}"));
+        }
+      }
       Action::None => {}
     }
     Ok(())

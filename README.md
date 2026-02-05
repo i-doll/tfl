@@ -22,6 +22,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 
 - **Vim-style navigation** with `hjkl`, `gg`/`G`, and search with `/`
 - **Syntax-highlighted text preview** via syntect
+- **Rendered markdown preview** with styled headings, lists, code blocks, and links
 - **Image preview** in supported terminals (Kitty graphics protocol)
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
@@ -90,6 +91,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Ctrl+p` | Change file permissions (chmod) |
 | `-` | Go back in directory history |
 | `+` | Go forward in directory history |
+| `m` | Toggle raw/rendered markdown preview |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
@@ -175,6 +177,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `ratatui-image` | Image rendering via Kitty graphics protocol |
 | `image` | Image decoding |
 | `syntect` | Syntax highlighting for text preview |
+| `pulldown-cmark` | Markdown parsing for rendered preview |
 | `infer` | MIME type detection for binary vs text |
 | `ignore` | .gitignore-aware file filtering |
 | `globset` | Glob pattern matching for custom ignore rules |
@@ -287,6 +290,7 @@ f = "favorites_open"
 "shift+i" = "toggle_custom_ignore"
 "-" = "history_back"
 "+" = "history_forward"
+m = "toggle_markdown_mode"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -324,7 +328,7 @@ Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option co
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -371,6 +375,7 @@ src/
     mod.rs         PreviewState: cache, debounce, type detection
     archive.rs     Archive listing and extraction (ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ)
     text.rs        Syntax-highlighted text preview
+    markdown.rs    Rendered markdown preview with styled elements
     image.rs       Async image loading (Kitty protocol)
     hex.rs         Hex dump for binary files
     directory.rs   Directory summary (file counts, sizes)
