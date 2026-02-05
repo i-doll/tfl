@@ -18,6 +18,8 @@ pub enum Action {
   SearchBackspace,
   SearchConfirm,
   SearchCancel,
+  SearchToggleRegex,
+  SearchToggleCase,
   YankPath,
   OpenEditor,
   OpenClaude,
