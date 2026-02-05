@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc;
@@ -39,6 +40,31 @@ pub struct Clipboard {
   pub op: Option<ClipboardOp>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ChmodState {
+  pub path: PathBuf,
+  pub original_mode: u32,
+  pub new_mode: u32,
+  pub is_dir: bool,
+  pub recursive: bool,
+  pub octal_mode: bool,
+  pub octal_input: String,
+}
+
+impl Default for ChmodState {
+  fn default() -> Self {
+    Self {
+      path: PathBuf::new(),
+      original_mode: 0o644,
+      new_mode: 0o644,
+      is_dir: false,
+      recursive: false,
+      octal_mode: false,
+      octal_input: String::new(),
+    }
+  }
+}
+
 pub struct App {
   pub tree: FileTree,
   pub cursor: usize,
@@ -70,6 +96,7 @@ pub struct App {
   pub wrote_config: bool,
   pub claude_yolo: bool,
   pub extracting: Option<ExtractingState>,
+  pub chmod_state: ChmodState,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +141,7 @@ impl App {
       wrote_config: false,
       claude_yolo: config.claude_yolo,
       extracting: None,
+      chmod_state: ChmodState::default(),
     })
   }
 
@@ -347,6 +375,14 @@ impl App {
       }
       Action::ExtractArchive => self.extract_archive_start(false)?,
       Action::ExtractAndDelete => self.extract_archive_start_confirm()?,
+      Action::ChmodStart => self.chmod_start(),
+      Action::ChmodToggleBit(bit) => self.chmod_toggle_bit(bit),
+      Action::ChmodDigit(c) => self.chmod_digit(c),
+      Action::ChmodOctalBackspace => self.chmod_octal_backspace(),
+      Action::ChmodToggleOctal => self.chmod_toggle_octal(),
+      Action::ChmodToggleRecursive => self.chmod_toggle_recursive(),
+      Action::ChmodApply => self.chmod_apply()?,
+      Action::ChmodClose => self.chmod_close(),
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
@@ -1148,6 +1184,155 @@ impl App {
       }
     }
     Ok(())
+  }
+
+  fn chmod_start(&mut self) {
+    let Some(entry) = self.selected_entry() else {
+      return;
+    };
+
+    let path = entry.path.clone();
+    let is_dir = entry.is_dir;
+
+    let Ok(metadata) = std::fs::metadata(&path) else {
+      self.set_status("Cannot read file metadata".to_string());
+      return;
+    };
+
+    let mode = metadata.permissions().mode();
+
+    self.chmod_state = ChmodState {
+      path,
+      original_mode: mode,
+      new_mode: mode,
+      is_dir,
+      recursive: false,
+      octal_mode: false,
+      octal_input: String::new(),
+    };
+    self.input_mode = InputMode::Chmod;
+  }
+
+  fn chmod_toggle_bit(&mut self, bit: u8) {
+    // Bit mapping:
+    // 0-2: owner r/w/x (shifts 8,7,6)
+    // 3-5: group r/w/x (shifts 5,4,3)
+    // 6-8: others r/w/x (shifts 2,1,0)
+    let shift = match bit {
+      0 => 8, // owner read
+      1 => 7, // owner write
+      2 => 6, // owner execute
+      3 => 5, // group read
+      4 => 4, // group write
+      5 => 3, // group execute
+      6 => 2, // others read
+      7 => 1, // others write
+      8 => 0, // others execute
+      _ => return,
+    };
+    self.chmod_state.new_mode ^= 1 << shift;
+    // Clear octal input when toggling bits
+    self.chmod_state.octal_input.clear();
+    self.chmod_state.octal_mode = false;
+  }
+
+  fn chmod_digit(&mut self, c: char) {
+    if self.chmod_state.octal_mode {
+      // In octal mode: append digit to input (max 4 for setuid/setgid/sticky)
+      if self.chmod_state.octal_input.len() < 4 {
+        self.chmod_state.octal_input.push(c);
+        self.apply_octal_input();
+      }
+    } else {
+      // Not in octal mode: toggle others permission bits
+      match c {
+        '4' => self.chmod_toggle_bit(6), // others read
+        '2' => self.chmod_toggle_bit(7), // others write
+        '1' => self.chmod_toggle_bit(8), // others execute
+        _ => {}
+      }
+    }
+  }
+
+  fn chmod_octal_backspace(&mut self) {
+    if self.chmod_state.octal_mode && !self.chmod_state.octal_input.is_empty() {
+      self.chmod_state.octal_input.pop();
+      self.apply_octal_input();
+    }
+  }
+
+  fn apply_octal_input(&mut self) {
+    if let Ok(mode) = u32::from_str_radix(&self.chmod_state.octal_input, 8) {
+      // Preserve file type bits, only update permission bits
+      let file_type = self.chmod_state.original_mode & !0o7777;
+      self.chmod_state.new_mode = file_type | (mode & 0o7777);
+    }
+  }
+
+  fn chmod_toggle_octal(&mut self) {
+    self.chmod_state.octal_mode = !self.chmod_state.octal_mode;
+    if self.chmod_state.octal_mode {
+      // Pre-fill octal input with current mode
+      self.chmod_state.octal_input = format!("{:03o}", self.chmod_state.new_mode & 0o777);
+    }
+  }
+
+  fn chmod_toggle_recursive(&mut self) {
+    if self.chmod_state.is_dir {
+      self.chmod_state.recursive = !self.chmod_state.recursive;
+    }
+  }
+
+  fn chmod_apply(&mut self) -> Result<()> {
+    let path = self.chmod_state.path.clone();
+    let new_mode = self.chmod_state.new_mode;
+    let recursive = self.chmod_state.recursive && self.chmod_state.is_dir;
+
+    if recursive {
+      self.chmod_recursive(&path, new_mode)?;
+    } else {
+      self.chmod_single(&path, new_mode)?;
+    }
+
+    let mode_str = format!("{:03o}", new_mode & 0o777);
+    if recursive {
+      self.set_status(format!("Permissions set to {mode_str} (recursive)"));
+    } else {
+      self.set_status(format!("Permissions set to {mode_str}"));
+    }
+
+    self.input_mode = InputMode::Normal;
+    self.preview.invalidate();
+    self.update_preview();
+    Ok(())
+  }
+
+  fn chmod_single(&self, path: &PathBuf, mode: u32) -> Result<()> {
+    let permissions = std::fs::Permissions::from_mode(mode);
+    std::fs::set_permissions(path, permissions)?;
+    Ok(())
+  }
+
+  fn chmod_recursive(&self, path: &PathBuf, mode: u32) -> Result<()> {
+    self.chmod_single(path, mode)?;
+
+    if path.is_dir() {
+      for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+          self.chmod_recursive(&entry_path, mode)?;
+        } else {
+          self.chmod_single(&entry_path, mode)?;
+        }
+      }
+    }
+
+    Ok(())
+  }
+
+  fn chmod_close(&mut self) {
+    self.input_mode = InputMode::Normal;
   }
 }
 
@@ -2183,6 +2368,22 @@ mod tests {
   }
 
   #[test]
+  fn test_chmod_start_opens_dialog() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ChmodStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Chmod);
+    assert_eq!(app.chmod_state.path, path);
+    assert!(!app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_extract_archive_zip() {
     use std::io::Write;
     let dir = setup_test_dir();
@@ -2223,6 +2424,18 @@ mod tests {
   }
 
   #[test]
+  fn test_chmod_start_on_dir() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry is a dir
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::ChmodStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Chmod);
+    assert!(app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
   fn test_extract_and_delete_confirm_prompt() {
     use std::io::Write;
     let dir = setup_test_dir();
@@ -2252,7 +2465,64 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Normal);
     assert!(!dir.join("test.txt").exists()); // Not extracted
     assert!(zip_path.exists()); // Still exists
+    cleanup_test_dir(&dir);
+  }
 
+  #[test]
+  fn test_chmod_toggle_bit() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ChmodStart).unwrap();
+
+    let original = app.chmod_state.new_mode;
+    // Toggle owner execute (bit 2, shift 6)
+    app.update(Action::ChmodToggleBit(2)).unwrap();
+    assert_ne!(app.chmod_state.new_mode, original);
+    // Toggle it back
+    app.update(Action::ChmodToggleBit(2)).unwrap();
+    assert_eq!(app.chmod_state.new_mode, original);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_toggle_recursive_only_for_dirs() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ChmodStart).unwrap();
+    assert!(!app.chmod_state.is_dir);
+    app.update(Action::ChmodToggleRecursive).unwrap();
+    assert!(!app.chmod_state.recursive); // Should not toggle for files
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_toggle_recursive_for_dirs() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // First entry is a dir
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::ChmodStart).unwrap();
+    assert!(app.chmod_state.is_dir);
+    assert!(!app.chmod_state.recursive);
+    app.update(Action::ChmodToggleRecursive).unwrap();
+    assert!(app.chmod_state.recursive);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_close() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Chmod);
+    app.update(Action::ChmodClose).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
     cleanup_test_dir(&dir);
   }
 
@@ -2292,7 +2562,64 @@ mod tests {
     // Verify extraction and deletion
     assert!(dir.join("extracted.txt").exists());
     assert!(!zip_path.exists()); // Archive deleted
+    cleanup_test_dir(&dir);
+  }
 
+  #[test]
+  fn test_chmod_apply_changes_permissions() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ChmodStart).unwrap();
+
+    // Set to 0o600
+    app.chmod_state.new_mode = (app.chmod_state.original_mode & !0o777) | 0o600;
+    app.update(Action::ChmodApply).unwrap();
+
+    let meta = std::fs::metadata(&path).unwrap();
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_toggle_octal_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+    assert!(!app.chmod_state.octal_mode);
+    app.update(Action::ChmodToggleOctal).unwrap();
+    assert!(app.chmod_state.octal_mode);
+    // Should pre-fill octal input
+    assert!(!app.chmod_state.octal_input.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_recursive_applies_to_all() {
+    let dir = setup_test_dir();
+    // Create file inside aaa_dir
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "content").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Select aaa_dir
+    assert_eq!(app.tree.entries[0].name, "aaa_dir");
+    app.update(Action::ChmodStart).unwrap();
+    assert!(app.chmod_state.is_dir);
+
+    // Enable recursive and set permissions
+    app.update(Action::ChmodToggleRecursive).unwrap();
+    app.chmod_state.new_mode = (app.chmod_state.original_mode & !0o777) | 0o700;
+    app.update(Action::ChmodApply).unwrap();
+
+    // Check both dir and inner file
+    let dir_meta = std::fs::metadata(dir.join("aaa_dir")).unwrap();
+    let file_meta = std::fs::metadata(dir.join("aaa_dir").join("inner.txt")).unwrap();
+    assert_eq!(dir_meta.permissions().mode() & 0o777, 0o700);
+    assert_eq!(file_meta.permissions().mode() & 0o777, 0o700);
     cleanup_test_dir(&dir);
   }
 }
