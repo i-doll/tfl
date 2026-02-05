@@ -565,6 +565,9 @@ impl PreviewState {
                 metadata: None,
                 image_metadata: None,
                 git_commits: Vec::new(),
+                blame_data: None,
+                raw_lines: None,
+                is_structured: false,
                 pdf_content: None,
                 pdf_current_page: 0,
               };
@@ -970,6 +973,8 @@ mod tests {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      pdf_content: None,
+      pdf_current_page: 0,
     };
     state.insert_cache(path.clone(), content);
     state.current_path = Some(path);
@@ -996,6 +1001,8 @@ mod tests {
       blame_data: None,
       raw_lines: Some(vec![Line::from("raw")]),
       is_structured: true,
+      pdf_content: None,
+      pdf_current_page: 0,
     };
     state.insert_cache(path.clone(), content);
     state.current_path = Some(path);
@@ -1025,6 +1032,8 @@ mod tests {
       blame_data: None,
       raw_lines: Some(vec![Line::from("raw")]),
       is_structured: true,
+      pdf_content: None,
+      pdf_current_page: 0,
     };
     state.insert_cache(path.clone(), content);
     state.current_path = Some(path);

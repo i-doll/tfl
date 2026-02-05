@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
@@ -61,9 +63,48 @@ pub fn load_pdf_async(path: &Path) -> mpsc::Receiver<PdfLoadResult> {
   rx
 }
 
+/// Suppress stderr output during a closure execution
+/// Used to silence debug messages from pdf-extract library
+#[cfg(unix)]
+fn suppress_stderr<T, F: FnOnce() -> T>(f: F) -> T {
+  // Save original stderr
+  let stderr_fd = std::io::stderr().as_raw_fd();
+  let saved_stderr = unsafe { libc::dup(stderr_fd) };
+
+  // Open /dev/null and redirect stderr to it
+  if let Ok(dev_null) = File::open("/dev/null") {
+    unsafe {
+      libc::dup2(dev_null.as_raw_fd(), stderr_fd);
+    }
+  }
+
+  // Run the closure
+  let result = f();
+
+  // Restore original stderr
+  if saved_stderr >= 0 {
+    unsafe {
+      libc::dup2(saved_stderr, stderr_fd);
+      libc::close(saved_stderr);
+    }
+  }
+
+  result
+}
+
+/// No-op on non-Unix platforms
+#[cfg(not(unix))]
+fn suppress_stderr<T, F: FnOnce() -> T>(f: F) -> T {
+  f()
+}
+
 /// Extract text from a PDF file
 fn extract_pdf_text(path: &Path) -> PdfLoadResult {
-  match pdf_extract::extract_text(path) {
+  // Suppress stderr during extraction - pdf-extract prints debug messages
+  // about Unicode ligature mismatches that spam the terminal
+  let result = suppress_stderr(|| pdf_extract::extract_text(path));
+
+  match result {
     Ok(text) => {
       // Split text by form feed character (page break) or estimate pages
       let pages: Vec<String> = if text.contains('\x0C') {
