@@ -132,6 +132,8 @@ pub enum PromptKind {
   NewDir,
   ConfirmDelete,
   ConfirmExtractAndDelete,
+  GitCommit,
+  ConfirmDiscard,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {

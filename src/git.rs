@@ -138,6 +138,116 @@ impl GitRepo {
     ignored
   }
 
+  /// Stage a file (add to index).
+  pub fn stage_file(&self, path: &Path) -> Result<(), String> {
+    let rel_path = path
+      .strip_prefix(&self.root)
+      .map_err(|_| "path not in repository".to_string())?;
+    let mut index = self.repo.index().map_err(|e| e.to_string())?;
+    index.add_path(rel_path).map_err(|e| e.to_string())?;
+    index.write().map_err(|e| e.to_string())?;
+    Ok(())
+  }
+
+  /// Unstage a file (remove from index, keeping working tree).
+  pub fn unstage_file(&self, path: &Path) -> Result<(), String> {
+    let rel_path = path
+      .strip_prefix(&self.root)
+      .map_err(|_| "path not in repository".to_string())?;
+
+    // Get HEAD tree
+    let head = self.repo.head().ok();
+    let head_tree = head
+      .as_ref()
+      .and_then(|h| h.peel_to_tree().ok());
+
+    let mut index = self.repo.index().map_err(|e| e.to_string())?;
+
+    if let Some(tree) = head_tree {
+      // Check if file exists in HEAD
+      if tree.get_path(rel_path).is_ok() {
+        // Reset to HEAD version
+        self.repo
+          .reset_default(Some(&head.unwrap().peel_to_commit().unwrap().into_object()), [rel_path])
+          .map_err(|e| e.to_string())?;
+      } else {
+        // File is new, remove from index
+        index.remove_path(rel_path).map_err(|e| e.to_string())?;
+        index.write().map_err(|e| e.to_string())?;
+      }
+    } else {
+      // No HEAD yet (empty repo), remove from index
+      index.remove_path(rel_path).map_err(|e| e.to_string())?;
+      index.write().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+  }
+
+  /// Commit staged changes with the given message.
+  pub fn commit(&self, message: &str) -> Result<String, String> {
+    let mut index = self.repo.index().map_err(|e| e.to_string())?;
+    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
+    let tree = self.repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+    let sig = self.repo.signature().map_err(|e| e.to_string())?;
+
+    let head = self.repo.head().ok();
+    let parent_commit = head.as_ref().and_then(|h| h.peel_to_commit().ok());
+
+    let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+    let oid = self
+      .repo
+      .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+      .map_err(|e| e.to_string())?;
+
+    Ok(oid.to_string()[..7].to_string())
+  }
+
+  /// Discard changes to a file (checkout from HEAD).
+  pub fn discard_changes(&self, path: &Path) -> Result<(), String> {
+    let rel_path = path
+      .strip_prefix(&self.root)
+      .map_err(|_| "path not in repository".to_string())?;
+
+    // Check if file is untracked
+    let status = self.repo.status_file(rel_path);
+    if let Ok(s) = status
+      && s.is_wt_new() && !s.is_index_new()
+    {
+      // Untracked file - delete it
+      std::fs::remove_file(path).map_err(|e| e.to_string())?;
+      return Ok(());
+    }
+
+    // Check out from HEAD or index
+    let mut opts = git2::build::CheckoutBuilder::new();
+    opts.path(rel_path);
+    opts.force();
+
+    self.repo.checkout_head(Some(&mut opts)).map_err(|e| e.to_string())?;
+    Ok(())
+  }
+
+  /// Check if there are staged changes to commit.
+  pub fn has_staged_changes(&self) -> bool {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(false);
+
+    if let Ok(statuses) = self.repo.statuses(Some(&mut opts)) {
+      for entry in statuses.iter() {
+        let status = entry.status();
+        if status.is_index_new()
+          || status.is_index_modified()
+          || status.is_index_deleted()
+          || status.is_index_renamed()
+        {
+          return true;
+        }
+      }
+    }
+    false
+  }
+
   pub fn get_file_commits(&self, path: &Path, limit: usize) -> Vec<GitCommit> {
     let rel_path = match path.strip_prefix(&self.root) {
       Ok(p) => p,
@@ -562,6 +672,26 @@ mod tests {
   }
 
   #[test]
+  fn test_stage_file() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+    fs::write(dir.join("test.txt"), "content").unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let (statuses, _) = repo.get_file_statuses();
+    let status = statuses.get(&dir.join("test.txt")).unwrap();
+    assert_eq!(status.unstaged, Some(GitFileStatus::Untracked));
+
+    repo.stage_file(&dir.join("test.txt")).unwrap();
+
+    let (statuses, _) = repo.get_file_statuses();
+    let status = statuses.get(&dir.join("test.txt")).unwrap();
+    assert_eq!(status.staged, Some(GitFileStatus::Added));
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
   fn test_get_file_blame_untracked_file() {
     let dir = make_test_dir();
     init_git_repo(&dir);
@@ -580,6 +710,29 @@ mod tests {
   }
 
   #[test]
+  fn test_unstage_file() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+    fs::write(dir.join("test.txt"), "content").unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    repo.stage_file(&dir.join("test.txt")).unwrap();
+
+    let (statuses, _) = repo.get_file_statuses();
+    let status = statuses.get(&dir.join("test.txt")).unwrap();
+    assert_eq!(status.staged, Some(GitFileStatus::Added));
+
+    repo.unstage_file(&dir.join("test.txt")).unwrap();
+
+    let (statuses, _) = repo.get_file_statuses();
+    let status = statuses.get(&dir.join("test.txt")).unwrap();
+    assert_eq!(status.unstaged, Some(GitFileStatus::Untracked));
+    assert_eq!(status.staged, None);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
   fn test_get_file_blame_nonexistent_file() {
     let dir = make_test_dir();
     init_git_repo(&dir);
@@ -588,6 +741,76 @@ mod tests {
     let blame = repo.get_file_blame(&dir.join("nonexistent.txt"));
 
     assert!(blame.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_commit() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+    fs::write(dir.join("test.txt"), "content").unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    repo.stage_file(&dir.join("test.txt")).unwrap();
+
+    let hash = repo.commit("test commit").unwrap();
+    assert_eq!(hash.len(), 7);
+
+    // After commit, file should be clean
+    let (statuses, _) = repo.get_file_statuses();
+    assert!(statuses.get(&dir.join("test.txt")).is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_discard_changes_untracked() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+    fs::write(dir.join("untracked.txt"), "content").unwrap();
+    assert!(dir.join("untracked.txt").exists());
+
+    let repo = GitRepo::open(&dir).unwrap();
+    repo.discard_changes(&dir.join("untracked.txt")).unwrap();
+
+    assert!(!dir.join("untracked.txt").exists());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_discard_changes_modified() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+    fs::write(dir.join("test.txt"), "original").unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    repo.stage_file(&dir.join("test.txt")).unwrap();
+    repo.commit("initial").unwrap();
+
+    fs::write(dir.join("test.txt"), "modified").unwrap();
+    assert_eq!(fs::read_to_string(dir.join("test.txt")).unwrap(), "modified");
+
+    repo.discard_changes(&dir.join("test.txt")).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("test.txt")).unwrap(), "original");
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_has_staged_changes() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+
+    let repo = GitRepo::open(&dir).unwrap();
+    assert!(!repo.has_staged_changes());
+
+    fs::write(dir.join("test.txt"), "content").unwrap();
+    assert!(!repo.has_staged_changes()); // Untracked doesn't count
+
+    repo.stage_file(&dir.join("test.txt")).unwrap();
+    assert!(repo.has_staged_changes());
 
     let _ = fs::remove_dir_all(&dir);
   }

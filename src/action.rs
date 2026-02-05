@@ -72,6 +72,10 @@ pub enum Action {
   ToggleCustomIgnore,
   HistoryBack,
   HistoryForward,
+  GitStage,
+  GitUnstage,
+  GitCommitStart,
+  GitDiscard,
   Resize(u16, u16),
   Tick,
   None,
@@ -121,6 +125,10 @@ impl Action {
       "history_back" => Some(Action::HistoryBack),
       "history_forward" => Some(Action::HistoryForward),
       "toggle_blame" => Some(Action::ToggleBlame),
+      "git_stage" => Some(Action::GitStage),
+      "git_unstage" => Some(Action::GitUnstage),
+      "git_commit" => Some(Action::GitCommitStart),
+      "git_discard" => Some(Action::GitDiscard),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -191,5 +199,13 @@ mod tests {
     assert_eq!(Action::from_name("prompt_input"), None);
     assert_eq!(Action::from_name("resize"), None);
     assert_eq!(Action::from_name("tick"), None);
+  }
+
+  #[test]
+  fn test_from_name_git_actions() {
+    assert_eq!(Action::from_name("git_stage"), Some(Action::GitStage));
+    assert_eq!(Action::from_name("git_unstage"), Some(Action::GitUnstage));
+    assert_eq!(Action::from_name("git_commit"), Some(Action::GitCommitStart));
+    assert_eq!(Action::from_name("git_discard"), Some(Action::GitDiscard));
   }
 }

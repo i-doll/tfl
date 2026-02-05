@@ -361,6 +361,10 @@ x = "extract_archive"
 g = "go_to_top"
 h = "go_home"
 b = "toggle_blame"
+a = "git_stage"
+u = "git_unstage"
+c = "git_commit"
+d = "git_discard"
 
 [ignore]
 patterns = [
@@ -1131,5 +1135,18 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('I'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleCustomIgnore));
+  }
+
+  #[test]
+  fn test_default_g_prefix_git_bindings() {
+    let config = Config::default();
+    let kb_a = KeyBinding { code: KeyCode::Char('a'), modifiers: KeyModifiers::NONE };
+    let kb_u = KeyBinding { code: KeyCode::Char('u'), modifiers: KeyModifiers::NONE };
+    let kb_c = KeyBinding { code: KeyCode::Char('c'), modifiers: KeyModifiers::NONE };
+    let kb_d = KeyBinding { code: KeyCode::Char('d'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.g_prefix_keys.get(&kb_a), Some(&Action::GitStage));
+    assert_eq!(config.g_prefix_keys.get(&kb_u), Some(&Action::GitUnstage));
+    assert_eq!(config.g_prefix_keys.get(&kb_c), Some(&Action::GitCommitStart));
+    assert_eq!(config.g_prefix_keys.get(&kb_d), Some(&Action::GitDiscard));
   }
 }

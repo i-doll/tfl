@@ -129,6 +129,22 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
             ),
           ])
         }
+        Some(PromptKind::GitCommit) => {
+          let mut spans = vec![
+            Span::styled(" Commit: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+          ];
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          Line::from(spans)
+        }
+        Some(PromptKind::ConfirmDiscard) => {
+          let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
+          Line::from(vec![
+            Span::styled(
+              format!(" Discard {name}? (y/N)"),
+              Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+            ),
+          ])
+        }
         None => {
           Line::from(vec![
             Span::styled(" ...", Style::default().fg(Color::DarkGray)),

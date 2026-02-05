@@ -290,6 +290,14 @@ impl App {
               self.set_status("Extract cancelled".to_string());
             }
           }
+          Some(PromptKind::ConfirmDiscard) => {
+            if c == 'y' {
+              self.execute_git_discard()?;
+            } else {
+              self.cancel_prompt();
+              self.set_status("Discard cancelled".to_string());
+            }
+          }
           Some(_) => {
             let byte_pos = self.prompt_input.char_indices()
               .nth(self.prompt_cursor)
@@ -357,6 +365,11 @@ impl App {
             self.cancel_prompt();
             self.set_status("Extract cancelled".to_string());
           }
+          Some(PromptKind::GitCommit) => self.execute_git_commit()?,
+          Some(PromptKind::ConfirmDiscard) => {
+            self.cancel_prompt();
+            self.set_status("Discard cancelled".to_string());
+          }
           None => {}
         }
       }
@@ -404,6 +417,10 @@ impl App {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
       }
+      Action::GitStage => self.git_stage()?,
+      Action::GitUnstage => self.git_unstage()?,
+      Action::GitCommitStart => self.git_commit_start(),
+      Action::GitDiscard => self.git_discard_start(),
       Action::None => {}
     }
     Ok(())
@@ -1419,6 +1436,157 @@ impl App {
 
   fn chmod_close(&mut self) {
     self.input_mode = InputMode::Normal;
+  }
+
+  // Git operations
+
+  fn git_stage(&mut self) -> Result<()> {
+    let Some(repo) = self.tree.git_repo() else {
+      self.set_status("Not a git repository".to_string());
+      return Ok(());
+    };
+    let Some(entry) = self.selected_entry() else {
+      return Ok(());
+    };
+    let path = entry.path.clone();
+    let name = entry.name.clone();
+
+    match repo.stage_file(&path) {
+      Ok(()) => {
+        self.tree.reload()?;
+        self.set_status(format!("Staged: {name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.set_status(format!("Stage failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn git_unstage(&mut self) -> Result<()> {
+    let Some(repo) = self.tree.git_repo() else {
+      self.set_status("Not a git repository".to_string());
+      return Ok(());
+    };
+    let Some(entry) = self.selected_entry() else {
+      return Ok(());
+    };
+    let path = entry.path.clone();
+    let name = entry.name.clone();
+
+    match repo.unstage_file(&path) {
+      Ok(()) => {
+        self.tree.reload()?;
+        self.set_status(format!("Unstaged: {name}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.set_status(format!("Unstage failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn git_commit_start(&mut self) {
+    let Some(repo) = self.tree.git_repo() else {
+      self.set_status("Not a git repository".to_string());
+      return;
+    };
+    if !repo.has_staged_changes() {
+      self.set_status("Nothing staged to commit".to_string());
+      return;
+    }
+    self.prompt_input.clear();
+    self.prompt_cursor = 0;
+    self.prompt_kind = Some(PromptKind::GitCommit);
+    self.input_mode = InputMode::Prompt;
+  }
+
+  fn execute_git_commit(&mut self) -> Result<()> {
+    let message = self.prompt_input.trim().to_string();
+    if message.is_empty() {
+      self.cancel_prompt();
+      self.set_status("Commit message cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let Some(repo) = self.tree.git_repo() else {
+      self.cancel_prompt();
+      self.set_status("Not a git repository".to_string());
+      return Ok(());
+    };
+
+    match repo.commit(&message) {
+      Ok(hash) => {
+        self.cancel_prompt();
+        self.tree.reload()?;
+        self.set_status(format!("Committed: {hash}"));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.set_status(format!("Commit failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn git_discard_start(&mut self) {
+    let Some(_repo) = self.tree.git_repo() else {
+      self.set_status("Not a git repository".to_string());
+      return;
+    };
+    let Some(entry) = self.selected_entry() else {
+      return;
+    };
+    if entry.git_status.is_clean() {
+      self.set_status("No changes to discard".to_string());
+      return;
+    }
+    let name = entry.name.clone();
+    self.prompt_kind = Some(PromptKind::ConfirmDiscard);
+    self.prompt_input.clear();
+    self.prompt_cursor = 0;
+    self.input_mode = InputMode::Prompt;
+    self.set_status(format!("Discard changes to {name}? (y/N)"));
+  }
+
+  fn execute_git_discard(&mut self) -> Result<()> {
+    let Some(repo) = self.tree.git_repo() else {
+      self.cancel_prompt();
+      self.set_status("Not a git repository".to_string());
+      return Ok(());
+    };
+    let entry = self.selected_entry().cloned();
+    let Some(entry) = entry else {
+      self.cancel_prompt();
+      return Ok(());
+    };
+
+    match repo.discard_changes(&entry.path) {
+      Ok(()) => {
+        self.cancel_prompt();
+        self.tree.reload()?;
+        let len = self.visible_entries().len();
+        if len == 0 {
+          self.cursor = 0;
+        } else {
+          self.cursor = self.cursor.min(len - 1);
+        }
+        self.set_status(format!("Discarded: {}", entry.name));
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.cancel_prompt();
+        self.set_status(format!("Discard failed: {e}"));
+      }
+    }
+    Ok(())
   }
 }
 
@@ -2506,6 +2674,29 @@ mod tests {
     cleanup_test_dir(&dir);
   }
 
+  // Git operations tests
+
+  fn init_git_repo_with_config(dir: &std::path::Path) -> git2::Repository {
+    let repo = git2::Repository::init(dir).unwrap();
+    let mut config = repo.config().unwrap();
+    config.set_str("user.email", "test@test.com").unwrap();
+    config.set_str("user.name", "Test").unwrap();
+    repo
+  }
+
+  #[test]
+  fn test_git_stage_non_repo() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::GitStage).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Not a git"));
+    cleanup_test_dir(&dir);
+  }
+
   #[test]
   fn test_history_forward_after_back() {
     let dir = setup_test_dir();
@@ -2663,6 +2854,176 @@ mod tests {
     assert_eq!(app.input_mode, InputMode::Normal);
     assert!(!dir.join("test.txt").exists()); // Not extracted
     assert!(zip_path.exists()); // Still exists
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_stage_file() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to a file (e.g., bbb.txt)
+    while app.selected_entry().map_or(true, |e| e.is_dir || e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::GitStage).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Staged"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_unstage_file() {
+    let dir = setup_test_dir();
+    let repo = init_git_repo_with_config(&dir);
+    let git_repo = crate::git::GitRepo::open(&dir).unwrap();
+    git_repo.stage_file(&dir.join("bbb.txt")).unwrap();
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::GitUnstage).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Unstaged"));
+
+    drop(repo);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_commit_start_no_staged() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::GitCommitStart).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Nothing staged"));
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_commit_start_with_staged() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let git_repo = crate::git::GitRepo::open(&dir).unwrap();
+    git_repo.stage_file(&dir.join("bbb.txt")).unwrap();
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.update(Action::GitCommitStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::GitCommit));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_commit_execute() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let git_repo = crate::git::GitRepo::open(&dir).unwrap();
+    git_repo.stage_file(&dir.join("bbb.txt")).unwrap();
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::GitCommitStart).unwrap();
+
+    // Type a commit message
+    for c in "test commit".chars() {
+      app.update(Action::PromptInput(c)).unwrap();
+    }
+
+    app.update(Action::PromptConfirm).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Committed"));
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_commit_empty_message() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let git_repo = crate::git::GitRepo::open(&dir).unwrap();
+    git_repo.stage_file(&dir.join("bbb.txt")).unwrap();
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.update(Action::GitCommitStart).unwrap();
+    app.update(Action::PromptConfirm).unwrap();
+
+    assert!(app.status_message.as_ref().unwrap().contains("empty"));
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_discard_no_changes() {
+    let dir = setup_test_dir();
+    let repo = init_git_repo_with_config(&dir);
+    // Commit the file first so it's clean
+    let git_repo = crate::git::GitRepo::open(&dir).unwrap();
+    git_repo.stage_file(&dir.join("bbb.txt")).unwrap();
+    git_repo.commit("initial").unwrap();
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt (now clean)
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::GitDiscard).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("No changes"));
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    drop(repo);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_discard_shows_confirmation() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    // bbb.txt is untracked so it has changes
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Move to bbb.txt
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::GitDiscard).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmDiscard));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_discard_cancel() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::GitDiscard).unwrap();
+    // Cancel with 'n'
+    app.update(Action::PromptInput('n')).unwrap();
+
+    assert!(dir.join("bbb.txt").exists());
+    assert!(app.status_message.as_ref().unwrap().contains("cancelled"));
+    assert_eq!(app.input_mode, InputMode::Normal);
+
     cleanup_test_dir(&dir);
   }
 
@@ -3030,6 +3391,29 @@ mod tests {
 
     app.update(Action::ToggleBlame).unwrap();
     assert_eq!(app.preview.scroll_offset, 0);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_git_discard_confirm_untracked() {
+    let dir = setup_test_dir();
+    init_git_repo_with_config(&dir);
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    assert!(dir.join("bbb.txt").exists());
+
+    app.update(Action::GitDiscard).unwrap();
+    // Confirm with 'y'
+    app.update(Action::PromptInput('y')).unwrap();
+
+    // Untracked file should be deleted
+    assert!(!dir.join("bbb.txt").exists());
+    assert!(app.status_message.as_ref().unwrap().contains("Discarded"));
+    assert_eq!(app.input_mode, InputMode::Normal);
 
     cleanup_test_dir(&dir);
   }

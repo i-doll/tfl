@@ -33,6 +33,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Shell integrations** - drop into `$EDITOR`, `$SHELL`, or Claude Code
 - **Git status highlighting** — modified (yellow), staged (green), untracked (red), conflicted (bright red) with parent directory propagation
 - **Git branch display** in header with ahead/behind counts and summary stats
+- **Git operations** — stage (`ga`), unstage (`gu`), commit (`gc`), discard (`gd`) with confirmation
 - **.gitignore-aware** hidden file toggling
 - **Custom ignore patterns** via glob syntax (e.g., `*.log`, `node_modules`)
 - **Resizable panes** with adjustable tree/preview ratio
@@ -107,6 +108,10 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 |---|---|
 | `g` | Go to top (`gg`) |
 | `h` | Go to home directory (`gh`) |
+| `a` | Stage file (`ga`) |
+| `u` | Unstage file (`gu`) |
+| `c` | Commit staged changes (`gc`) |
+| `d` | Discard changes (`gd`) |
 | Any other | Cancel |
 
 ### Prompt mode (rename, new file, new dir)
@@ -289,6 +294,10 @@ f = "favorites_open"
 [keys.g_prefix]
 g = "go_to_top"
 h = "go_home"
+a = "git_stage"
+u = "git_unstage"
+c = "git_commit"
+d = "git_discard"
 
 [ignore]
 patterns = [
@@ -322,7 +331,7 @@ Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option co
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `git_stage`, `git_unstage`, `git_commit`, `git_discard`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
