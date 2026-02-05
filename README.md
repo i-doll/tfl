@@ -101,6 +101,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `d` | Show git diff for current file |
 | `n` | Jump to next diff hunk |
 | `N` | Jump to previous diff hunk |
+| `i` | Show file properties |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
 
@@ -158,6 +159,14 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Enter` | Open with selected app |
 | `q` / `Esc` | Close picker |
 
+### Properties mode
+
+| Key | Action |
+|---|---|
+| `i` | Close properties |
+| `q` | Close properties |
+| `Esc` | Close properties |
+
 ### Help mode
 
 | Key | Action |
@@ -206,6 +215,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `flate2` | GZIP decompression for tar.gz files |
 | `bzip2` | BZIP2 decompression for tar.bz2 files |
 | `xz2` | XZ/LZMA decompression for tar.xz files |
+| `users` | Resolve UID/GID to user/group names |
 
 ## Installation
 
@@ -303,6 +313,7 @@ f = "favorites_open"
 m = "toggle_markdown_mode"
 tab = "switch_pane"
 f6 = "toggle_dual_pane"
+i = "show_properties"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -340,7 +351,7 @@ Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option co
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `toggle_formatted`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `switch_pane`, `toggle_dual_pane`, `show_diff`, `next_hunk`, `prev_hunk`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `toggle_formatted`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `switch_pane`, `toggle_dual_pane`, `show_diff`, `next_hunk`, `prev_hunk`, `show_properties`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -382,6 +393,7 @@ src/
   fs/
     entry.rs       FileEntry struct (path, metadata, depth)
     ops.rs         Filesystem helpers (copy, unique path)
+    properties.rs  File properties extraction (permissions, owner, times)
     tree.rs        FileTree: flat vec, expand/collapse, sort, reload
   preview/
     mod.rs         PreviewState: cache, debounce, type detection
@@ -400,6 +412,7 @@ src/
     chmod.rs       Chmod dialog for changing file permissions
     favorites.rs   Favorites picker floating overlay
     open_with.rs   Open-with picker floating overlay
+    properties.rs  File properties floating overlay
     file_tree.rs   Tree pane rendering with indent/icons
     preview.rs     Preview pane rendering (text, image, hex)
     status_bar.rs  Status bar: search input, file info, position

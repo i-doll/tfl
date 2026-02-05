@@ -131,6 +131,7 @@ pub enum InputMode {
   Favorites,
   OpenWith,
   Chmod,
+  Properties,
   Error,
 }
 
@@ -209,6 +210,10 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Tab => Action::ChmodToggleOctal,
       KeyCode::Backspace => Action::ChmodOctalBackspace,
       KeyCode::Char('d') => Action::ChmodToggleRecursive,
+      _ => Action::None,
+    },
+    InputMode::Properties => match key.code {
+      KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => Action::PropertiesClose,
       _ => Action::None,
     },
     InputMode::Error => match key.code {
@@ -460,5 +465,30 @@ mod tests {
   fn test_chmod_mode_toggle_octal() {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Tab), InputMode::Chmod, &c), Action::ChmodToggleOctal);
+  }
+
+  #[test]
+  fn test_properties_mode_close_with_esc() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Properties, &c), Action::PropertiesClose);
+  }
+
+  #[test]
+  fn test_properties_mode_close_with_q() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Properties, &c), Action::PropertiesClose);
+  }
+
+  #[test]
+  fn test_properties_mode_close_with_i() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('i')), InputMode::Properties, &c), Action::PropertiesClose);
+  }
+
+  #[test]
+  fn test_properties_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Properties, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Properties, &c), Action::None);
   }
 }
