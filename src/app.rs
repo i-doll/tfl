@@ -55,6 +55,7 @@ pub struct App {
   pub error_messages: Vec<String>,
   pub wrote_config: bool,
   pub claude_yolo: bool,
+  pub use_trash: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +99,7 @@ impl App {
       error_messages: Vec::new(),
       wrote_config: false,
       claude_yolo: config.claude_yolo,
+      use_trash: config.use_trash,
     })
   }
 
@@ -191,7 +193,21 @@ impl App {
           self.prompt_input.clear();
           self.prompt_cursor = 0;
           self.input_mode = InputMode::Prompt;
-          self.set_status(format!("Delete {name}? (y/N)"));
+          if self.use_trash {
+            self.set_status(format!("Move {name} to trash? (y/N)"));
+          } else {
+            self.set_status(format!("Delete {name}? (y/N)"));
+          }
+        }
+      }
+      Action::PermanentDeleteFile => {
+        if let Some(entry) = self.selected_entry() {
+          let name = entry.name.clone();
+          self.prompt_kind = Some(PromptKind::ConfirmPermanentDelete);
+          self.prompt_input.clear();
+          self.prompt_cursor = 0;
+          self.input_mode = InputMode::Prompt;
+          self.set_status(format!("PERMANENTLY delete {name}? (y/N)"));
         }
       }
       Action::RenameStart => {
@@ -218,7 +234,15 @@ impl App {
         match self.prompt_kind {
           Some(PromptKind::ConfirmDelete) => {
             if c == 'y' {
-              self.execute_delete()?;
+              self.execute_delete(self.use_trash)?;
+            } else {
+              self.cancel_prompt();
+              self.set_status("Delete cancelled".to_string());
+            }
+          }
+          Some(PromptKind::ConfirmPermanentDelete) => {
+            if c == 'y' {
+              self.execute_delete(false)?;
             } else {
               self.cancel_prompt();
               self.set_status("Delete cancelled".to_string());
@@ -276,7 +300,7 @@ impl App {
           Some(PromptKind::Rename) => self.execute_rename()?,
           Some(PromptKind::NewFile) => self.execute_new_file()?,
           Some(PromptKind::NewDir) => self.execute_new_dir()?,
-          Some(PromptKind::ConfirmDelete) => {
+          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmPermanentDelete) => {
             self.cancel_prompt();
             self.set_status("Delete cancelled".to_string());
           }
@@ -728,14 +752,16 @@ impl App {
     Ok(())
   }
 
-  fn execute_delete(&mut self) -> Result<()> {
+  fn execute_delete(&mut self, use_trash: bool) -> Result<()> {
     let entry = self.selected_entry().cloned();
     let Some(entry) = entry else {
       self.cancel_prompt();
       return Ok(());
     };
 
-    let result = if entry.is_dir {
+    let result = if use_trash {
+      trash::delete(&entry.path).map_err(std::io::Error::other)
+    } else if entry.is_dir {
       std::fs::remove_dir_all(&entry.path)
     } else {
       std::fs::remove_file(&entry.path)
@@ -756,13 +782,21 @@ impl App {
         } else {
           self.cursor = self.cursor.min(len - 1);
         }
-        self.set_status(format!("Deleted: {}", entry.name));
+        if use_trash {
+          self.set_status(format!("Moved to trash: {}", entry.name));
+        } else {
+          self.set_status(format!("Deleted: {}", entry.name));
+        }
         self.preview.invalidate();
         self.update_preview();
       }
       Err(e) => {
         self.cancel_prompt();
-        self.set_status(format!("Delete failed: {e}"));
+        if use_trash {
+          self.set_status(format!("Trash failed: {e}"));
+        } else {
+          self.set_status(format!("Delete failed: {e}"));
+        }
       }
     }
     Ok(())
@@ -963,6 +997,7 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    self.use_trash = config.use_trash;
   }
 
   pub fn reload_favorites(&mut self) {
@@ -2018,6 +2053,103 @@ mod tests {
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
 
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_use_trash_default_true() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.use_trash);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_with_use_trash_shows_trash_message() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.use_trash); // Default is true
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DeleteFile).unwrap();
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmDelete));
+    assert!(app.status_message.as_ref().unwrap().contains("trash"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_without_use_trash_shows_delete_message() {
+    let dir = setup_test_dir();
+    let mut c = cfg();
+    c.use_trash = false;
+    let mut app = App::new(dir.clone(), None, &c).unwrap();
+    assert!(!app.use_trash);
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::DeleteFile).unwrap();
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmDelete));
+    assert!(app.status_message.as_ref().unwrap().contains("Delete"));
+    assert!(!app.status_message.as_ref().unwrap().contains("trash"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_permanent_delete_shows_permanent_message() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::PermanentDeleteFile).unwrap();
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmPermanentDelete));
+    assert!(app.status_message.as_ref().unwrap().contains("PERMANENTLY"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_permanent_delete_actually_removes() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    assert!(dir.join("bbb.txt").exists());
+    app.update(Action::PermanentDeleteFile).unwrap();
+    // Confirm with 'y'
+    app.update(Action::PromptInput('y')).unwrap();
+    assert!(!dir.join("bbb.txt").exists());
+    assert!(app.status_message.as_ref().unwrap().contains("Deleted"));
+    assert!(!app.status_message.as_ref().unwrap().contains("trash"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_permanent_delete_cancel() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "bbb.txt") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::PermanentDeleteFile).unwrap();
+    // Cancel with 'n'
+    app.update(Action::PromptInput('n')).unwrap();
+    assert!(dir.join("bbb.txt").exists());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_syncs_use_trash() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.use_trash);
+
+    let mut c = cfg();
+    c.use_trash = false;
+    app.apply_config(&c);
+    assert!(!app.use_trash);
     cleanup_test_dir(&dir);
   }
 }

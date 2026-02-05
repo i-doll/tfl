@@ -26,7 +26,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
-- **File management** — cut, copy, paste, delete, rename, new file/dir
+- **File management** — cut, copy, paste, trash/delete, rename, new file/dir
 - **Yank path** to clipboard
 - **Open with system default** — press Enter on a file to open with the default app
 - **Open-with picker** — press `o` to choose from detected editors/IDEs
@@ -66,7 +66,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `Ctrl+c` | Copy file/dir to clipboard |
 | `Ctrl+x` | Cut file/dir to clipboard |
 | `Ctrl+v` | Paste from clipboard |
-| `Delete` | Delete file/dir (y/N confirm) |
+| `d` | Move to trash (y/N confirm) |
+| `D` | PERMANENTLY delete (y/N confirm) |
 | `r` / `F2` | Rename file/dir |
 | `a` | Create new file |
 | `A` | Create new directory |
@@ -163,6 +164,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `notify` | OS-native file watching for live config reload |
 | `git2` | Native Git repository operations (status, commits, branch info) |
 | `kamadak-exif` | EXIF metadata extraction from images |
+| `trash` | Cross-platform move-to-trash functionality |
 
 ## Installation
 
@@ -211,6 +213,7 @@ tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/
 tree_ratio = 30       # initial tree pane width (percentage, default 30)
 tick_rate_ms = 100    # event loop tick rate in ms (default 100)
 claude_yolo = false   # if true, `c` launches Claude with --dangerously-skip-permissions (default false)
+use_trash = true      # if true, `d` moves to trash; if false, permanently deletes (default true)
 
 [keys.normal]
 j = "move_down"
@@ -239,7 +242,8 @@ c = "open_claude"
 s = "open_shell"
 q = "quit"
 esc = "quit"
-delete = "delete_file"
+d = "delete_file"
+"shift+d" = "permanent_delete_file"
 "ctrl+x" = "cut_file"
 "ctrl+v" = "paste"
 "ctrl+c" = "copy_file"
@@ -269,7 +273,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `permanent_delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 

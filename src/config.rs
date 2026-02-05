@@ -49,6 +49,7 @@ pub struct Config {
   pub ratio_step: u16,
   pub tick_rate_ms: u64,
   pub claude_yolo: bool,
+  pub use_trash: bool,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
@@ -79,6 +80,7 @@ struct GeneralConfig {
   tree_ratio: Option<u16>,
   tick_rate_ms: Option<u64>,
   claude_yolo: Option<bool>,
+  use_trash: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -193,6 +195,7 @@ impl Config {
       ratio_step: 5,
       tick_rate_ms: 100,
       claude_yolo: false,
+      use_trash: true,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       custom_apps: Vec::new(),
@@ -217,6 +220,9 @@ impl Config {
       }
       if let Some(yolo) = general.claude_yolo {
         self.claude_yolo = yolo;
+      }
+      if let Some(trash) = general.use_trash {
+        self.use_trash = trash;
       }
     }
 
@@ -257,6 +263,7 @@ impl Config {
     r#"[general]
 tree_ratio = 30       # initial tree pane width (percentage)
 tick_rate_ms = 100    # event loop tick rate in ms
+use_trash = true      # move to trash instead of permanent delete (default true)
 
 [keys.normal]
 j = "move_down"
@@ -285,7 +292,8 @@ c = "open_claude"
 s = "open_shell"
 q = "quit"
 esc = "quit"
-delete = "delete_file"
+d = "delete_file"
+"shift+d" = "permanent_delete_file"
 "ctrl+x" = "cut_file"
 "ctrl+v" = "paste"
 "ctrl+c" = "copy_file"
@@ -544,7 +552,8 @@ mod tests {
       (KeyCode::Char('c'), n, Action::OpenClaude),
       (KeyCode::Char('C'), n, Action::OpenClaudeAlt),
       (KeyCode::Char('s'), n, Action::OpenShell),
-      (KeyCode::Delete, n, Action::DeleteFile),
+      (KeyCode::Char('d'), n, Action::DeleteFile),
+      (KeyCode::Char('D'), n, Action::PermanentDeleteFile),
       (KeyCode::Char('x'), KeyModifiers::CONTROL, Action::CutFile),
       (KeyCode::Char('v'), KeyModifiers::CONTROL, Action::Paste),
       (KeyCode::Char('c'), KeyModifiers::CONTROL, Action::CopyFile),
@@ -964,5 +973,45 @@ claude_yolo = false
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('?'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleHelp));
+  }
+
+  #[test]
+  fn test_use_trash_default_true() {
+    let config = Config::default();
+    assert!(config.use_trash);
+  }
+
+  #[test]
+  fn test_use_trash_parsed_true() {
+    let toml = r#"
+[general]
+use_trash = true
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(config.use_trash);
+  }
+
+  #[test]
+  fn test_use_trash_parsed_false() {
+    let toml = r#"
+[general]
+use_trash = false
+"#;
+    let config = Config::load_from_str(toml);
+    assert!(!config.use_trash);
+  }
+
+  #[test]
+  fn test_default_d_binds_delete_file() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('d'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::DeleteFile));
+  }
+
+  #[test]
+  fn test_default_shift_d_binds_permanent_delete_file() {
+    let config = Config::default();
+    let kb = KeyBinding { code: KeyCode::Char('D'), modifiers: KeyModifiers::NONE };
+    assert_eq!(config.normal_keys.get(&kb), Some(&Action::PermanentDeleteFile));
   }
 }
