@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use ratatui::style::Color;
 
@@ -79,6 +80,7 @@ pub struct FileEntry {
   pub symlink_target: Option<String>,
   pub expanded: bool,
   pub size: u64,
+  pub modified: Option<SystemTime>,
   pub is_git_ignored: bool,
   pub git_status: GitStatus,
 }
@@ -97,6 +99,7 @@ impl FileEntry {
     let metadata = path.metadata();
     let is_dir = metadata.as_ref().is_ok_and(|m| m.is_dir());
     let size = metadata.as_ref().map_or(0, |m| m.len());
+    let modified = metadata.as_ref().ok().and_then(|m| m.modified().ok());
     let name = path
       .file_name()
       .map(|n| n.to_string_lossy().to_string())
@@ -111,6 +114,7 @@ impl FileEntry {
       symlink_target,
       expanded: false,
       size,
+      modified,
       is_git_ignored: false,
       git_status: GitStatus::default(),
     }
@@ -170,6 +174,7 @@ mod tests {
       symlink_target: None,
       expanded: false,
       size: 0,
+      modified: None,
       is_git_ignored: false,
       git_status: GitStatus::default(),
     };
@@ -184,6 +189,7 @@ mod tests {
       symlink_target: None,
       expanded: false,
       size: 0,
+      modified: None,
       is_git_ignored: false,
       git_status: GitStatus::default(),
     };

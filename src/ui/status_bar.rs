@@ -229,6 +229,21 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           ));
         }
 
+        // Sort indicator (only show if not default name/asc)
+        use crate::fs::{SortField, SortOrder};
+        let is_default_sort = app.tree.sort_field == SortField::Name
+          && app.tree.sort_order == SortOrder::Ascending;
+        if !is_default_sort {
+          let arrow = match app.tree.sort_order {
+            SortOrder::Ascending => "\u{2191}",
+            SortOrder::Descending => "\u{2193}",
+          };
+          spans.push(Span::styled(
+            format!(" [{}{}]", app.tree.sort_field.display_name(), arrow),
+            Style::default().fg(Color::Indexed(75)),
+          ));
+        }
+
         // Position info on the right
         let pos_info = format!(
           " {}/{} ",

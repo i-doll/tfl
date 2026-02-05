@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -5,6 +6,64 @@ use anyhow::Result;
 
 use super::entry::{FileEntry, GitStatus};
 use crate::git::{GitRepo, GitRepoInfo};
+
+/// Field to sort files by
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortField {
+  #[default]
+  Name,
+  Size,
+  Date,
+  Type,
+}
+
+impl SortField {
+  /// Cycle to the next sort field
+  pub fn next(self) -> Self {
+    match self {
+      SortField::Name => SortField::Size,
+      SortField::Size => SortField::Date,
+      SortField::Date => SortField::Type,
+      SortField::Type => SortField::Name,
+    }
+  }
+
+  /// Display name for status bar
+  pub fn display_name(self) -> &'static str {
+    match self {
+      SortField::Name => "name",
+      SortField::Size => "size",
+      SortField::Date => "date",
+      SortField::Type => "type",
+    }
+  }
+}
+
+/// Sort order (ascending or descending)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOrder {
+  #[default]
+  Ascending,
+  Descending,
+}
+
+impl SortOrder {
+  /// Toggle between ascending and descending
+  pub fn toggle(self) -> Self {
+    match self {
+      SortOrder::Ascending => SortOrder::Descending,
+      SortOrder::Descending => SortOrder::Ascending,
+    }
+  }
+
+  /// Display name for status bar
+  pub fn display_name(self) -> &'static str {
+    match self {
+      SortOrder::Ascending => "asc",
+      SortOrder::Descending => "desc",
+    }
+  }
+}
 
 fn mark_git_status(statuses: &HashMap<PathBuf, GitStatus>, children: &mut [FileEntry]) {
   for child in children.iter_mut() {
@@ -52,6 +111,36 @@ fn mark_git_ignored(git_repo: Option<&GitRepo>, children: &mut [FileEntry]) {
   }
 }
 
+/// Sort entries by the given field and order, keeping directories first
+fn sort_entries(children: &mut [FileEntry], field: SortField, order: SortOrder) {
+  children.sort_by(|a, b| {
+    // Directories always come first
+    let dir_cmp = b.is_dir.cmp(&a.is_dir);
+    if dir_cmp != Ordering::Equal {
+      return dir_cmp;
+    }
+
+    // Then sort by the specified field
+    let field_cmp = match field {
+      SortField::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+      SortField::Size => a.size.cmp(&b.size),
+      SortField::Date => a.modified.cmp(&b.modified),
+      SortField::Type => {
+        let ext_a = a.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext_b = b.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        ext_a.to_lowercase().cmp(&ext_b.to_lowercase())
+          .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+      }
+    };
+
+    // Apply sort order
+    match order {
+      SortOrder::Ascending => field_cmp,
+      SortOrder::Descending => field_cmp.reverse(),
+    }
+  });
+}
+
 #[derive(Debug)]
 pub struct FileTree {
   pub root: PathBuf,
@@ -59,6 +148,8 @@ pub struct FileTree {
   pub show_hidden: bool,
   pub git_statuses: HashMap<PathBuf, GitStatus>,
   pub git_info: GitRepoInfo,
+  pub sort_field: SortField,
+  pub sort_order: SortOrder,
   git_repo: Option<GitRepo>,
 }
 
@@ -75,6 +166,8 @@ impl FileTree {
       show_hidden: false,
       git_statuses,
       git_info,
+      sort_field: SortField::default(),
+      sort_order: SortOrder::default(),
       git_repo,
     };
     tree.load_dir(&root, 0)?;
@@ -113,12 +206,8 @@ impl FileTree {
       children.push(child);
     }
 
-    // Sort: directories first, then case-insensitive alphabetical
-    children.sort_by(|a, b| {
-      b.is_dir
-        .cmp(&a.is_dir)
-        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    // Sort: directories first, then by the current sort field/order
+    sort_entries(&mut children, self.sort_field, self.sort_order);
 
     mark_git_ignored(self.git_repo.as_ref(), &mut children);
     mark_git_status(&self.git_statuses, &mut children);
@@ -163,11 +252,7 @@ impl FileTree {
       children.push(child);
     }
 
-    children.sort_by(|a, b| {
-      b.is_dir
-        .cmp(&a.is_dir)
-        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    sort_entries(&mut children, self.sort_field, self.sort_order);
 
     mark_git_ignored(self.git_repo.as_ref(), &mut children);
     mark_git_status(&self.git_statuses, &mut children);
@@ -200,6 +285,18 @@ impl FileTree {
 
   pub fn toggle_hidden(&mut self) -> Result<()> {
     self.show_hidden = !self.show_hidden;
+    self.reload()
+  }
+
+  /// Cycle to the next sort field and reload the tree
+  pub fn cycle_sort_field(&mut self) -> Result<()> {
+    self.sort_field = self.sort_field.next();
+    self.reload()
+  }
+
+  /// Toggle the sort order and reload the tree
+  pub fn toggle_sort_order(&mut self) -> Result<()> {
+    self.sort_order = self.sort_order.toggle();
     self.reload()
   }
 
@@ -759,6 +856,198 @@ mod tests {
 
     // Out of bounds should return None
     assert_eq!(tree.find_parent_index(100), None);
+
+    cleanup(&dir);
+  }
+
+  // Sorting tests
+
+  #[test]
+  fn test_sort_field_cycle() {
+    assert_eq!(SortField::Name.next(), SortField::Size);
+    assert_eq!(SortField::Size.next(), SortField::Date);
+    assert_eq!(SortField::Date.next(), SortField::Type);
+    assert_eq!(SortField::Type.next(), SortField::Name);
+  }
+
+  #[test]
+  fn test_sort_order_toggle() {
+    assert_eq!(SortOrder::Ascending.toggle(), SortOrder::Descending);
+    assert_eq!(SortOrder::Descending.toggle(), SortOrder::Ascending);
+  }
+
+  #[test]
+  fn test_sort_field_display_name() {
+    assert_eq!(SortField::Name.display_name(), "name");
+    assert_eq!(SortField::Size.display_name(), "size");
+    assert_eq!(SortField::Date.display_name(), "date");
+    assert_eq!(SortField::Type.display_name(), "type");
+  }
+
+  #[test]
+  fn test_sort_order_display_name() {
+    assert_eq!(SortOrder::Ascending.display_name(), "asc");
+    assert_eq!(SortOrder::Descending.display_name(), "desc");
+  }
+
+  #[test]
+  fn test_default_sort_is_name_ascending() {
+    let dir = setup_test_dir();
+    let tree = FileTree::new(dir.clone()).unwrap();
+    assert_eq!(tree.sort_field, SortField::Name);
+    assert_eq!(tree.sort_order, SortOrder::Ascending);
+    cleanup(&dir);
+  }
+
+  fn setup_sort_test_dir() -> PathBuf {
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("tui_sort_{id}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    // Create files with different sizes
+    fs::write(dir.join("small.txt"), "a").unwrap();
+    fs::write(dir.join("medium.txt"), "hello world").unwrap();
+    fs::write(dir.join("large.txt"), "this is a much longer file content").unwrap();
+    // Create files with different extensions
+    fs::write(dir.join("code.rs"), "fn main() {}").unwrap();
+    fs::write(dir.join("data.json"), "{}").unwrap();
+    dir
+  }
+
+  #[test]
+  fn test_sort_by_size_ascending() {
+    let dir = setup_sort_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    tree.sort_field = SortField::Size;
+    tree.sort_order = SortOrder::Ascending;
+    tree.reload().unwrap();
+
+    // Files should be ordered: small (1), data.json (2), medium (11), code.rs (12), large (35)
+    let files: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(files[0], "small.txt");
+    assert_eq!(files[1], "data.json");
+    assert_eq!(files[2], "medium.txt");
+    assert_eq!(files[3], "code.rs");
+    assert_eq!(files[4], "large.txt");
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_size_descending() {
+    let dir = setup_sort_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    tree.sort_field = SortField::Size;
+    tree.sort_order = SortOrder::Descending;
+    tree.reload().unwrap();
+
+    // Files should be in reverse order
+    let files: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(files[0], "large.txt");
+    assert_eq!(files[4], "small.txt");
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_type_ascending() {
+    let dir = setup_sort_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    tree.sort_field = SortField::Type;
+    tree.sort_order = SortOrder::Ascending;
+    tree.reload().unwrap();
+
+    // Files should be ordered by extension: json, rs, txt (alphabetical)
+    let files: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(files[0], "data.json");
+    assert_eq!(files[1], "code.rs");
+    // txt files should be in alphabetical order within their type
+    assert!(files[2..].contains(&"large.txt"));
+    assert!(files[2..].contains(&"medium.txt"));
+    assert!(files[2..].contains(&"small.txt"));
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_cycle_sort_field() {
+    let dir = setup_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    assert_eq!(tree.sort_field, SortField::Name);
+
+    tree.cycle_sort_field().unwrap();
+    assert_eq!(tree.sort_field, SortField::Size);
+
+    tree.cycle_sort_field().unwrap();
+    assert_eq!(tree.sort_field, SortField::Date);
+
+    tree.cycle_sort_field().unwrap();
+    assert_eq!(tree.sort_field, SortField::Type);
+
+    tree.cycle_sort_field().unwrap();
+    assert_eq!(tree.sort_field, SortField::Name);
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_toggle_sort_order() {
+    let dir = setup_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    assert_eq!(tree.sort_order, SortOrder::Ascending);
+
+    tree.toggle_sort_order().unwrap();
+    assert_eq!(tree.sort_order, SortOrder::Descending);
+
+    tree.toggle_sort_order().unwrap();
+    assert_eq!(tree.sort_order, SortOrder::Ascending);
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_dirs_remain_first_after_sort() {
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("tui_dirsort_{id}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("zulu_dir")).unwrap();
+    fs::create_dir_all(dir.join("alpha_dir")).unwrap();
+    fs::write(dir.join("beta.txt"), "content").unwrap();
+    fs::write(dir.join("aaa.txt"), "small").unwrap();
+
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+
+    // Test with different sort fields
+    for field in [SortField::Name, SortField::Size, SortField::Date, SortField::Type] {
+      tree.sort_field = field;
+      tree.reload().unwrap();
+
+      // First two entries should always be directories
+      assert!(tree.entries[0].is_dir, "First entry should be dir for {:?}", field);
+      assert!(tree.entries[1].is_dir, "Second entry should be dir for {:?}", field);
+      assert!(!tree.entries[2].is_dir, "Third entry should be file for {:?}", field);
+      assert!(!tree.entries[3].is_dir, "Fourth entry should be file for {:?}", field);
+    }
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_persists_through_navigation() {
+    let dir = setup_test_dir();
+    let mut tree = FileTree::new(dir.clone()).unwrap();
+    tree.sort_field = SortField::Size;
+    tree.sort_order = SortOrder::Descending;
+    tree.reload().unwrap();
+
+    // Expand a directory
+    tree.toggle_expand(0).unwrap();
+
+    // Sort settings should persist
+    assert_eq!(tree.sort_field, SortField::Size);
+    assert_eq!(tree.sort_order, SortOrder::Descending);
+
+    // Reload should maintain sort settings
+    tree.reload().unwrap();
+    assert_eq!(tree.sort_field, SortField::Size);
+    assert_eq!(tree.sort_order, SortOrder::Descending);
 
     cleanup(&dir);
   }
