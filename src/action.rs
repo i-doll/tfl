@@ -77,6 +77,9 @@ pub enum Action {
   ToggleMarkdownMode,
   SwitchPane,
   ToggleDualPane,
+  ShowDiff,
+  NextHunk,
+  PrevHunk,
   Resize(u16, u16),
   Tick,
   None,
@@ -130,6 +133,9 @@ impl Action {
       "toggle_markdown_mode" => Some(Action::ToggleMarkdownMode),
       "switch_pane" => Some(Action::SwitchPane),
       "toggle_dual_pane" => Some(Action::ToggleDualPane),
+      "show_diff" => Some(Action::ShowDiff),
+      "next_hunk" => Some(Action::NextHunk),
+      "prev_hunk" => Some(Action::PrevHunk),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -184,6 +190,9 @@ mod tests {
     assert_eq!(Action::from_name("toggle_blame"), Some(Action::ToggleBlame));
     assert_eq!(Action::from_name("switch_pane"), Some(Action::SwitchPane));
     assert_eq!(Action::from_name("toggle_dual_pane"), Some(Action::ToggleDualPane));
+    assert_eq!(Action::from_name("show_diff"), Some(Action::ShowDiff));
+    assert_eq!(Action::from_name("next_hunk"), Some(Action::NextHunk));
+    assert_eq!(Action::from_name("prev_hunk"), Some(Action::PrevHunk));
   }
 
   #[test]

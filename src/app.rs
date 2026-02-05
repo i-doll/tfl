@@ -549,6 +549,29 @@ impl App {
       Action::BreadcrumbSelect(index) => self.breadcrumb_select(index)?,
       Action::SwitchPane => self.switch_pane(),
       Action::ToggleDualPane => self.toggle_dual_pane()?,
+      Action::ShowDiff => {
+        if let Some(entry) = self.selected_entry()
+          && !entry.is_dir
+        {
+          let path = entry.path.clone();
+          let has_diff = self.preview.show_diff(&path, self.tree.git_repo());
+          if has_diff {
+            self.set_status("Showing diff".to_string());
+          } else {
+            self.set_status("No uncommitted changes".to_string());
+          }
+        }
+      }
+      Action::NextHunk => {
+        if self.preview.next_hunk() {
+          self.set_status("Next hunk".to_string());
+        }
+      }
+      Action::PrevHunk => {
+        if self.preview.prev_hunk() {
+          self.set_status("Previous hunk".to_string());
+        }
+      }
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
