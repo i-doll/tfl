@@ -8,7 +8,7 @@ use crate::action::Action;
 use crate::config::Config;
 use crate::event::{InputMode, PromptKind};
 use crate::favorites::Favorites;
-use crate::fs::FileTree;
+use crate::fs::tree::FileTree;
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::PreviewState;
@@ -67,7 +67,12 @@ pub enum SuspendAction {
 
 impl App {
   pub fn new(root: PathBuf, picker: Option<Picker>, config: &Config) -> Result<Self> {
-    let tree = FileTree::new(root)?;
+    let tree = FileTree::with_sort(
+      root,
+      config.sort_field,
+      config.sort_order,
+      config.sort_dirs_first,
+    )?;
     Ok(Self {
       tree,
       cursor: 0,
@@ -963,6 +968,10 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    // Update sort settings - will take effect on next tree reload
+    self.tree.sort_field = config.sort_field;
+    self.tree.sort_order = config.sort_order;
+    self.tree.sort_dirs_first = config.sort_dirs_first;
   }
 
   pub fn reload_favorites(&mut self) {
@@ -2019,5 +2028,76 @@ mod tests {
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
 
     cleanup_test_dir(&dir);
+  }
+
+  // --- Sort persistence tests ---
+
+  #[test]
+  fn test_app_uses_config_sort_settings() {
+    let dir = setup_test_dir();
+    let mut c = cfg();
+    c.sort_field = crate::config::SortField::Name;
+    c.sort_order = crate::config::SortOrder::Desc;
+    c.sort_dirs_first = true;
+    let app = App::new(dir.clone(), None, &c).unwrap();
+
+    // Dirs first, then files, desc order
+    assert!(app.tree.entries[0].is_dir);
+    assert_eq!(app.tree.entries[0].name, "zzz_dir");
+    assert!(app.tree.entries[1].is_dir);
+    assert_eq!(app.tree.entries[1].name, "aaa_dir");
+    assert!(!app.tree.entries[2].is_dir);
+    assert_eq!(app.tree.entries[2].name, "ccc.rs");
+    assert!(!app.tree.entries[3].is_dir);
+    assert_eq!(app.tree.entries[3].name, "bbb.txt");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_updates_sort_settings() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Default is name asc
+    assert_eq!(app.tree.sort_field, crate::config::SortField::Name);
+    assert_eq!(app.tree.sort_order, crate::config::SortOrder::Asc);
+
+    // Update config with new sort settings
+    let mut c = cfg();
+    c.sort_field = crate::config::SortField::Size;
+    c.sort_order = crate::config::SortOrder::Desc;
+    c.sort_dirs_first = false;
+    app.apply_config(&c);
+
+    // Sort settings should be updated on the tree
+    assert_eq!(app.tree.sort_field, crate::config::SortField::Size);
+    assert_eq!(app.tree.sort_order, crate::config::SortOrder::Desc);
+    assert!(!app.tree.sort_dirs_first);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_type_with_config() {
+    let dir = std::env::temp_dir().join(format!("tui_app_sort_type_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("data.json"), "{}").unwrap();
+    fs::write(dir.join("readme.md"), "# Readme").unwrap();
+    fs::write(dir.join("code.rs"), "fn main() {}").unwrap();
+
+    let mut c = cfg();
+    c.sort_field = crate::config::SortField::Type;
+    c.sort_order = crate::config::SortOrder::Asc;
+    c.sort_dirs_first = false;
+    let app = App::new(dir.clone(), None, &c).unwrap();
+
+    let names: Vec<&str> = app.tree.entries.iter().map(|e| e.name.as_str()).collect();
+    // Sorted by extension: json, md, rs
+    assert_eq!(names, vec!["data.json", "readme.md", "code.rs"]);
+
+    let _ = fs::remove_dir_all(&dir);
   }
 }

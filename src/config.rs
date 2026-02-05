@@ -6,6 +6,46 @@ use serde::Deserialize;
 use crate::action::Action;
 use crate::opener::OpenApp;
 
+/// Field to sort files by
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortField {
+  #[default]
+  Name,
+  Size,
+  Date,
+  Type,
+}
+
+impl SortField {
+  pub fn from_str(s: &str) -> Option<Self> {
+    match s.to_lowercase().as_str() {
+      "name" => Some(SortField::Name),
+      "size" => Some(SortField::Size),
+      "date" => Some(SortField::Date),
+      "type" => Some(SortField::Type),
+      _ => None,
+    }
+  }
+}
+
+/// Sort order
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOrder {
+  #[default]
+  Asc,
+  Desc,
+}
+
+impl SortOrder {
+  pub fn from_str(s: &str) -> Option<Self> {
+    match s.to_lowercase().as_str() {
+      "asc" => Some(SortOrder::Asc),
+      "desc" => Some(SortOrder::Desc),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBinding {
   pub code: KeyCode,
@@ -49,6 +89,9 @@ pub struct Config {
   pub ratio_step: u16,
   pub tick_rate_ms: u64,
   pub claude_yolo: bool,
+  pub sort_field: SortField,
+  pub sort_order: SortOrder,
+  pub sort_dirs_first: bool,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
@@ -57,7 +100,15 @@ pub struct Config {
 #[derive(Deserialize, Default)]
 struct TomlConfig {
   general: Option<GeneralConfig>,
+  sort: Option<SortConfig>,
   keys: Option<KeysConfig>,
+}
+
+#[derive(Deserialize, Default)]
+struct SortConfig {
+  field: Option<String>,
+  order: Option<String>,
+  dirs_first: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -193,6 +244,9 @@ impl Config {
       ratio_step: 5,
       tick_rate_ms: 100,
       claude_yolo: false,
+      sort_field: SortField::default(),
+      sort_order: SortOrder::default(),
+      sort_dirs_first: true,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       custom_apps: Vec::new(),
@@ -217,6 +271,26 @@ impl Config {
       }
       if let Some(yolo) = general.claude_yolo {
         self.claude_yolo = yolo;
+      }
+    }
+
+    if let Some(sort) = toml_config.sort {
+      if let Some(field_str) = &sort.field {
+        if let Some(field) = SortField::from_str(field_str) {
+          self.sort_field = field;
+        } else {
+          errors.push(format!("invalid sort field: {field_str:?}, using default"));
+        }
+      }
+      if let Some(order_str) = &sort.order {
+        if let Some(order) = SortOrder::from_str(order_str) {
+          self.sort_order = order;
+        } else {
+          errors.push(format!("invalid sort order: {order_str:?}, using default"));
+        }
+      }
+      if let Some(dirs_first) = sort.dirs_first {
+        self.sort_dirs_first = dirs_first;
       }
     }
 
@@ -257,6 +331,11 @@ impl Config {
     r#"[general]
 tree_ratio = 30       # initial tree pane width (percentage)
 tick_rate_ms = 100    # event loop tick rate in ms
+
+[sort]
+field = "name"        # name, size, date, type
+order = "asc"         # asc, desc
+dirs_first = true     # directories sorted before files
 
 [keys.normal]
 j = "move_down"
@@ -964,5 +1043,107 @@ claude_yolo = false
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('?'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ToggleHelp));
+  }
+
+  // --- Sort config tests ---
+
+  #[test]
+  fn test_sort_field_from_str() {
+    assert_eq!(SortField::from_str("name"), Some(SortField::Name));
+    assert_eq!(SortField::from_str("Name"), Some(SortField::Name));
+    assert_eq!(SortField::from_str("NAME"), Some(SortField::Name));
+    assert_eq!(SortField::from_str("size"), Some(SortField::Size));
+    assert_eq!(SortField::from_str("date"), Some(SortField::Date));
+    assert_eq!(SortField::from_str("type"), Some(SortField::Type));
+    assert_eq!(SortField::from_str("invalid"), None);
+    assert_eq!(SortField::from_str(""), None);
+  }
+
+  #[test]
+  fn test_sort_order_from_str() {
+    assert_eq!(SortOrder::from_str("asc"), Some(SortOrder::Asc));
+    assert_eq!(SortOrder::from_str("Asc"), Some(SortOrder::Asc));
+    assert_eq!(SortOrder::from_str("ASC"), Some(SortOrder::Asc));
+    assert_eq!(SortOrder::from_str("desc"), Some(SortOrder::Desc));
+    assert_eq!(SortOrder::from_str("Desc"), Some(SortOrder::Desc));
+    assert_eq!(SortOrder::from_str("invalid"), None);
+    assert_eq!(SortOrder::from_str(""), None);
+  }
+
+  #[test]
+  fn test_default_sort_settings() {
+    let config = Config::default();
+    assert_eq!(config.sort_field, SortField::Name);
+    assert_eq!(config.sort_order, SortOrder::Asc);
+    assert!(config.sort_dirs_first);
+  }
+
+  #[test]
+  fn test_sort_config_parsed() {
+    let toml = r#"
+[sort]
+field = "size"
+order = "desc"
+dirs_first = false
+"#;
+    let config = Config::load_from_str(toml);
+    assert_eq!(config.sort_field, SortField::Size);
+    assert_eq!(config.sort_order, SortOrder::Desc);
+    assert!(!config.sort_dirs_first);
+  }
+
+  #[test]
+  fn test_sort_config_partial() {
+    let toml = r#"
+[sort]
+field = "date"
+"#;
+    let config = Config::load_from_str(toml);
+    assert_eq!(config.sort_field, SortField::Date);
+    // Defaults kept for unspecified fields
+    assert_eq!(config.sort_order, SortOrder::Asc);
+    assert!(config.sort_dirs_first);
+  }
+
+  #[test]
+  fn test_sort_config_invalid_field_uses_default() {
+    let toml = r#"
+[sort]
+field = "invalid"
+order = "asc"
+"#;
+    let mut errors = Vec::new();
+    let config = Config::load_from_str_with_errors(toml, &mut errors);
+    // Invalid field should keep default
+    assert_eq!(config.sort_field, SortField::Name);
+    // Valid order should be applied
+    assert_eq!(config.sort_order, SortOrder::Asc);
+    // Should have an error message
+    assert!(errors.iter().any(|e| e.contains("invalid sort field")));
+  }
+
+  #[test]
+  fn test_sort_config_invalid_order_uses_default() {
+    let toml = r#"
+[sort]
+field = "name"
+order = "backwards"
+"#;
+    let mut errors = Vec::new();
+    let config = Config::load_from_str_with_errors(toml, &mut errors);
+    assert_eq!(config.sort_field, SortField::Name);
+    // Invalid order should keep default
+    assert_eq!(config.sort_order, SortOrder::Asc);
+    assert!(errors.iter().any(|e| e.contains("invalid sort order")));
+  }
+
+  #[test]
+  fn test_sort_type_field() {
+    let toml = r#"
+[sort]
+field = "type"
+"#;
+    let config = Config::load_from_str(toml);
+    assert_eq!(config.sort_field, SortField::Type);
   }
 }

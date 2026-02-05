@@ -1,9 +1,11 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
 use super::entry::{FileEntry, GitStatus};
+use crate::config::{SortField, SortOrder};
 use crate::git::{GitRepo, GitRepoInfo};
 
 fn mark_git_status(statuses: &HashMap<PathBuf, GitStatus>, children: &mut [FileEntry]) {
@@ -60,10 +62,23 @@ pub struct FileTree {
   pub git_statuses: HashMap<PathBuf, GitStatus>,
   pub git_info: GitRepoInfo,
   git_repo: Option<GitRepo>,
+  pub sort_field: SortField,
+  pub sort_order: SortOrder,
+  pub sort_dirs_first: bool,
 }
 
 impl FileTree {
+  #[allow(dead_code)]
   pub fn new(root: PathBuf) -> Result<Self> {
+    Self::with_sort(root, SortField::default(), SortOrder::default(), true)
+  }
+
+  pub fn with_sort(
+    root: PathBuf,
+    sort_field: SortField,
+    sort_order: SortOrder,
+    sort_dirs_first: bool,
+  ) -> Result<Self> {
     let git_repo = GitRepo::open(&root);
     let (git_statuses, git_info) = git_repo
       .as_ref()
@@ -76,6 +91,9 @@ impl FileTree {
       git_statuses,
       git_info,
       git_repo,
+      sort_field,
+      sort_order,
+      sort_dirs_first,
     };
     tree.load_dir(&root, 0)?;
     propagate_git_status(&mut tree.entries);
@@ -84,6 +102,53 @@ impl FileTree {
 
   pub fn git_repo(&self) -> Option<&GitRepo> {
     self.git_repo.as_ref()
+  }
+
+  /// Sort a list of entries according to current sort settings
+  fn sort_entries(&self, entries: &mut [FileEntry]) {
+    let field = self.sort_field;
+    let order = self.sort_order;
+    let dirs_first = self.sort_dirs_first;
+
+    entries.sort_by(|a, b| {
+      // First, optionally sort directories first
+      let dir_cmp = if dirs_first {
+        b.is_dir.cmp(&a.is_dir)
+      } else {
+        Ordering::Equal
+      };
+
+      // Then sort by the selected field
+      let field_cmp = match field {
+        SortField::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        SortField::Size => a.size.cmp(&b.size),
+        SortField::Date => {
+          // Compare modification times; fall back to name on error
+          let a_time = a.path.metadata().and_then(|m| m.modified()).ok();
+          let b_time = b.path.metadata().and_then(|m| m.modified()).ok();
+          match (a_time, b_time) {
+            (Some(at), Some(bt)) => at.cmp(&bt),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+          }
+        }
+        SortField::Type => {
+          // Sort by extension, then by name
+          let a_ext = a.path.extension().map(|e| e.to_string_lossy().to_lowercase());
+          let b_ext = b.path.extension().map(|e| e.to_string_lossy().to_lowercase());
+          a_ext.cmp(&b_ext).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        }
+      };
+
+      // Apply sort order
+      let field_cmp = match order {
+        SortOrder::Asc => field_cmp,
+        SortOrder::Desc => field_cmp.reverse(),
+      };
+
+      dir_cmp.then(field_cmp)
+    });
   }
 
   pub fn load_dir(&mut self, path: &Path, depth: usize) -> Result<()> {
@@ -113,12 +178,7 @@ impl FileTree {
       children.push(child);
     }
 
-    // Sort: directories first, then case-insensitive alphabetical
-    children.sort_by(|a, b| {
-      b.is_dir
-        .cmp(&a.is_dir)
-        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    self.sort_entries(&mut children);
 
     mark_git_ignored(self.git_repo.as_ref(), &mut children);
     mark_git_status(&self.git_statuses, &mut children);
@@ -163,11 +223,7 @@ impl FileTree {
       children.push(child);
     }
 
-    children.sort_by(|a, b| {
-      b.is_dir
-        .cmp(&a.is_dir)
-        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    self.sort_entries(&mut children);
 
     mark_git_ignored(self.git_repo.as_ref(), &mut children);
     mark_git_status(&self.git_statuses, &mut children);
@@ -339,13 +395,13 @@ impl FileTree {
 mod tests {
   use super::*;
   use std::fs;
-  use std::sync::atomic::{AtomicU32, Ordering};
+  use std::sync::atomic::AtomicU32;
 
   use crate::fs::entry::GitFileStatus;
   static COUNTER: AtomicU32 = AtomicU32::new(0);
 
   fn setup_test_dir() -> PathBuf {
-    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("tui_tree_{id}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("alpha_dir")).unwrap();
@@ -500,7 +556,7 @@ mod tests {
   #[test]
   fn test_mark_git_ignored_marks_ignored_files() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_gitignore_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_gitignore_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -531,7 +587,7 @@ mod tests {
   #[test]
   fn test_mark_git_ignored_no_git_repo() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_no_git_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_no_git_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -555,7 +611,7 @@ mod tests {
   #[test]
   fn test_tree_loads_with_git_ignored_flag() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_load_ignored_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_load_ignored_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -594,7 +650,7 @@ mod tests {
   #[test]
   fn test_non_git_dir_all_clean() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_nogit_clean_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_nogit_clean_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -644,7 +700,7 @@ mod tests {
   #[test]
   fn test_git_status_on_modified_files() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_gitstatus_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_gitstatus_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -684,7 +740,7 @@ mod tests {
   #[test]
   fn test_git_status_parent_propagation() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_gitprop_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_gitprop_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("subdir")).unwrap();
@@ -709,7 +765,7 @@ mod tests {
   #[test]
   fn test_reload_refreshes_git_status() {
     let dir = std::env::temp_dir().join(format!(
-      "tui_tree_gitreload_{}_{}", COUNTER.fetch_add(1, Ordering::SeqCst), std::process::id()
+      "tui_tree_gitreload_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -759,6 +815,195 @@ mod tests {
 
     // Out of bounds should return None
     assert_eq!(tree.find_parent_index(100), None);
+
+    cleanup(&dir);
+  }
+
+  // --- Sort persistence tests ---
+
+  #[test]
+  fn test_sort_by_name_asc() {
+    let dir = setup_test_dir();
+    let tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Name,
+      SortOrder::Asc,
+      true,
+    ).unwrap();
+
+    // Dirs first, then files, both alphabetically
+    assert!(tree.entries[0].is_dir);
+    assert_eq!(tree.entries[0].name, "alpha_dir");
+    assert!(tree.entries[1].is_dir);
+    assert_eq!(tree.entries[1].name, "beta_dir");
+    assert!(!tree.entries[2].is_dir);
+    assert_eq!(tree.entries[2].name, "charlie.txt");
+    assert!(!tree.entries[3].is_dir);
+    assert_eq!(tree.entries[3].name, "delta.rs");
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_name_desc() {
+    let dir = setup_test_dir();
+    let tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Name,
+      SortOrder::Desc,
+      true,
+    ).unwrap();
+
+    // Dirs first (reverse alpha), then files (reverse alpha)
+    assert!(tree.entries[0].is_dir);
+    assert_eq!(tree.entries[0].name, "beta_dir");
+    assert!(tree.entries[1].is_dir);
+    assert_eq!(tree.entries[1].name, "alpha_dir");
+    assert!(!tree.entries[2].is_dir);
+    assert_eq!(tree.entries[2].name, "delta.rs");
+    assert!(!tree.entries[3].is_dir);
+    assert_eq!(tree.entries[3].name, "charlie.txt");
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_dirs_first_disabled() {
+    let dir = setup_test_dir();
+    let tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Name,
+      SortOrder::Asc,
+      false, // dirs_first = false
+    ).unwrap();
+
+    // All entries should be alphabetically sorted regardless of type
+    let names: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["alpha_dir", "beta_dir", "charlie.txt", "delta.rs"]);
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_size() {
+    let dir = std::env::temp_dir().join(format!("tui_tree_sort_size_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // Create files with different sizes
+    fs::write(dir.join("small.txt"), "a").unwrap();
+    fs::write(dir.join("medium.txt"), "abcdefghij").unwrap();
+    fs::write(dir.join("large.txt"), "abcdefghijklmnopqrstuvwxyz").unwrap();
+
+    let tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Size,
+      SortOrder::Asc,
+      false,
+    ).unwrap();
+
+    let names: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["small.txt", "medium.txt", "large.txt"]);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_size_desc() {
+    let dir = std::env::temp_dir().join(format!("tui_tree_sort_size_desc_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("small.txt"), "a").unwrap();
+    fs::write(dir.join("medium.txt"), "abcdefghij").unwrap();
+    fs::write(dir.join("large.txt"), "abcdefghijklmnopqrstuvwxyz").unwrap();
+
+    let tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Size,
+      SortOrder::Desc,
+      false,
+    ).unwrap();
+
+    let names: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["large.txt", "medium.txt", "small.txt"]);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_sort_by_type() {
+    let dir = std::env::temp_dir().join(format!("tui_tree_sort_type_{}_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst), std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("file.rs"), "fn main() {}").unwrap();
+    fs::write(dir.join("data.json"), "{}").unwrap();
+    fs::write(dir.join("readme.md"), "# Readme").unwrap();
+    fs::write(dir.join("other.rs"), "// code").unwrap();
+
+    let tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Type,
+      SortOrder::Asc,
+      false,
+    ).unwrap();
+
+    let names: Vec<&str> = tree.entries.iter().map(|e| e.name.as_str()).collect();
+    // Should sort by extension: json, md, rs, rs (and within same ext, by name)
+    assert_eq!(names, vec!["data.json", "readme.md", "file.rs", "other.rs"]);
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_sort_persists_on_reload() {
+    let dir = setup_test_dir();
+    let mut tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Name,
+      SortOrder::Desc,
+      true,
+    ).unwrap();
+
+    // Verify initial order (desc)
+    assert_eq!(tree.entries[0].name, "beta_dir");
+
+    // Reload tree
+    tree.reload().unwrap();
+
+    // Order should persist
+    assert_eq!(tree.entries[0].name, "beta_dir");
+    assert_eq!(tree.entries[1].name, "alpha_dir");
+
+    cleanup(&dir);
+  }
+
+  #[test]
+  fn test_sort_persists_on_expand() {
+    let dir = setup_test_dir();
+    // Add multiple files to inner dir for testing sort
+    fs::write(dir.join("alpha_dir").join("zebra.txt"), "z").unwrap();
+    fs::write(dir.join("alpha_dir").join("apple.txt"), "a").unwrap();
+
+    let mut tree = FileTree::with_sort(
+      dir.clone(),
+      SortField::Name,
+      SortOrder::Desc,
+      false,
+    ).unwrap();
+
+    // Find and expand alpha_dir (should be second due to desc sort)
+    let alpha_idx = tree.entries.iter().position(|e| e.name == "alpha_dir").unwrap();
+    tree.toggle_expand(alpha_idx).unwrap();
+
+    // Children should also be sorted desc
+    let children: Vec<&str> = tree.entries.iter()
+      .filter(|e| e.depth == 1)
+      .map(|e| e.name.as_str())
+      .collect();
+
+    assert_eq!(children, vec!["zebra.txt", "inner.txt", "apple.txt"]);
 
     cleanup(&dir);
   }
