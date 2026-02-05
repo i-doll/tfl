@@ -34,6 +34,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Git status highlighting** — modified (yellow), staged (green), untracked (red), conflicted (bright red) with parent directory propagation
 - **Git branch display** in header with ahead/behind counts and summary stats
 - **.gitignore-aware** hidden file toggling
+- **Custom ignore patterns** via glob syntax (e.g., `*.log`, `node_modules`)
 - **Resizable panes** with adjustable tree/preview ratio
 - **Preview cache** with LRU eviction and debounced loading
 - **Favorites** — save directories, jump to them from a picker overlay
@@ -64,6 +65,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `G` | Go to bottom |
 | `/` | Start search |
 | `.` | Toggle hidden files |
+| `I` | Toggle custom ignore patterns |
 | `y` | Yank path to clipboard |
 | `Ctrl+c` | Copy file/dir to clipboard |
 | `Ctrl+x` | Cut file/dir to clipboard |
@@ -170,6 +172,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `syntect` | Syntax highlighting for text preview |
 | `infer` | MIME type detection for binary vs text |
 | `ignore` | .gitignore-aware file filtering |
+| `globset` | Glob pattern matching for custom ignore rules |
 | `anyhow` / `thiserror` | Error handling |
 | `unicode-width` | Accurate column width for Unicode strings |
 | `clipboard-anywhere` | Cross-platform clipboard (yank path) |
@@ -276,11 +279,33 @@ a = "new_file_start"
 f = "favorites_open"
 "shift+f" = "favorite_add"
 "ctrl+p" = "chmod"
+"shift+i" = "toggle_custom_ignore"
 
 [keys.g_prefix]
 g = "go_to_top"
 h = "go_home"
+
+[ignore]
+patterns = [
+  "*.log",
+  "node_modules",
+  "__pycache__",
+  ".DS_Store",
+]
+use_gitignore = true   # respect .gitignore files (default true)
+use_custom = true      # apply custom patterns (default true)
 ```
+
+### Custom ignore patterns
+
+The `[ignore]` section lets you filter files from the tree view using glob patterns. Patterns match against file and directory names (not paths). Common use cases:
+
+- `*.log` — hide log files
+- `node_modules` — hide npm dependencies
+- `__pycache__` — hide Python cache
+- `.DS_Store` — hide macOS metadata
+
+Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option controls whether `.gitignore` files are respected (separate from hidden file toggling with `.`).
 
 ### Key format
 
@@ -292,7 +317,7 @@ h = "go_home"
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `go_home`, `favorites_open`, `favorite_add`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 

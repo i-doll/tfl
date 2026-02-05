@@ -109,7 +109,9 @@ pub enum SuspendAction {
 
 impl App {
   pub fn new(root: PathBuf, picker: Option<Picker>, config: &Config) -> Result<Self> {
-    let tree = FileTree::new(root)?;
+    let mut tree = FileTree::with_ignore_patterns(root, config.ignore_glob_set.clone())?;
+    // Initialize custom ignore state from config
+    tree.show_custom_ignored = !config.use_custom_ignore;
     Ok(Self {
       tree,
       cursor: 0,
@@ -383,6 +385,7 @@ impl App {
       Action::ChmodToggleRecursive => self.chmod_toggle_recursive(),
       Action::ChmodApply => self.chmod_apply()?,
       Action::ChmodClose => self.chmod_close(),
+      Action::ToggleCustomIgnore => self.toggle_custom_ignore()?,
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
@@ -680,6 +683,16 @@ impl App {
     self.cursor = self.cursor.min(self.tree.entries.len().saturating_sub(1));
     self.preview.invalidate();
     self.update_preview();
+    Ok(())
+  }
+
+  fn toggle_custom_ignore(&mut self) -> Result<()> {
+    self.tree.toggle_custom_ignored()?;
+    self.cursor = self.cursor.min(self.tree.entries.len().saturating_sub(1));
+    self.preview.invalidate();
+    self.update_preview();
+    let state = if self.tree.show_custom_ignored { "shown" } else { "hidden" };
+    self.set_status(format!("Custom ignored files: {state}"));
     Ok(())
   }
 
@@ -1147,6 +1160,7 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    self.tree.set_ignore_patterns(config.ignore_glob_set.clone());
   }
 
   pub fn reload_favorites(&mut self) {
@@ -2423,6 +2437,35 @@ mod tests {
     cleanup_test_dir(&dir);
   }
 
+  // --- Custom ignore pattern tests ---
+
+  fn cfg_with_ignore_patterns(patterns: &[&str]) -> Config {
+    use globset::{Glob, GlobSetBuilder};
+    let mut c = cfg();
+    c.ignore_patterns = patterns.iter().map(|s| s.to_string()).collect();
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+      builder.add(Glob::new(pattern).unwrap());
+    }
+    c.ignore_glob_set = builder.build().unwrap();
+    c.use_custom_ignore = true;
+    c
+  }
+
+  #[test]
+  fn test_app_with_ignore_patterns() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("debug.log"), "log").unwrap();
+
+    let config = cfg_with_ignore_patterns(&["*.log"]);
+    let app = App::new(dir.clone(), None, &config).unwrap();
+
+    // .log file should be hidden by default
+    assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".log")));
+
+    cleanup_test_dir(&dir);
+  }
+
   #[test]
   fn test_chmod_start_on_dir() {
     let dir = setup_test_dir();
@@ -2432,6 +2475,31 @@ mod tests {
     app.update(Action::ChmodStart).unwrap();
     assert_eq!(app.input_mode, InputMode::Chmod);
     assert!(app.chmod_state.is_dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_custom_ignore_action() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("debug.log"), "log").unwrap();
+
+    let config = cfg_with_ignore_patterns(&["*.log"]);
+    let mut app = App::new(dir.clone(), None, &config).unwrap();
+
+    // Initially hidden
+    assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".log")));
+    assert!(!app.tree.show_custom_ignored);
+
+    // Toggle to show
+    app.update(Action::ToggleCustomIgnore).unwrap();
+    assert!(app.tree.show_custom_ignored);
+    assert!(app.tree.entries.iter().any(|e| e.name == "debug.log"));
+
+    // Toggle back to hide
+    app.update(Action::ToggleCustomIgnore).unwrap();
+    assert!(!app.tree.show_custom_ignored);
+    assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".log")));
+
     cleanup_test_dir(&dir);
   }
 
@@ -2620,6 +2688,26 @@ mod tests {
     let file_meta = std::fs::metadata(dir.join("aaa_dir").join("inner.txt")).unwrap();
     assert_eq!(dir_meta.permissions().mode() & 0o777, 0o700);
     assert_eq!(file_meta.permissions().mode() & 0o777, 0o700);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_updates_ignore_patterns() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("test.tmp"), "tmp").unwrap();
+
+    // Start with no matching patterns (default patterns don't include *.tmp)
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(app.tree.entries.iter().any(|e| e.name == "test.tmp"));
+
+    // Apply config with ignore patterns that include *.tmp
+    let config = cfg_with_ignore_patterns(&["*.tmp"]);
+    app.apply_config(&config);
+
+    // Reload tree to apply new patterns
+    app.tree.reload().unwrap();
+    assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".tmp")));
+
     cleanup_test_dir(&dir);
   }
 }

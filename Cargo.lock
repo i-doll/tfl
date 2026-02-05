@@ -3060,6 +3060,7 @@ dependencies = [
  "dirs",
  "flate2",
  "git2",
+ "globset",
  "ignore",
  "image",
  "infer",
