@@ -12,6 +12,7 @@ use crate::fs::FileTree;
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::PreviewState;
+use crate::saved_searches::{SavedSearch, SavedSearches};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipboardOp {
@@ -55,6 +56,8 @@ pub struct App {
   pub error_messages: Vec<String>,
   pub wrote_config: bool,
   pub claude_yolo: bool,
+  pub saved_searches: SavedSearches,
+  pub saved_searches_cursor: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +101,8 @@ impl App {
       error_messages: Vec::new(),
       wrote_config: false,
       claude_yolo: config.claude_yolo,
+      saved_searches: SavedSearches::load(),
+      saved_searches_cursor: 0,
     })
   }
 
@@ -280,6 +285,7 @@ impl App {
             self.cancel_prompt();
             self.set_status("Delete cancelled".to_string());
           }
+          Some(PromptKind::SaveSearch) => self.execute_save_search()?,
           None => {}
         }
       }
@@ -310,6 +316,14 @@ impl App {
         self.error_messages.clear();
         self.input_mode = InputMode::Normal;
       }
+      Action::SavedSearchesOpen => self.saved_searches_open(),
+      Action::SavedSearchesSave => self.saved_searches_save_start(),
+      Action::SavedSearchesDown => self.saved_searches_move(1),
+      Action::SavedSearchesUp => self.saved_searches_move(-1),
+      Action::SavedSearchesSelect => self.saved_searches_select(),
+      Action::SavedSearchesClose => self.saved_searches_close(),
+      Action::SavedSearchesRemove => self.saved_searches_remove()?,
+      Action::SavedSearchesQuickSelect(n) => self.saved_searches_quick_select(n),
       Action::Tick => {
         self.preview.check_image_loaded();
       }
@@ -413,6 +427,108 @@ impl App {
     }
     self.wrote_config = true;
     self.set_status("Added to favorites".to_string());
+  }
+
+  fn saved_searches_open(&mut self) {
+    self.input_mode = InputMode::SavedSearches;
+    self.saved_searches_cursor = 0;
+  }
+
+  fn saved_searches_close(&mut self) {
+    self.input_mode = InputMode::Normal;
+  }
+
+  fn saved_searches_move(&mut self, delta: i32) {
+    let len = self.saved_searches.len();
+    if len == 0 {
+      return;
+    }
+    if delta > 0 {
+      self.saved_searches_cursor = (self.saved_searches_cursor + delta as usize).min(len - 1);
+    } else {
+      self.saved_searches_cursor = self.saved_searches_cursor.saturating_sub((-delta) as usize);
+    }
+  }
+
+  fn saved_searches_select(&mut self) {
+    if let Some(search) = self.saved_searches.get(self.saved_searches_cursor).cloned() {
+      self.apply_saved_search(&search);
+      self.input_mode = InputMode::Normal;
+    }
+  }
+
+  fn saved_searches_quick_select(&mut self, n: u8) {
+    let index = (n - 1) as usize;
+    if let Some(search) = self.saved_searches.get(index).cloned() {
+      self.apply_saved_search(&search);
+      self.input_mode = InputMode::Normal;
+    }
+  }
+
+  fn apply_saved_search(&mut self, search: &SavedSearch) {
+    self.search_query = search.pattern.clone();
+    self.apply_search_filter();
+    self.set_status(format!("Applied: {}", search.name));
+  }
+
+  fn saved_searches_remove(&mut self) -> Result<()> {
+    if self.saved_searches_cursor < self.saved_searches.len() {
+      self.saved_searches.remove(self.saved_searches_cursor);
+      if let Err(e) = self.saved_searches.save() {
+        self.set_status(format!("Save failed: {e}"));
+        return Ok(());
+      }
+      self.wrote_config = true;
+      if !self.saved_searches.is_empty() {
+        self.saved_searches_cursor = self.saved_searches_cursor.min(self.saved_searches.len() - 1);
+      } else {
+        self.saved_searches_cursor = 0;
+      }
+    }
+    Ok(())
+  }
+
+  fn saved_searches_save_start(&mut self) {
+    if self.search_query.is_empty() {
+      self.set_status("No search to save".to_string());
+      return;
+    }
+    self.prompt_input.clear();
+    self.prompt_cursor = 0;
+    self.prompt_kind = Some(PromptKind::SaveSearch);
+    self.input_mode = InputMode::Prompt;
+  }
+
+  fn execute_save_search(&mut self) -> Result<()> {
+    let name = self.prompt_input.trim().to_string();
+    if name.is_empty() {
+      self.cancel_prompt();
+      self.set_status("Name cannot be empty".to_string());
+      return Ok(());
+    }
+
+    let search = SavedSearch::new(&name, &self.search_query);
+    self.saved_searches.add(search);
+
+    if let Err(e) = self.saved_searches.save() {
+      self.cancel_prompt();
+      self.set_status(format!("Save failed: {e}"));
+      return Ok(());
+    }
+
+    self.wrote_config = true;
+    self.cancel_prompt();
+    self.set_status(format!("Saved search: {name}"));
+    Ok(())
+  }
+
+  pub fn reload_saved_searches(&mut self) {
+    self.saved_searches = SavedSearches::load();
+    if self.saved_searches.is_empty() {
+      self.saved_searches_cursor = 0;
+    } else {
+      self.saved_searches_cursor = self.saved_searches_cursor.min(self.saved_searches.len() - 1);
+    }
   }
 
   fn open_default_action(&mut self) -> Result<()> {
@@ -2017,6 +2133,128 @@ mod tests {
     assert!(subdir_entry.expanded);
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_open_close() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    app.update(Action::SavedSearchesOpen).unwrap();
+    assert_eq!(app.input_mode, InputMode::SavedSearches);
+    assert_eq!(app.saved_searches_cursor, 0);
+
+    app.update(Action::SavedSearchesClose).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_save_requires_search_query() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.search_query.clear();
+
+    app.update(Action::SavedSearchesSave).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.status_message, Some("No search to save".to_string()));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_save_starts_prompt() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.search_query = "*.rs".to_string();
+
+    app.update(Action::SavedSearchesSave).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::SaveSearch));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_cursor_movement() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    // Add some searches manually
+    app.saved_searches.add(SavedSearch::new("A", "*"));
+    app.saved_searches.add(SavedSearch::new("B", "*"));
+    app.saved_searches.add(SavedSearch::new("C", "*"));
+
+    app.update(Action::SavedSearchesOpen).unwrap();
+    assert_eq!(app.saved_searches_cursor, 0);
+
+    app.update(Action::SavedSearchesDown).unwrap();
+    assert_eq!(app.saved_searches_cursor, 1);
+
+    app.update(Action::SavedSearchesDown).unwrap();
+    assert_eq!(app.saved_searches_cursor, 2);
+
+    // Can't go past end
+    app.update(Action::SavedSearchesDown).unwrap();
+    assert_eq!(app.saved_searches_cursor, 2);
+
+    app.update(Action::SavedSearchesUp).unwrap();
+    assert_eq!(app.saved_searches_cursor, 1);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_select_applies_pattern() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.saved_searches.add(SavedSearch::new("Rust files", "*.rs"));
+    app.update(Action::SavedSearchesOpen).unwrap();
+    app.update(Action::SavedSearchesSelect).unwrap();
+
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.search_query, "*.rs");
+    assert!(app.status_message.as_ref().unwrap().contains("Applied: Rust files"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_quick_select() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.saved_searches.add(SavedSearch::new("First", "pattern1"));
+    app.saved_searches.add(SavedSearch::new("Second", "pattern2"));
+    app.saved_searches.add(SavedSearch::new("Third", "pattern3"));
+
+    app.update(Action::SavedSearchesOpen).unwrap();
+
+    // Quick select with number 2
+    app.update(Action::SavedSearchesQuickSelect(2)).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.search_query, "pattern2");
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_saved_searches_quick_select_out_of_range() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    app.saved_searches.add(SavedSearch::new("Only one", "pattern"));
+    app.update(Action::SavedSearchesOpen).unwrap();
+
+    // Quick select with 5 when only 1 exists
+    app.update(Action::SavedSearchesQuickSelect(5)).unwrap();
+    assert_eq!(app.input_mode, InputMode::SavedSearches); // Still in saved searches mode
+    assert!(app.search_query.is_empty()); // Not applied
 
     cleanup_test_dir(&dir);
   }
