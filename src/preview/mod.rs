@@ -298,6 +298,7 @@ impl PreviewState {
       metadata,
       image_metadata: None,
       git_commits,
+      blame_data: None,
     })
   }
 
