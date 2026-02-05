@@ -11,7 +11,7 @@ use crate::favorites::Favorites;
 use crate::fs::FileTree;
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
-use crate::preview::PreviewState;
+use crate::preview::{PreviewState, archive};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipboardOp {
@@ -224,6 +224,14 @@ impl App {
               self.set_status("Delete cancelled".to_string());
             }
           }
+          Some(PromptKind::ConfirmExtractAndDelete) => {
+            if c == 'y' {
+              self.execute_extract_and_delete()?;
+            } else {
+              self.cancel_prompt();
+              self.set_status("Extract cancelled".to_string());
+            }
+          }
           Some(_) => {
             let byte_pos = self.prompt_input.char_indices()
               .nth(self.prompt_cursor)
@@ -236,7 +244,11 @@ impl App {
         }
       }
       Action::PromptBackspace => {
-        if self.prompt_kind != Some(PromptKind::ConfirmDelete) && self.prompt_cursor > 0 {
+        let is_confirm = matches!(
+          self.prompt_kind,
+          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmExtractAndDelete)
+        );
+        if !is_confirm && self.prompt_cursor > 0 {
           let byte_pos = self.prompt_input.char_indices()
             .nth(self.prompt_cursor - 1)
             .map(|(i, _)| i)
@@ -246,8 +258,11 @@ impl App {
         }
       }
       Action::PromptDelete => {
-        if self.prompt_kind != Some(PromptKind::ConfirmDelete)
-          && self.prompt_cursor < self.prompt_input.chars().count()
+        let is_confirm = matches!(
+          self.prompt_kind,
+          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmExtractAndDelete)
+        );
+        if !is_confirm && self.prompt_cursor < self.prompt_input.chars().count()
         {
           let byte_pos = self.prompt_input.char_indices()
             .nth(self.prompt_cursor)
@@ -280,6 +295,10 @@ impl App {
             self.cancel_prompt();
             self.set_status("Delete cancelled".to_string());
           }
+          Some(PromptKind::ConfirmExtractAndDelete) => {
+            self.cancel_prompt();
+            self.set_status("Extract cancelled".to_string());
+          }
           None => {}
         }
       }
@@ -310,6 +329,8 @@ impl App {
         self.error_messages.clear();
         self.input_mode = InputMode::Normal;
       }
+      Action::ExtractArchive => self.extract_archive(false)?,
+      Action::ExtractAndDelete => self.extract_archive_start_confirm()?,
       Action::Tick => {
         self.preview.check_image_loaded();
       }
@@ -880,6 +901,70 @@ impl App {
       }
     }
     Ok(())
+  }
+
+  fn extract_archive(&mut self, delete_after: bool) -> Result<()> {
+    let Some(entry) = self.selected_entry() else {
+      return Ok(());
+    };
+
+    let path = entry.path.clone();
+
+    // Check if it's an archive
+    if !archive::is_archive(&path) {
+      self.set_status("Not an archive file".to_string());
+      return Ok(());
+    }
+
+    // Extract to parent directory of the archive
+    let dest_dir = path.parent().unwrap_or(&self.tree.root).to_path_buf();
+
+    match archive::extract_archive(&path, &dest_dir) {
+      Ok(()) => {
+        let name = entry.name.clone();
+        if delete_after {
+          // Delete the archive after successful extraction
+          if let Err(e) = std::fs::remove_file(&path) {
+            self.set_status(format!("Extracted but failed to delete: {e}"));
+          } else {
+            self.set_status(format!("Extracted and deleted: {name}"));
+          }
+        } else {
+          self.set_status(format!("Extracted: {name}"));
+        }
+        self.tree.reload()?;
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.set_status(format!("Extract failed: {e}"));
+      }
+    }
+    Ok(())
+  }
+
+  fn extract_archive_start_confirm(&mut self) -> Result<()> {
+    let Some(entry) = self.selected_entry() else {
+      return Ok(());
+    };
+
+    if !archive::is_archive(&entry.path) {
+      self.set_status("Not an archive file".to_string());
+      return Ok(());
+    }
+
+    let name = entry.name.clone();
+    self.prompt_kind = Some(PromptKind::ConfirmExtractAndDelete);
+    self.prompt_input.clear();
+    self.prompt_cursor = 0;
+    self.input_mode = InputMode::Prompt;
+    self.set_status(format!("Extract and delete {name}? (y/N)"));
+    Ok(())
+  }
+
+  fn execute_extract_and_delete(&mut self) -> Result<()> {
+    self.cancel_prompt();
+    self.extract_archive(true)
   }
 
   fn reposition_cursor_to(&mut self, path: &PathBuf) {
@@ -2017,6 +2102,121 @@ mod tests {
     assert!(subdir_entry.expanded);
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_extract_archive_non_archive_shows_status() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Move to a text file
+    while app.selected_entry().map_or(true, |e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ExtractArchive).unwrap();
+    assert_eq!(app.status_message.as_deref(), Some("Not an archive file"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_extract_archive_zip() {
+    use std::io::Write;
+    let dir = setup_test_dir();
+    let zip_path = dir.join("test.zip");
+
+    // Create a test ZIP file
+    {
+      let file = fs::File::create(&zip_path).unwrap();
+      let mut zip = zip::ZipWriter::new(file);
+      let options = zip::write::FileOptions::default();
+      zip.start_file("extracted.txt", options).unwrap();
+      zip.write_all(b"extracted content").unwrap();
+      zip.finish().unwrap();
+    }
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Find and select the zip file
+    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+      app.update(Action::MoveDown).unwrap();
+    }
+    assert_eq!(app.selected_entry().unwrap().name, "test.zip");
+
+    app.update(Action::ExtractArchive).unwrap();
+
+    // Verify extraction
+    assert!(dir.join("extracted.txt").exists());
+    assert_eq!(fs::read_to_string(dir.join("extracted.txt")).unwrap(), "extracted content");
+    // Original archive should still exist
+    assert!(zip_path.exists());
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_extract_and_delete_confirm_prompt() {
+    use std::io::Write;
+    let dir = setup_test_dir();
+    let zip_path = dir.join("test.zip");
+
+    // Create a test ZIP file
+    {
+      let file = fs::File::create(&zip_path).unwrap();
+      let mut zip = zip::ZipWriter::new(file);
+      let options = zip::write::FileOptions::default();
+      zip.start_file("test.txt", options).unwrap();
+      zip.write_all(b"test").unwrap();
+      zip.finish().unwrap();
+    }
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::ExtractAndDelete).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmExtractAndDelete));
+
+    // Cancel should not extract
+    app.update(Action::PromptInput('n')).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(!dir.join("test.txt").exists()); // Not extracted
+    assert!(zip_path.exists()); // Still exists
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_extract_and_delete_confirms_deletes() {
+    use std::io::Write;
+    let dir = setup_test_dir();
+    let zip_path = dir.join("test.zip");
+
+    // Create a test ZIP file
+    {
+      let file = fs::File::create(&zip_path).unwrap();
+      let mut zip = zip::ZipWriter::new(file);
+      let options = zip::write::FileOptions::default();
+      zip.start_file("extracted.txt", options).unwrap();
+      zip.write_all(b"content").unwrap();
+      zip.finish().unwrap();
+    }
+
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    while app.selected_entry().map_or(true, |e| e.name != "test.zip") {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    app.update(Action::ExtractAndDelete).unwrap();
+    assert_eq!(app.prompt_kind, Some(PromptKind::ConfirmExtractAndDelete));
+
+    // Confirm with 'y'
+    app.update(Action::PromptInput('y')).unwrap();
+
+    // Verify extraction and deletion
+    assert!(dir.join("extracted.txt").exists());
+    assert!(!zip_path.exists()); // Archive deleted
 
     cleanup_test_dir(&dir);
   }

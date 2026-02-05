@@ -58,6 +58,8 @@ pub enum Action {
   OpenWithSelect,
   OpenWithClose,
   ErrorClose,
+  ExtractArchive,
+  ExtractAndDelete,
   Resize(u16, u16),
   Tick,
   None,
@@ -100,6 +102,8 @@ impl Action {
       "favorites_open" => Some(Action::FavoritesOpen),
       "open_default" => Some(Action::OpenDefault),
       "open_with" => Some(Action::OpenWithStart),
+      "extract_archive" => Some(Action::ExtractArchive),
+      "extract_and_delete" => Some(Action::ExtractAndDelete),
       "none" => Some(Action::None),
       _ => None,
     }
