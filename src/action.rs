@@ -33,6 +33,7 @@ pub enum Action {
   RenameStart,
   NewFileStart,
   NewDirStart,
+  NewSymlinkStart,
   PromptInput(char),
   PromptBackspace,
   PromptDelete,
@@ -95,6 +96,7 @@ impl Action {
       "rename_start" => Some(Action::RenameStart),
       "new_file_start" => Some(Action::NewFileStart),
       "new_dir_start" => Some(Action::NewDirStart),
+      "new_symlink_start" => Some(Action::NewSymlinkStart),
       "go_home" => Some(Action::GoHome),
       "favorite_add" => Some(Action::FavoriteAdd),
       "favorites_open" => Some(Action::FavoritesOpen),
@@ -141,6 +143,7 @@ mod tests {
     assert_eq!(Action::from_name("rename_start"), Some(Action::RenameStart));
     assert_eq!(Action::from_name("new_file_start"), Some(Action::NewFileStart));
     assert_eq!(Action::from_name("new_dir_start"), Some(Action::NewDirStart));
+    assert_eq!(Action::from_name("new_symlink_start"), Some(Action::NewSymlinkStart));
     assert_eq!(Action::from_name("go_home"), Some(Action::GoHome));
     assert_eq!(Action::from_name("favorite_add"), Some(Action::FavoriteAdd));
     assert_eq!(Action::from_name("favorites_open"), Some(Action::FavoritesOpen));
