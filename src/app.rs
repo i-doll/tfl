@@ -480,6 +480,7 @@ impl App {
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
       self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -498,6 +499,7 @@ impl App {
       self.tree_scroll_offset = 0;
       self.preview.invalidate();
       self.update_preview();
+      self.update_breadcrumbs();
     }
     Ok(())
   }
@@ -3145,6 +3147,54 @@ mod tests {
     assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
     let last = app.breadcrumb_segments.last().unwrap();
     assert_eq!(last.name, "aaa_dir");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_back_updates_breadcrumbs() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    let initial_len = app.breadcrumb_segments.len();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+
+    // Go back - breadcrumbs should shrink
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.tree.root, dir);
+    assert_eq!(app.breadcrumb_segments.len(), initial_len);
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.path, dir);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_history_forward_updates_breadcrumbs() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+
+    let initial_len = app.breadcrumb_segments.len();
+
+    // Enter aaa_dir
+    app.update(Action::EnterDir).unwrap();
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+
+    // Go back
+    app.update(Action::HistoryBack).unwrap();
+    assert_eq!(app.breadcrumb_segments.len(), initial_len);
+
+    // Go forward - breadcrumbs should grow again
+    app.update(Action::HistoryForward).unwrap();
+    assert_eq!(app.tree.root, dir.join("aaa_dir"));
+    assert_eq!(app.breadcrumb_segments.len(), initial_len + 1);
+    let last = app.breadcrumb_segments.last().unwrap();
+    assert_eq!(last.name, "aaa_dir");
+
     cleanup_test_dir(&dir);
   }
 }
