@@ -299,6 +299,8 @@ a = "new_file_start"
 "~" = "go_home"
 f = "favorites_open"
 "shift+f" = "favorite_add"
+"ctrl+/" = "saved_searches_open"
+"ctrl+s" = "saved_searches_save"
 
 [keys.g_prefix]
 g = "go_to_top"

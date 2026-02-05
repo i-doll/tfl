@@ -8,6 +8,7 @@ mod git;
 mod icons;
 mod opener;
 mod preview;
+mod saved_searches;
 mod ui;
 
 use std::io;
@@ -228,6 +229,7 @@ fn reload_config(config: &mut config::Config, app: &mut App) {
   config.claude_yolo = new.claude_yolo;
   app.apply_config(config);
   app.reload_favorites();
+  app.reload_saved_searches();
   if errors.is_empty() {
     app.set_status("Config reloaded".to_string());
   } else {
