@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod blame;
+pub mod diff;
 pub mod directory;
 pub mod hex;
 pub mod image;
@@ -36,6 +37,7 @@ pub enum PreviewType {
   Binary,
   Directory,
   Archive,
+  Diff,
   Empty,
   TooLarge,
   Error(String),
@@ -55,6 +57,7 @@ pub struct PreviewContent {
   pub raw_lines: Option<Vec<Line<'static>>>,
   /// Whether this file is a structured data file (JSON/TOML).
   pub is_structured: bool,
+  pub diff_hunks: Vec<usize>, // Indices of hunk headers for navigation
 }
 
 pub struct PreviewState {
@@ -182,6 +185,7 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          diff_hunks: Vec::new(),
         })
       }
       PreviewType::Binary => self.load_hex(path, git_repo),
@@ -201,6 +205,7 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          diff_hunks: Vec::new(),
         })
       }
       PreviewType::Empty => Some(PreviewContent {
@@ -215,7 +220,9 @@ impl PreviewState {
         blame_data: None,
         raw_lines: None,
         is_structured: false,
+        diff_hunks: Vec::new(),
       }),
+      PreviewType::Diff => None, // Diff is handled separately via show_diff
       PreviewType::Error(ref msg) => Some(PreviewContent {
         lines: vec![Line::from(format!(" Error: {msg}"))],
         preview_type: preview_type.clone(),
@@ -228,6 +235,7 @@ impl PreviewState {
         blame_data: None,
         raw_lines: None,
         is_structured: false,
+        diff_hunks: Vec::new(),
       }),
     };
 
@@ -252,6 +260,7 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          diff_hunks: Vec::new(),
         });
       }
     };
@@ -306,6 +315,7 @@ impl PreviewState {
       blame_data,
       raw_lines,
       is_structured,
+      diff_hunks: Vec::new(),
     })
   }
 
@@ -325,6 +335,7 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          diff_hunks: Vec::new(),
         });
       }
     };
@@ -356,6 +367,7 @@ impl PreviewState {
       blame_data,
       raw_lines: None,
       is_structured: false,
+      diff_hunks: Vec::new(),
     })
   }
 
@@ -375,6 +387,7 @@ impl PreviewState {
           blame_data: None,
           raw_lines: None,
           is_structured: false,
+          diff_hunks: Vec::new(),
         });
       }
     };
@@ -397,6 +410,7 @@ impl PreviewState {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      diff_hunks: Vec::new(),
     })
   }
 
@@ -416,6 +430,7 @@ impl PreviewState {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      diff_hunks: Vec::new(),
     })
   }
 
@@ -438,6 +453,7 @@ impl PreviewState {
       blame_data: None,
       raw_lines: None,
       is_structured: false,
+      diff_hunks: Vec::new(),
     })
   }
 
@@ -476,6 +492,7 @@ impl PreviewState {
                 blame_data: None,
                 raw_lines: None,
                 is_structured: false,
+                diff_hunks: Vec::new(),
               };
               self.insert_cache(path.clone(), content);
             }
@@ -540,6 +557,72 @@ impl PreviewState {
     true
   }
 
+  /// Show the git diff for the given file path
+  pub fn show_diff(&mut self, path: &Path, git_repo: Option<&GitRepo>) -> bool {
+    let repo_root = git_repo.map(|r| r.root());
+
+    let (lines, diff_hunks) = if let Some(root) = repo_root
+      && let Some(file_diff) = diff::generate_diff(root, path)
+    {
+      (diff::render_diff(&file_diff), file_diff.hunks)
+    } else {
+      (diff::render_no_diff_message(), Vec::new())
+    };
+
+    let has_diff = !diff_hunks.is_empty();
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+    let content = PreviewContent {
+      lines,
+      preview_type: PreviewType::Diff,
+      line_count: 0,
+      file_size,
+      extension: get_extension(path),
+      metadata: metadata::get_file_metadata(path),
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+      diff_hunks,
+    };
+
+    self.scroll_offset = 0;
+    self.image_protocol = None;
+    self.image_rx = None;
+
+    // Use a unique cache key for diff mode
+    let cache_key = path.with_extension(format!(
+      "{}.diff",
+      path.extension().map(|e| e.to_string_lossy()).unwrap_or_default()
+    ));
+    self.current_path = Some(cache_key.clone());
+    self.insert_cache(cache_key, content);
+
+    has_diff
+  }
+
+  /// Navigate to the next diff hunk, returns true if moved
+  pub fn next_hunk(&mut self) -> bool {
+    if let Some(content) = self.get_content()
+      && let Some(next) = content.diff_hunks.iter().find(|&&idx| idx > self.scroll_offset).copied()
+    {
+      self.scroll_offset = next;
+      return true;
+    }
+    false
+  }
+
+  /// Navigate to the previous diff hunk, returns true if moved
+  pub fn prev_hunk(&mut self) -> bool {
+    if let Some(content) = self.get_content()
+      && let Some(prev) = content.diff_hunks.iter().rev().find(|&&idx| idx < self.scroll_offset).copied()
+    {
+      self.scroll_offset = prev;
+      return true;
+    }
+    false
+  }
 }
 
 fn get_extension(path: &Path) -> String {
@@ -766,6 +849,7 @@ mod tests {
         blame_data: None,
         raw_lines: None,
         is_structured: false,
+        diff_hunks: Vec::new(),
       };
       state.insert_cache(path, content);
     }
