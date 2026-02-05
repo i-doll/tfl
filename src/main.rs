@@ -226,6 +226,9 @@ fn reload_config(config: &mut config::Config, app: &mut App) {
   config.g_prefix_keys = new.g_prefix_keys;
   config.custom_apps = new.custom_apps;
   config.claude_yolo = new.claude_yolo;
+  config.sort_field = new.sort_field;
+  config.sort_order = new.sort_order;
+  config.sort_dirs_first = new.sort_dirs_first;
   app.apply_config(config);
   app.reload_favorites();
   if errors.is_empty() {
