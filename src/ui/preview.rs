@@ -13,17 +13,22 @@ use crate::preview::{PreviewContent, PreviewType};
 const METADATA_PANEL_HEIGHT: u16 = 7;
 
 pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
+  let blame_enabled = app.preview.blame_enabled;
+  let title = if blame_enabled { " Blame " } else { " Preview " };
+
   let block = Block::default()
     .borders(Borders::ALL)
     .border_style(Style::default().fg(Color::Indexed(240)))
-    .title(" Preview ")
-    .title_style(Style::default().fg(Color::Indexed(75)));
+    .title(title)
+    .title_style(Style::default().fg(if blame_enabled { Color::Indexed(214) } else { Color::Indexed(75) }));
 
   let inner = block.inner(area);
   block.render(area, buf);
 
   let content = app.preview.get_content();
-  let has_metadata = content.is_some_and(|c| c.metadata.is_some() || !c.git_commits.is_empty());
+
+  // In blame mode, don't show metadata panel
+  let has_metadata = !blame_enabled && content.is_some_and(|c| c.metadata.is_some() || !c.git_commits.is_empty());
 
   // Split area: content at top, metadata panel at bottom
   let (content_area, metadata_area) = if has_metadata && inner.height > METADATA_PANEL_HEIGHT + 3 {
@@ -39,7 +44,7 @@ pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
 
   // Check if we have an image to render
   let is_image = app.preview.get_content().is_some_and(|c| c.preview_type == PreviewType::Image);
-  if is_image {
+  if is_image && !blame_enabled {
     if let Some(ref mut protocol) = app.preview.image_protocol {
       let image: StatefulImage<StatefulProtocol> = StatefulImage::default();
       StatefulWidget::render(image, content_area, buf, protocol);
@@ -50,6 +55,28 @@ pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
     {
       render_metadata_panel(content, meta_area, buf);
     }
+    return;
+  }
+
+  // Check if blame view is enabled and we have blame data
+  if blame_enabled
+    && let Some(content) = app.preview.get_content()
+  {
+    if let Some(ref blame_data) = content.blame_data {
+      let lines = blame_data.render(content_area.height as usize, app.preview.scroll_offset);
+      let paragraph = Paragraph::new(lines);
+      paragraph.render(content_area, buf);
+      return;
+    }
+    // No blame data available - show message
+    let msg = if content.preview_type == PreviewType::Text {
+      " File not tracked by git"
+    } else {
+      " Blame not available for this file type"
+    };
+    let lines = vec![Line::from(msg)];
+    let paragraph = Paragraph::new(lines);
+    paragraph.render(content_area, buf);
     return;
   }
 

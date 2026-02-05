@@ -26,6 +26,7 @@ pub enum Action {
   GrowTree,
   GPress,
   ToggleHelp,
+  ToggleBlame,
   CutFile,
   CopyFile,
   Paste,
@@ -119,6 +120,7 @@ impl Action {
       "toggle_custom_ignore" => Some(Action::ToggleCustomIgnore),
       "history_back" => Some(Action::HistoryBack),
       "history_forward" => Some(Action::HistoryForward),
+      "toggle_blame" => Some(Action::ToggleBlame),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -169,6 +171,7 @@ mod tests {
     assert_eq!(Action::from_name("toggle_custom_ignore"), Some(Action::ToggleCustomIgnore));
     assert_eq!(Action::from_name("history_back"), Some(Action::HistoryBack));
     assert_eq!(Action::from_name("history_forward"), Some(Action::HistoryForward));
+    assert_eq!(Action::from_name("toggle_blame"), Some(Action::ToggleBlame));
   }
 
   #[test]
