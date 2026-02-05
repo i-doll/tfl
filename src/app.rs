@@ -67,7 +67,11 @@ pub enum SuspendAction {
 
 impl App {
   pub fn new(root: PathBuf, picker: Option<Picker>, config: &Config) -> Result<Self> {
-    let tree = FileTree::new(root)?;
+    let mut tree = FileTree::new(root)?;
+    if config.show_hidden {
+      tree.show_hidden = true;
+      tree.reload()?;
+    }
     Ok(Self {
       tree,
       cursor: 0,
@@ -606,6 +610,12 @@ impl App {
     self.cursor = self.cursor.min(self.tree.entries.len().saturating_sub(1));
     self.preview.invalidate();
     self.update_preview();
+    // Save the new show_hidden state to config
+    if let Ok(path) = crate::config::Config::config_path()
+      && crate::config::Config::save_show_hidden(&path, self.tree.show_hidden).is_ok()
+    {
+      self.wrote_config = true;
+    }
     Ok(())
   }
 
@@ -963,6 +973,7 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    self.tree.show_hidden = config.show_hidden;
   }
 
   pub fn reload_favorites(&mut self) {
@@ -2018,6 +2029,53 @@ mod tests {
     // file.txt should still be visible
     assert!(app.tree.entries.iter().any(|e| e.name == "file.txt"));
 
+    cleanup_test_dir(&dir);
+  }
+
+  // --- show_hidden persistence tests ---
+
+  #[test]
+  fn test_app_respects_show_hidden_config() {
+    let dir = setup_test_dir();
+    let mut c = cfg();
+    c.show_hidden = true;
+    let app = App::new(dir.clone(), None, &c).unwrap();
+    // With show_hidden=true, hidden files should be visible
+    assert!(app.tree.show_hidden);
+    assert!(app.tree.entries.iter().any(|e| e.name == ".hidden"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_app_show_hidden_default_false() {
+    let dir = setup_test_dir();
+    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.tree.show_hidden);
+    assert!(!app.tree.entries.iter().any(|e| e.name == ".hidden"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_config_syncs_show_hidden() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.tree.show_hidden);
+
+    let mut c = cfg();
+    c.show_hidden = true;
+    app.apply_config(&c);
+    assert!(app.tree.show_hidden);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_hidden_sets_wrote_config_flag() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    assert!(!app.wrote_config);
+
+    app.update(Action::ToggleHidden).unwrap();
+    assert!(app.wrote_config);
     cleanup_test_dir(&dir);
   }
 }
