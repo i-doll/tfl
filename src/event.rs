@@ -134,6 +134,7 @@ pub enum InputMode {
   OpenWith,
   Chmod,
   Properties,
+  SavedSearches,
   Error,
 }
 
@@ -144,6 +145,7 @@ pub enum PromptKind {
   NewDir,
   ConfirmDelete,
   ConfirmExtractAndDelete,
+  SaveSearch,
 }
 
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
@@ -233,6 +235,16 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
     },
     InputMode::Properties => match key.code {
       KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => Action::PropertiesClose,
+      _ => Action::None,
+    },
+    InputMode::SavedSearches => match key.code {
+      KeyCode::Char('j') | KeyCode::Down => Action::SavedSearchesDown,
+      KeyCode::Char('k') | KeyCode::Up => Action::SavedSearchesUp,
+      KeyCode::Enter => Action::SavedSearchesSelect,
+      KeyCode::Esc | KeyCode::Char('q') => Action::SavedSearchesClose,
+      KeyCode::Char('d') | KeyCode::Delete => Action::SavedSearchesRemove,
+      KeyCode::Char('s') => Action::SavedSearchesSave,
+      KeyCode::Char(c @ '1'..='9') => Action::SavedSearchesQuickSelect(c as u8 - b'0'),
       _ => Action::None,
     },
     InputMode::Error => match key.code {

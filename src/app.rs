@@ -16,6 +16,7 @@ use crate::fs::{FileProperties, FileTree, SizeFilter};
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
 use crate::preview::{PreviewState, archive};
+use crate::saved_searches::{SavedSearch, SavedSearches};
 use crate::ui::breadcrumb::{BreadcrumbSegment, parse_breadcrumb_segments};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +173,8 @@ pub struct App {
   pub dual_left_ratio: u16,
   pub dual_right_ratio: u16,
   pub file_properties: Option<FileProperties>,
+  pub saved_searches: SavedSearches,
+  pub saved_searches_cursor: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +241,8 @@ impl App {
       dual_left_ratio: config.tree_ratio,
       dual_right_ratio: config.tree_ratio,
       file_properties: None,
+      saved_searches: SavedSearches::load(),
+      saved_searches_cursor: 0,
     })
   }
 
@@ -591,6 +596,7 @@ impl App {
             self.cancel_prompt();
             self.set_status("Extract cancelled".to_string());
           }
+          Some(PromptKind::SaveSearch) => self.execute_save_search()?,
           None => {}
         }
       }
@@ -609,6 +615,14 @@ impl App {
       Action::FavoritesClose => self.favorites_close(),
       Action::FavoritesRemove => self.favorites_remove(),
       Action::FavoritesAddCurrent => self.favorites_add_current(),
+      Action::SavedSearchesOpen => self.saved_searches_open(),
+      Action::SavedSearchesSave => self.saved_searches_save_start(),
+      Action::SavedSearchesDown => self.saved_searches_move(1),
+      Action::SavedSearchesUp => self.saved_searches_move(-1),
+      Action::SavedSearchesSelect => self.saved_searches_select(),
+      Action::SavedSearchesClose => self.saved_searches_close(),
+      Action::SavedSearchesRemove => self.saved_searches_remove()?,
+      Action::SavedSearchesQuickSelect(n) => self.saved_searches_quick_select(n),
       Action::OpenDefault => self.open_default_action()?,
       Action::OpenWithStart => self.open_with_start(),
       Action::OpenWithDown => self.open_with_move(1),

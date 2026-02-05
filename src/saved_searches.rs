@@ -110,6 +110,7 @@ impl SavedSearches {
     self.entries.iter().find(|s| s.name == name)
   }
 
+  #[allow(dead_code)]
   pub fn list(&self) -> &[SavedSearch] {
     &self.entries
   }
