@@ -15,7 +15,7 @@ use crate::favorites::Favorites;
 use crate::fs::{FileProperties, FileTree};
 use crate::fs::ops;
 use crate::opener::{self, OpenApp};
-use crate::preview::{PreviewState, archive};
+use crate::preview::{PreviewState, PreviewType, archive};
 use crate::ui::breadcrumb::{BreadcrumbSegment, parse_breadcrumb_segments};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -650,12 +650,19 @@ impl App {
         if let Some(entry) = self.selected_entry()
           && !entry.is_dir
         {
-          let path = entry.path.clone();
-          let has_diff = self.preview.show_diff(&path, self.tree.git_repo());
-          if has_diff {
-            self.set_status("Showing diff".to_string());
+          // Toggle: if already showing diff, go back to normal preview
+          if self.preview.content.as_ref()
+            .is_some_and(|c| c.preview_type == PreviewType::Diff)
+          {
+            self.preview.invalidate();
           } else {
-            self.set_status("No uncommitted changes".to_string());
+            let path = entry.path.clone();
+            let has_diff = self.preview.show_diff(&path, self.tree.git_repo());
+            if has_diff {
+              self.set_status("Showing diff".to_string());
+            } else {
+              self.set_status("No uncommitted changes".to_string());
+            }
           }
         }
       }
