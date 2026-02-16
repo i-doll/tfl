@@ -79,6 +79,7 @@ struct AppEntry {
   command: Option<String>,
   macos_app: Option<String>,
   tui: Option<bool>,
+  opens_dir: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -460,6 +461,8 @@ use_custom = true      # apply custom patterns (toggle with I)
         command: entry.command.unwrap_or_default(),
         is_tui: entry.tui.unwrap_or(false),
         macos_app: entry.macos_app,
+        opens_dir: entry.opens_dir.unwrap_or(false),
+        dir_mode: false,
       });
     }
   }

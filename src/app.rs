@@ -844,10 +844,20 @@ impl App {
 
   fn open_with_start(&mut self) {
     if let Some(entry) = self.selected_entry() {
-      if entry.is_dir {
-        return;
+      let is_dir = entry.is_dir;
+      let mut apps = opener::detect_apps(&self.custom_apps);
+      if !is_dir {
+        let folder_apps: Vec<opener::OpenApp> = apps
+          .iter()
+          .filter(|a| a.opens_dir)
+          .map(|a| opener::OpenApp {
+            dir_mode: true,
+            ..a.clone()
+          })
+          .collect();
+        apps.extend(folder_apps);
       }
-      self.open_with_apps = opener::detect_apps(&self.custom_apps);
+      self.open_with_apps = apps;
       self.open_with_cursor = 0;
       self.input_mode = InputMode::OpenWith;
     }
@@ -884,11 +894,16 @@ impl App {
     } else {
       let app_idx = self.open_with_cursor - 1;
       if let Some(app) = self.open_with_apps.get(app_idx).cloned() {
+        let target = if app.dir_mode {
+          path.parent().unwrap_or(&path).to_path_buf()
+        } else {
+          path
+        };
         self.input_mode = InputMode::Normal;
         if app.is_tui {
-          self.should_suspend = Some(SuspendAction::OpenWith(app.command.clone(), path));
+          self.should_suspend = Some(SuspendAction::OpenWith(app.command.clone(), target));
         } else {
-          match opener::open_with_app(&path, &app) {
+          match opener::open_with_app(&target, &app) {
             Ok(()) => self.set_status(format!("Opened with {}", app.name)),
             Err(e) => self.status_message = Some(e),
           }
@@ -2612,13 +2627,60 @@ mod tests {
   }
 
   #[test]
-  fn test_open_with_start_on_dir_noop() {
+  fn test_open_with_start_on_dir() {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
     // First entry is a dir
     assert!(app.selected_entry().unwrap().is_dir);
     app.update(Action::OpenWithStart).unwrap();
-    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.input_mode, InputMode::OpenWith);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_dir_variants_on_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    // Inject a custom app with opens_dir
+    app.custom_apps = vec![OpenApp {
+      name: "TestIDE".into(),
+      command: "which".into(), // exists on all systems
+      is_tui: false,
+      macos_app: None,
+      opens_dir: true,
+      dir_mode: false,
+    }];
+    // Move to a file
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::OpenWithStart).unwrap();
+    // Should have both the normal entry and a dir_mode duplicate
+    let normal = app.open_with_apps.iter().filter(|a| a.name == "TestIDE" && !a.dir_mode).count();
+    let dir_variant = app.open_with_apps.iter().filter(|a| a.name == "TestIDE" && a.dir_mode).count();
+    assert_eq!(normal, 1);
+    assert_eq!(dir_variant, 1);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_open_with_no_dir_variants_on_dir() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    app.custom_apps = vec![OpenApp {
+      name: "TestIDE".into(),
+      command: "which".into(),
+      is_tui: false,
+      macos_app: None,
+      opens_dir: true,
+      dir_mode: false,
+    }];
+    // First entry is a dir
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::OpenWithStart).unwrap();
+    // On a directory, no dir_mode variants should be added
+    let dir_variant = app.open_with_apps.iter().filter(|a| a.dir_mode).count();
+    assert_eq!(dir_variant, 0);
     cleanup_test_dir(&dir);
   }
 
@@ -2673,6 +2735,8 @@ mod tests {
       command: "testeditor".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     }];
     app.open_with_cursor = 1; // Select the TUI app (0 is Default)
     app.input_mode = InputMode::OpenWith;
@@ -2696,6 +2760,8 @@ mod tests {
       command: "testcmd".into(),
       is_tui: false,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     }];
     app.apply_config(&c);
     assert_eq!(app.custom_apps.len(), 1);

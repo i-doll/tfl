@@ -31,7 +31,13 @@ pub fn render_open_with(app: &App, area: Rect, buf: &mut Buffer) {
   // Detected apps
   for (i, app_entry) in apps.iter().enumerate() {
     let selected = app.open_with_cursor == i + 1;
-    let suffix = if app_entry.is_tui { Some("tui") } else { None };
+    let suffix = if app_entry.is_tui {
+      Some("tui")
+    } else if app_entry.dir_mode {
+      Some("dir")
+    } else {
+      None
+    };
     lines.push(app_line(&app_entry.name, suffix, selected));
   }
 

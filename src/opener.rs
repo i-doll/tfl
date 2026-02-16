@@ -7,6 +7,8 @@ pub struct OpenApp {
   pub command: String,
   pub is_tui: bool,
   pub macos_app: Option<String>,
+  pub opens_dir: bool,
+  pub dir_mode: bool,
 }
 
 pub fn known_apps() -> Vec<OpenApp> {
@@ -16,66 +18,88 @@ pub fn known_apps() -> Vec<OpenApp> {
       command: "code".into(),
       is_tui: false,
       macos_app: Some("Visual Studio Code".into()),
+      opens_dir: true,
+      dir_mode: false,
     },
     OpenApp {
       name: "Cursor".into(),
       command: "cursor".into(),
       is_tui: false,
       macos_app: Some("Cursor".into()),
+      opens_dir: true,
+      dir_mode: false,
     },
     OpenApp {
       name: "Zed".into(),
       command: "zed".into(),
       is_tui: false,
       macos_app: Some("Zed".into()),
+      opens_dir: true,
+      dir_mode: false,
     },
     OpenApp {
       name: "Sublime Text".into(),
       command: "subl".into(),
       is_tui: false,
       macos_app: Some("Sublime Text".into()),
+      opens_dir: true,
+      dir_mode: false,
     },
     OpenApp {
       name: "IntelliJ IDEA".into(),
       command: "idea".into(),
       is_tui: false,
       macos_app: Some("IntelliJ IDEA".into()),
+      opens_dir: true,
+      dir_mode: false,
     },
     OpenApp {
       name: "Neovim".into(),
       command: "nvim".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     },
     OpenApp {
       name: "Vim".into(),
       command: "vim".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     },
     OpenApp {
       name: "Helix".into(),
       command: "hx".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     },
     OpenApp {
       name: "Emacs".into(),
       command: "emacs".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     },
     OpenApp {
       name: "Nano".into(),
       command: "nano".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     },
     OpenApp {
       name: "Micro".into(),
       command: "micro".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     },
   ]
 }
@@ -198,6 +222,8 @@ mod tests {
       command: "vim".into(),
       is_tui: true,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     }];
     let apps = detect_apps(&custom);
     let vim_count = apps.iter().filter(|a| a.command == "vim").count();
@@ -215,6 +241,8 @@ mod tests {
       command: "custom_nonexistent_binary_12345".into(),
       is_tui: false,
       macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
     }];
     let apps = detect_apps(&custom);
     // Custom nonexistent app should not appear
