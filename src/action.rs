@@ -104,6 +104,8 @@ impl Action {
       "go_to_top" => Some(Action::GoToTop),
       "go_to_bottom" => Some(Action::GoToBottom),
       "search_start" => Some(Action::SearchStart),
+      "search_confirm" => Some(Action::SearchConfirm),
+      "search_cancel" => Some(Action::SearchCancel),
       "yank_path" => Some(Action::YankPath),
       "open_editor" => Some(Action::OpenEditor),
       "open_claude" => Some(Action::OpenClaude),
@@ -165,6 +167,8 @@ mod tests {
     assert_eq!(Action::from_name("go_to_top"), Some(Action::GoToTop));
     assert_eq!(Action::from_name("go_to_bottom"), Some(Action::GoToBottom));
     assert_eq!(Action::from_name("search_start"), Some(Action::SearchStart));
+    assert_eq!(Action::from_name("search_confirm"), Some(Action::SearchConfirm));
+    assert_eq!(Action::from_name("search_cancel"), Some(Action::SearchCancel));
     assert_eq!(Action::from_name("yank_path"), Some(Action::YankPath));
     assert_eq!(Action::from_name("open_editor"), Some(Action::OpenEditor));
     assert_eq!(Action::from_name("open_claude"), Some(Action::OpenClaude));

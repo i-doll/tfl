@@ -34,16 +34,6 @@ fn entry_line(lookup: &HashMap<Action, Vec<String>>, action: Action, desc: &str)
   ])
 }
 
-fn hardcoded_line(key: &str, desc: &str) -> Line<'static> {
-  Line::from(vec![
-    Span::styled(
-      format!("  {key:<16}"),
-      KEY_STYLE.add_modifier(Modifier::BOLD),
-    ),
-    Span::styled(desc.to_string(), DESC_STYLE),
-  ])
-}
-
 pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
   let width = 44.min(area.width.saturating_sub(4));
   let height = 42.min(area.height.saturating_sub(2));
@@ -75,8 +65,8 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::FavoriteAdd, "Add to favorites"),
     section_line("Search"),
     entry_line(&lookup, Action::SearchStart, "Start search"),
-    hardcoded_line("Enter", "Confirm"),
-    hardcoded_line("Esc", "Cancel"),
+    entry_line(&lookup, Action::SearchConfirm, "Confirm"),
+    entry_line(&lookup, Action::SearchCancel, "Cancel"),
     section_line("Preview"),
     entry_line(&lookup, Action::ScrollPreviewDown, "Scroll down"),
     entry_line(&lookup, Action::ScrollPreviewUp, "Scroll up"),

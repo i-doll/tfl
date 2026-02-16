@@ -262,6 +262,7 @@ fn reload_config(config: &mut config::Config, app: &mut App) {
   let (new, errors) = config::Config::load();
   config.normal_keys = new.normal_keys;
   config.g_prefix_keys = new.g_prefix_keys;
+  config.search_keys = new.search_keys;
   config.custom_apps = new.custom_apps;
   config.claude_yolo = new.claude_yolo;
   config.has_apps_file = new.has_apps_file;

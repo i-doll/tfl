@@ -18,7 +18,7 @@ impl KeyBinding {
     let key_name = match self.code {
       KeyCode::Char(' ') => "Space".to_string(),
       KeyCode::Char(c) => c.to_string(),
-      KeyCode::Enter => "Enter".to_string(),
+      KeyCode::Enter => "\u{f0311}".to_string(), // 󰌑
       KeyCode::Esc => "Esc".to_string(),
       KeyCode::Backspace => "Backspace".to_string(),
       KeyCode::Delete => "Delete".to_string(),
@@ -52,6 +52,7 @@ pub struct Config {
   pub claude_yolo: bool,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
+  pub search_keys: HashMap<KeyBinding, Action>,
   pub custom_apps: Vec<OpenApp>,
   pub ignore_patterns: Vec<String>,
   pub use_gitignore: bool,
@@ -100,6 +101,7 @@ struct GeneralConfig {
 struct KeysConfig {
   normal: Option<HashMap<String, String>>,
   g_prefix: Option<HashMap<String, String>>,
+  search: Option<HashMap<String, String>>,
 }
 
 pub fn parse_key_binding(s: &str) -> Option<KeyBinding> {
@@ -215,6 +217,7 @@ impl Config {
       claude_yolo: false,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
+      search_keys: HashMap::new(),
       custom_apps: Vec::new(),
       ignore_patterns: Vec::new(),
       use_gitignore: true,
@@ -272,6 +275,20 @@ impl Config {
             continue;
           };
           self.g_prefix_keys.insert(kb, action);
+        }
+      }
+      if let Some(search) = keys.search {
+        self.search_keys.clear();
+        for (key_str, action_str) in &search {
+          let Some(kb) = parse_key_binding(key_str) else {
+            errors.push(format!("invalid key binding: {key_str:?}"));
+            continue;
+          };
+          let Some(action) = Action::from_name(action_str) else {
+            errors.push(format!("invalid action: {action_str:?}"));
+            continue;
+          };
+          self.search_keys.insert(kb, action);
         }
       }
     }
@@ -373,6 +390,10 @@ g = "go_to_top"
 h = "go_home"
 b = "toggle_blame"
 
+[keys.search]
+enter = "search_confirm"
+esc = "search_cancel"
+
 [ignore]
 patterns = [
   "*.log",
@@ -393,6 +414,9 @@ use_custom = true      # apply custom patterns (toggle with I)
     for (kb, action) in &self.g_prefix_keys {
       let key_str = format!("g{}", kb.display_key());
       map.entry(action.clone()).or_default().push(key_str);
+    }
+    for (kb, action) in &self.search_keys {
+      map.entry(action.clone()).or_default().push(kb.display_key());
     }
     // Sort keys for deterministic display
     for keys in map.values_mut() {
@@ -902,11 +926,15 @@ g = "quit"
     assert_eq!(default.tick_rate_ms, reloaded.tick_rate_ms);
     assert_eq!(default.normal_keys.len(), reloaded.normal_keys.len());
     assert_eq!(default.g_prefix_keys.len(), reloaded.g_prefix_keys.len());
+    assert_eq!(default.search_keys.len(), reloaded.search_keys.len());
     for (kb, action) in &default.normal_keys {
       assert_eq!(reloaded.normal_keys.get(kb), Some(action), "mismatch for {kb:?}");
     }
     for (kb, action) in &default.g_prefix_keys {
       assert_eq!(reloaded.g_prefix_keys.get(kb), Some(action), "g_prefix mismatch for {kb:?}");
+    }
+    for (kb, action) in &default.search_keys {
+      assert_eq!(reloaded.search_keys.get(kb), Some(action), "search mismatch for {kb:?}");
     }
   }
 
@@ -1016,7 +1044,7 @@ tree_ratio = 40
   #[test]
   fn test_display_key_named() {
     let kb = KeyBinding { code: KeyCode::Enter, modifiers: KeyModifiers::NONE };
-    assert_eq!(kb.display_key(), "Enter");
+    assert_eq!(kb.display_key(), "\u{f0311}");
     let kb = KeyBinding { code: KeyCode::Esc, modifiers: KeyModifiers::NONE };
     assert_eq!(kb.display_key(), "Esc");
   }

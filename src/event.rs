@@ -147,11 +147,12 @@ pub enum PromptKind {
 pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
   match mode {
     InputMode::Search => match key.code {
-      KeyCode::Esc => Action::SearchCancel,
-      KeyCode::Enter => Action::SearchConfirm,
       KeyCode::Backspace => Action::SearchBackspace,
       KeyCode::Char(c) => Action::SearchInput(c),
-      _ => Action::None,
+      _ => {
+        let kb = normalize_key_event(key);
+        config.search_keys.get(&kb).cloned().unwrap_or(Action::None)
+      }
     },
     InputMode::GPrefix => {
       // Handle g + number for breadcrumb navigation (1-9)
