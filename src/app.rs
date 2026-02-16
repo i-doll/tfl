@@ -183,6 +183,7 @@ pub struct App {
   pub has_apps_file: bool,
   pub picker_mode: Option<PickerOutput>,
   pub picked_paths: Vec<PathBuf>,
+  pub use_trash: bool,
   pub tree_reloaded: bool,
 }
 
@@ -254,6 +255,7 @@ impl App {
       has_apps_file: config.has_apps_file,
       picker_mode,
       picked_paths: Vec::new(),
+      use_trash: config.use_trash,
       tree_reloaded: false,
     })
   }
@@ -1483,6 +1485,16 @@ impl App {
     Ok(())
   }
 
+  fn remove_path(path: &std::path::Path, use_trash: bool) -> Result<(), String> {
+    if use_trash {
+      trash::delete(path).map_err(|e| e.to_string())
+    } else if path.is_dir() {
+      std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+    } else {
+      std::fs::remove_file(path).map_err(|e| e.to_string())
+    }
+  }
+
   fn execute_delete(&mut self) -> Result<()> {
     let entry = self.selected_entry().cloned();
     let Some(entry) = entry else {
@@ -1490,11 +1502,8 @@ impl App {
       return Ok(());
     };
 
-    let result = if entry.is_dir {
-      std::fs::remove_dir_all(&entry.path)
-    } else {
-      std::fs::remove_file(&entry.path)
-    };
+    let use_trash = self.use_trash;
+    let result = Self::remove_path(&entry.path, use_trash);
 
     match result {
       Ok(()) => {
@@ -1512,7 +1521,8 @@ impl App {
         } else {
           self.cursor = self.cursor.min(len - 1);
         }
-        self.set_status(format!("Deleted: {}", entry.name));
+        let verb = if use_trash { "Trashed" } else { "Deleted" };
+        self.set_status(format!("{verb}: {}", entry.name));
         self.preview.invalidate();
         self.update_preview();
       }
@@ -1535,13 +1545,9 @@ impl App {
     let count = targets.len();
     let mut deleted = 0;
 
+    let use_trash = self.use_trash;
     for path in &targets {
-      let result = if path.is_dir() {
-        std::fs::remove_dir_all(path)
-      } else {
-        std::fs::remove_file(path)
-      };
-      if result.is_ok() {
+      if Self::remove_path(path, use_trash).is_ok() {
         deleted += 1;
         self.clipboard.paths.retain(|p| !p.starts_with(path));
       }
@@ -1560,7 +1566,8 @@ impl App {
     } else {
       self.cursor = self.cursor.min(len - 1);
     }
-    self.set_status(format!("Deleted {deleted}/{count} items"));
+    let verb = if use_trash { "Trashed" } else { "Deleted" };
+    self.set_status(format!("{verb} {deleted}/{count} items"));
     self.preview.invalidate();
     self.update_preview();
     Ok(())
@@ -1759,10 +1766,11 @@ impl App {
     match result.result {
       Ok(()) => {
         if result.delete_after {
-          if let Err(e) = std::fs::remove_file(&result.path) {
+          if let Err(e) = Self::remove_path(&result.path, self.use_trash) {
             self.set_status(format!("Extracted but failed to delete: {e}"));
           } else {
-            self.set_status(format!("Extracted and deleted: {}", result.name));
+            let verb = if self.use_trash { "trashed" } else { "deleted" };
+            self.set_status(format!("Extracted and {verb}: {}", result.name));
           }
         } else {
           self.set_status(format!("Extracted: {}", result.name));
@@ -1913,6 +1921,7 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    self.use_trash = config.use_trash;
     self.has_apps_file = config.has_apps_file;
     self.tree.set_ignore_patterns(config.ignore_glob_set.clone());
   }

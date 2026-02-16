@@ -396,6 +396,7 @@ fn reload_config(config: &mut config::Config, app: &mut App) {
   config.search_keys = new.search_keys;
   config.custom_apps = new.custom_apps;
   config.claude_yolo = new.claude_yolo;
+  config.use_trash = new.use_trash;
   config.has_apps_file = new.has_apps_file;
   config.ignore_patterns = new.ignore_patterns;
   config.use_gitignore = new.use_gitignore;
