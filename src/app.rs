@@ -777,14 +777,23 @@ impl App {
   fn favorites_select(&mut self) -> Result<()> {
     if let Some(path) = self.favorites.get(self.favorites_cursor).map(|p| p.to_path_buf()) {
       if path.is_dir() {
-        self.push_history(self.tree.root.clone());
-        self.tree.navigate_to(&path)?;
-        self.search_query.clear();
-        self.cursor = 0;
-        self.tree_scroll_offset = 0;
+        if self.dual_pane_mode && self.active_pane == 1 {
+          if let Some(ref mut pane) = self.right_pane {
+            pane.tree.navigate_to(&path)?;
+            pane.search_query.clear();
+            pane.cursor = 0;
+            pane.scroll_offset = 0;
+          }
+        } else {
+          self.push_history(self.tree.root.clone());
+          self.tree.navigate_to(&path)?;
+          self.search_query.clear();
+          self.cursor = 0;
+          self.tree_scroll_offset = 0;
+          self.update_breadcrumbs();
+        }
         self.preview.invalidate();
         self.update_preview();
-        self.update_breadcrumbs();
         self.input_mode = InputMode::Normal;
       } else {
         self.set_status("Directory no longer exists".to_string());
