@@ -103,7 +103,7 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::Quit, "Quit"),
     Line::from(""),
     Line::from(Span::styled(
-      " Press ? or Esc to close".to_string(),
+      " Press q, ? or Esc to close".to_string(),
       Style::default().fg(Color::Indexed(241)),
     )),
   ];

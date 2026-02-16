@@ -85,7 +85,7 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
     InputMode::Help => {
       Line::from(vec![
         Span::styled(" ? ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("Help — press ? or Esc to close", Style::default().fg(Color::DarkGray)),
+        Span::styled("Help — press q, ? or Esc to close", Style::default().fg(Color::DarkGray)),
       ])
     }
     InputMode::Prompt => {

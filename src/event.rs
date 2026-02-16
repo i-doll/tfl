@@ -167,6 +167,7 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
     InputMode::Help => match key.code {
       KeyCode::Esc => Action::ToggleHelp,
       KeyCode::Char('?') => Action::ToggleHelp,
+      KeyCode::Char('q') => Action::ToggleHelp,
       _ => Action::None,
     },
     InputMode::Prompt => match key.code {
@@ -349,7 +350,7 @@ mod tests {
   fn test_help_mode_other_keys_ignored() {
     let c = cfg();
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Help, &c), Action::None);
-    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Help, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Help, &c), Action::ToggleHelp);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Help, &c), Action::None);
   }
 
