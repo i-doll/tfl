@@ -1,15 +1,17 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
-pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer) {
+use crate::theme::Theme;
+
+pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer, theme: &Theme) {
   let max_width = (area.width * 95 / 100).max(20);
   let hint_len = " [Esc] dismiss".len() as u16;
 
   // Split messages on newlines; each sub-line gets a leading space
-  let msg_style = Style::default().fg(Color::Indexed(252));
+  let msg_style = Style::default().fg(theme.text);
   let mut lines: Vec<Line> = Vec::new();
   for msg in messages {
     for sub in msg.split('\n') {
@@ -51,14 +53,14 @@ pub fn render_error(messages: &[String], area: Rect, buf: &mut Buffer) {
   lines.push(Line::from(""));
   lines.push(Line::from(Span::styled(
     " [Esc] dismiss",
-    Style::default().fg(Color::Indexed(241)),
+    Style::default().fg(theme.text_muted),
   )));
 
   let block = Block::default()
     .borders(Borders::ALL)
     .title(" Error ")
-    .border_style(Style::default().fg(Color::Indexed(167)))
-    .style(Style::default().bg(Color::Indexed(235)));
+    .border_style(Style::default().fg(theme.error))
+    .style(Style::default().bg(theme.bg_overlay));
 
   let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
   paragraph.render(popup, buf);

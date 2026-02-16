@@ -42,6 +42,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Custom ignore patterns** via glob syntax (e.g., `*.log`, `node_modules`)
 - **Resizable panes** with adjustable tree/preview ratio
 - **Dual-pane mode** — Norton Commander style side-by-side navigation (F6 to toggle, Tab to switch)
+- **Color themes** — built-in dark, light, and Catppuccin Mocha themes with live switching
+- **Syntax theme** — configurable syntect theme for code highlighting (includes Catppuccin Mocha)
 - **Preview cache** with LRU eviction and debounced loading
 - **Favorites** — save directories, jump to them from a picker overlay
 - **Breadcrumb navigation** — clickable path segments in header to jump to parent directories, keyboard nav with `g1`-`g9`
@@ -324,6 +326,8 @@ tree_ratio = 30       # initial tree pane width (percentage, default 30)
 tick_rate_ms = 100    # event loop tick rate in ms (default 100)
 claude_yolo = false   # if true, `c` launches Claude with --dangerously-skip-permissions (default false)
 use_trash = true      # move to trash instead of permanent delete (default true)
+theme = "dark"                    # UI color theme: "dark", "light", "catppuccin-mocha"
+syntax_theme = "base16-ocean.dark"  # syntect theme for code highlighting
 
 [keys.normal]
 j = "move_down"
@@ -405,6 +409,20 @@ The `[ignore]` section lets you filter files from the tree view using glob patte
 
 Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option controls whether `.gitignore` files are respected (separate from hidden file toggling with `.`).
 
+### Themes
+
+tfl supports color themes for both the UI and syntax highlighting. Both are set in `[general]` and apply immediately via live config reload.
+
+**UI themes** (`theme`):
+
+| Theme | Description |
+|---|---|
+| `dark` | Default dark theme using 256-color palette |
+| `light` | Light theme using 256-color palette |
+| `catppuccin-mocha` | Catppuccin Mocha using true color (RGB) |
+
+**Syntax themes** (`syntax_theme`): Any syntect theme name works. Built-in options include `base16-ocean.dark`, `base16-ocean.light`, `base16-eighties.dark`, `base16-mocha.dark`, `InspiredGitHub`, `Solarized (dark)`, `Solarized (light)`, and `Catppuccin Mocha` (bundled).
+
 ### Key format
 
 - Single characters: `j`, `q`, `.`, `/`, `ø`
@@ -453,6 +471,7 @@ src/
   action.rs        Action enum (all possible user actions)
   event.rs         Event loop, key mapping, input modes
   config.rs        Config loading, key binding parsing, defaults
+  theme.rs         Color theme definitions (dark, light, catppuccin-mocha)
   favorites.rs     Favorites persistence (load/save/add/remove)
   opener.rs        Open-with app detection and launching
   git.rs           Git operations via libgit2 (status, branch, commits)
@@ -465,8 +484,9 @@ src/
     mod.rs         PreviewState: cache, debounce, type detection
     archive.rs     Archive listing and extraction (ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ)
     diff.rs        Git diff generation and colored rendering
-    text.rs        Syntax-highlighted text preview
+    text.rs        Syntax-highlighted text preview (configurable theme)
     markdown.rs    Rendered markdown preview with styled elements
+    blame.rs       Git blame rendering with author/date coloring
     structured.rs  JSON/TOML pretty-printing
     image.rs       Async image loading (Kitty protocol)
     hex.rs         Hex dump for binary files

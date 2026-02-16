@@ -5,6 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::git::GitRepo;
+use crate::theme::Theme;
 
 /// Information about a single line's blame
 #[derive(Debug, Clone)]
@@ -48,16 +49,16 @@ impl BlameData {
     Self { lines, commit_colors }
   }
 
-  pub fn render(&self, max_lines: usize, scroll_offset: usize) -> Vec<Line<'static>> {
+  pub fn render(&self, max_lines: usize, scroll_offset: usize, theme: &Theme) -> Vec<Line<'static>> {
     self.lines
       .iter()
       .skip(scroll_offset)
       .take(max_lines)
-      .map(|line| self.render_line(line))
+      .map(|line| self.render_line(line, theme))
       .collect()
   }
 
-  fn render_line(&self, line: &BlameLine) -> Line<'static> {
+  fn render_line(&self, line: &BlameLine, theme: &Theme) -> Line<'static> {
     let color = self.commit_colors.get(&line.commit_hash).copied().unwrap_or(Color::Gray);
 
     let mut spans = Vec::new();
@@ -74,24 +75,24 @@ impl BlameData {
     } else {
       format!("{:12} ", line.author)
     };
-    spans.push(Span::styled(author, Style::default().fg(Color::Indexed(246))));
+    spans.push(Span::styled(author, Style::default().fg(theme.meta_secondary)));
 
     // Date (8 chars)
     spans.push(Span::styled(
       format!("{:8} ", line.date),
-      Style::default().fg(Color::Indexed(240)),
+      Style::default().fg(theme.border),
     ));
 
     // Line number
     spans.push(Span::styled(
       format!("{:>4} ", line.line_num),
-      Style::default().fg(Color::DarkGray),
+      Style::default().fg(theme.text_dim),
     ));
 
     // Content
     spans.push(Span::styled(
       line.content.clone(),
-      Style::default().fg(Color::Indexed(252)),
+      Style::default().fg(theme.text),
     ));
 
     Line::from(spans)
@@ -177,7 +178,7 @@ mod tests {
     let blame = BlameData::new(lines);
 
     // Render with scroll offset 1
-    let rendered = blame.render(10, 1);
+    let rendered = blame.render(10, 1, &Theme::dark());
     assert_eq!(rendered.len(), 2);
   }
 
@@ -195,7 +196,7 @@ mod tests {
 
     let blame = BlameData::new(lines);
 
-    let rendered = blame.render(5, 0);
+    let rendered = blame.render(5, 0, &Theme::dark());
     assert_eq!(rendered.len(), 5);
   }
 
@@ -210,7 +211,7 @@ mod tests {
     }];
 
     let blame = BlameData::new(lines);
-    let rendered = blame.render(1, 0);
+    let rendered = blame.render(1, 0, &Theme::dark());
     assert_eq!(rendered.len(), 1);
 
     // Check that the author was truncated (contains "..")

@@ -1,10 +1,11 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::app::App;
+use crate::theme::Theme;
 
 fn contract_home(path: &std::path::Path) -> String {
   if let Some(home) = dirs::home_dir()
@@ -15,7 +16,7 @@ fn contract_home(path: &std::path::Path) -> String {
   path.to_string_lossy().to_string()
 }
 
-pub fn render_favorites(app: &App, area: Rect, buf: &mut Buffer) {
+pub fn render_favorites(app: &App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   let width = 50.min(area.width.saturating_sub(4));
   let favs = app.favorites.list();
   let content_height = if favs.is_empty() { 3 } else { favs.len() as u16 + 2 };
@@ -36,7 +37,7 @@ pub fn render_favorites(app: &App, area: Rect, buf: &mut Buffer) {
       Line::from(""),
       Line::from(Span::styled(
         " No favorites — press a to add current dir",
-        Style::default().fg(Color::Indexed(241)),
+        Style::default().fg(theme.text_muted),
       )),
     ]
   } else {
@@ -49,13 +50,13 @@ pub fn render_favorites(app: &App, area: Rect, buf: &mut Buffer) {
           Line::from(Span::styled(
             format!(" > {display}"),
             Style::default()
-              .fg(Color::Indexed(75))
+              .fg(theme.accent)
               .add_modifier(Modifier::BOLD),
           ))
         } else {
           Line::from(Span::styled(
             format!("   {display}"),
-            Style::default().fg(Color::Indexed(252)),
+            Style::default().fg(theme.text),
           ))
         }
       })
@@ -65,8 +66,8 @@ pub fn render_favorites(app: &App, area: Rect, buf: &mut Buffer) {
   let block = Block::default()
     .borders(Borders::ALL)
     .title(" Favorites ")
-    .border_style(Style::default().fg(Color::Indexed(245)))
-    .style(Style::default().bg(Color::Indexed(235)));
+    .border_style(Style::default().fg(theme.title_inactive))
+    .style(Style::default().bg(theme.bg_overlay));
 
   let paragraph = Paragraph::new(lines).block(block);
   paragraph.render(popup, buf);

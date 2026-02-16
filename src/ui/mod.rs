@@ -12,16 +12,18 @@ pub mod status_bar;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::app::App;
 use crate::config::Config;
+use crate::theme::Theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   let area = frame.area();
+  let theme = &config.theme;
 
   // Vertical layout: header, main, status bar
   let chunks = Layout::default()
@@ -34,7 +36,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
     .split(area);
 
   // Header with breadcrumb navigation
-  render_header(app, chunks[0], frame.buffer_mut());
+  render_header(app, chunks[0], frame.buffer_mut(), theme);
 
   if app.dual_pane_mode {
     // Dual-pane layout: left tree | right tree | preview
@@ -55,13 +57,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
     app.viewport_height = main_chunks[0].height.saturating_sub(2) as usize;
 
     // Left tree (active indicator based on active_pane)
-    file_tree::render_file_tree_with_active(app, main_chunks[0], frame.buffer_mut(), app.active_pane == 0, false);
+    file_tree::render_file_tree_with_active(app, main_chunks[0], frame.buffer_mut(), app.active_pane == 0, false, theme);
 
     // Right tree
-    file_tree::render_file_tree_with_active(app, main_chunks[1], frame.buffer_mut(), app.active_pane == 1, true);
+    file_tree::render_file_tree_with_active(app, main_chunks[1], frame.buffer_mut(), app.active_pane == 1, true, theme);
 
     // Preview (smaller)
-    preview::render_preview(app, main_chunks[2], frame.buffer_mut());
+    preview::render_preview(app, main_chunks[2], frame.buffer_mut(), theme);
   } else {
     // Single-pane layout: tree | preview
     let main_chunks = Layout::default()
@@ -76,42 +78,42 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
     app.viewport_height = main_chunks[0].height.saturating_sub(2) as usize;
 
     // File tree (left pane)
-    file_tree::render_file_tree(app, main_chunks[0], frame.buffer_mut());
+    file_tree::render_file_tree(app, main_chunks[0], frame.buffer_mut(), theme);
 
     // Preview (right pane)
-    preview::render_preview(app, main_chunks[1], frame.buffer_mut());
+    preview::render_preview(app, main_chunks[1], frame.buffer_mut(), theme);
   }
 
   // Status bar
-  status_bar::render_status_bar(app, chunks[2], frame.buffer_mut());
+  status_bar::render_status_bar(app, chunks[2], frame.buffer_mut(), theme);
 
   // Overlays
   if app.show_help {
-    help::render_help(config, area, frame.buffer_mut());
+    help::render_help(config, area, frame.buffer_mut(), theme);
   }
   if app.input_mode == crate::event::InputMode::Favorites {
-    favorites::render_favorites(app, area, frame.buffer_mut());
+    favorites::render_favorites(app, area, frame.buffer_mut(), theme);
   }
   if app.input_mode == crate::event::InputMode::OpenWith {
-    open_with::render_open_with(app, area, frame.buffer_mut());
+    open_with::render_open_with(app, area, frame.buffer_mut(), theme);
   }
   if app.input_mode == crate::event::InputMode::Chmod {
-    chmod::render_chmod(app, area, frame.buffer_mut());
+    chmod::render_chmod(app, area, frame.buffer_mut(), theme);
   }
   if app.input_mode == crate::event::InputMode::Compress {
-    compress::render_compress(app, area, frame.buffer_mut());
+    compress::render_compress(app, area, frame.buffer_mut(), theme);
   }
   if app.input_mode == crate::event::InputMode::Properties
     && let Some(ref props) = app.file_properties
   {
-    properties::render_properties(props, area, frame.buffer_mut());
+    properties::render_properties(props, area, frame.buffer_mut(), theme);
   }
   if !app.error_messages.is_empty() {
-    error::render_error(&app.error_messages, area, frame.buffer_mut());
+    error::render_error(&app.error_messages, area, frame.buffer_mut(), theme);
   }
 }
 
-fn render_header(app: &mut App, area: Rect, buf: &mut Buffer) {
+fn render_header(app: &mut App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   // Calculate available width for breadcrumbs (subtract git branch if present)
   let git_branch_width = app.tree.git_info.branch.as_ref()
     .map(|b| b.len() as u16 + 4) // "  " + branch
@@ -128,11 +130,11 @@ fn render_header(app: &mut App, area: Rect, buf: &mut Buffer) {
   // Current segment is the last one (the current directory)
   let current_segment = segments.len().saturating_sub(1);
 
-  let mut spans = vec![Span::styled(" ", Style::default().fg(Color::Indexed(75)))];
+  let mut spans = vec![Span::styled(" ", Style::default().fg(theme.accent))];
 
   let separator = " > ";
-  let separator_style = Style::default().fg(Color::Indexed(240));
-  let ellipsis_style = Style::default().fg(Color::Indexed(240));
+  let separator_style = Style::default().fg(theme.border);
+  let ellipsis_style = Style::default().fg(theme.border);
 
   // Add ellipsis prefix if truncated and first segment doesn't start at 0
   if truncated && segments.first().map(|s| s.start_col > 0).unwrap_or(false) {
@@ -152,24 +154,24 @@ fn render_header(app: &mut App, area: Rect, buf: &mut Buffer) {
 
     let style = if i == current_segment {
       Style::default()
-        .fg(Color::Indexed(75))
+        .fg(theme.accent)
         .add_modifier(Modifier::BOLD)
     } else {
-      Style::default().fg(Color::Indexed(252))
+      Style::default().fg(theme.text)
     };
 
     spans.push(Span::styled(&segment.name, style));
   }
 
   if let Some(ref branch) = app.tree.git_info.branch {
-    spans.push(Span::styled("  ", Style::default().fg(Color::Indexed(114))));
+    spans.push(Span::styled("  ", Style::default().fg(theme.success)));
     spans.push(Span::styled(
       branch.clone(),
-      Style::default().fg(Color::Indexed(114)),
+      Style::default().fg(theme.success),
     ));
   }
 
   let line = Line::from(spans);
-  let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Indexed(236)));
+  let paragraph = Paragraph::new(line).style(Style::default().bg(theme.bg_bar));
   paragraph.render(area, buf);
 }

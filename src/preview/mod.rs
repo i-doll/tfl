@@ -22,6 +22,7 @@ use self::blame::BlameData;
 use self::metadata::{FileMetadata, ImageMetadata, get_file_metadata, get_file_metadata_with_lines, get_image_metadata, get_git_commits};
 use self::text::SyntaxHighlighter;
 use crate::git::{GitCommit, GitRepo};
+use crate::theme::Theme;
 
 const MAX_TEXT_BYTES: u64 = 1024 * 1024; // 1MB
 const MAX_TEXT_LINES: usize = 1000;
@@ -71,6 +72,7 @@ pub struct PreviewState {
   /// Whether to show formatted (pretty-printed) view for structured data.
   pub show_formatted: bool,
   highlighter: SyntaxHighlighter,
+  pub theme: Theme,
   cache: HashMap<PathBuf, PreviewContent>,
   cache_order: Vec<PathBuf>,
   last_request: Option<(PathBuf, Instant)>,
@@ -79,7 +81,7 @@ pub struct PreviewState {
 }
 
 impl PreviewState {
-  pub fn new() -> Self {
+  pub fn new(syntax_theme: &str, theme: Theme) -> Self {
     Self {
       scroll_offset: 0,
       current_path: None,
@@ -89,12 +91,23 @@ impl PreviewState {
       blame_enabled: false,
       markdown_rendered: true,
       show_formatted: true,
-      highlighter: SyntaxHighlighter::new(),
+      highlighter: SyntaxHighlighter::new(syntax_theme),
+      theme,
       cache: HashMap::new(),
       cache_order: Vec::new(),
       last_request: None,
       markdown_raw_cache: HashMap::new(),
     }
+  }
+
+  pub fn set_syntax_theme(&mut self, name: &str) {
+    self.highlighter.set_theme_name(name);
+    self.invalidate();
+  }
+
+  pub fn set_theme(&mut self, theme: Theme) {
+    self.theme = theme;
+    self.invalidate();
   }
 
   pub fn toggle_blame(&mut self) {
@@ -350,7 +363,7 @@ impl PreviewState {
 
     // Render markdown if in rendered mode, otherwise show raw with syntax highlighting
     let lines = if self.markdown_rendered {
-      markdown::render_markdown(&truncated, &self.highlighter)
+      markdown::render_markdown(&truncated, &self.highlighter, &self.theme)
     } else {
       self.highlighter.highlight(&truncated, &ext)
     };
@@ -394,7 +407,7 @@ impl PreviewState {
 
     let file_size = data.len() as u64;
     let truncated = &data[..data.len().min(MAX_HEX_BYTES)];
-    let lines = hex::hex_dump(truncated);
+    let lines = hex::hex_dump(truncated, &self.theme);
     let metadata = get_file_metadata(path);
     let git_commits = get_git_commits(git_repo, path, 3);
 
@@ -416,7 +429,7 @@ impl PreviewState {
 
   fn load_directory(&self, path: &Path) -> Option<PreviewContent> {
     let summary = directory::summarize_dir(path);
-    let lines = directory::render_dir_summary(&summary);
+    let lines = directory::render_dir_summary(&summary, &self.theme);
 
     Some(PreviewContent {
       lines,
@@ -439,7 +452,7 @@ impl PreviewState {
     let metadata = get_file_metadata(path);
     let git_commits = get_git_commits(git_repo, path, 3);
     let archive_type = archive::archive_type(path).unwrap_or("archive");
-    let lines = archive::render_archive_summary(archive_type, file_size);
+    let lines = archive::render_archive_summary(archive_type, file_size, &self.theme);
 
     Some(PreviewContent {
       lines,
@@ -564,9 +577,9 @@ impl PreviewState {
     let (lines, diff_hunks) = if let Some(root) = repo_root
       && let Some(file_diff) = diff::generate_diff(root, path)
     {
-      (diff::render_diff(&file_diff), file_diff.hunks)
+      (diff::render_diff(&file_diff, &self.theme), file_diff.hunks)
     } else {
-      (diff::render_no_diff_message(), Vec::new())
+      (diff::render_no_diff_message(&self.theme), Vec::new())
     };
 
     let has_diff = !diff_hunks.is_empty();
@@ -823,7 +836,7 @@ mod tests {
 
   #[test]
   fn test_preview_state_scroll() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     state.scroll_offset = 5;
     state.scroll_up(3);
     assert_eq!(state.scroll_offset, 2);
@@ -833,7 +846,7 @@ mod tests {
 
   #[test]
   fn test_cache_eviction() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     // Insert CACHE_SIZE + 1 items
     for i in 0..=CACHE_SIZE {
       let path = PathBuf::from(format!("/fake/path/{i}"));
@@ -860,7 +873,7 @@ mod tests {
 
   #[test]
   fn test_toggle_blame() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     assert!(!state.blame_enabled);
 
     state.toggle_blame();
@@ -872,7 +885,7 @@ mod tests {
 
   #[test]
   fn test_toggle_blame_resets_scroll() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     state.scroll_offset = 15;
 
     state.toggle_blame();
@@ -881,7 +894,7 @@ mod tests {
 
   #[test]
   fn test_toggle_formatted_on_non_structured() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     let path = PathBuf::from("/fake/path/test.rs");
     let content = PreviewContent {
       lines: vec![],
@@ -908,7 +921,7 @@ mod tests {
 
   #[test]
   fn test_toggle_formatted_on_structured() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     let path = PathBuf::from("/fake/path/test.json");
     let content = PreviewContent {
       lines: vec![Line::from("formatted")],
@@ -938,7 +951,7 @@ mod tests {
 
   #[test]
   fn test_get_display_lines_formatted() {
-    let mut state = PreviewState::new();
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     let path = PathBuf::from("/fake/path/test.json");
     let content = PreviewContent {
       lines: vec![Line::from("formatted")],

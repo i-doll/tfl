@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::action::Action;
 use crate::opener::OpenApp;
+use crate::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBinding {
@@ -51,6 +52,9 @@ pub struct Config {
   pub tick_rate_ms: u64,
   pub claude_yolo: bool,
   pub use_trash: bool,
+  pub theme_name: String,
+  pub syntax_theme: String,
+  pub theme: Theme,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub search_keys: HashMap<KeyBinding, Action>,
@@ -97,6 +101,8 @@ struct GeneralConfig {
   tick_rate_ms: Option<u64>,
   claude_yolo: Option<bool>,
   use_trash: Option<bool>,
+  theme: Option<String>,
+  syntax_theme: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -218,6 +224,9 @@ impl Config {
       tick_rate_ms: 100,
       claude_yolo: false,
       use_trash: true,
+      theme_name: "dark".to_string(),
+      syntax_theme: "base16-ocean.dark".to_string(),
+      theme: Theme::dark(),
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       search_keys: HashMap::new(),
@@ -251,6 +260,22 @@ impl Config {
       }
       if let Some(trash) = general.use_trash {
         self.use_trash = trash;
+      }
+      if let Some(ref name) = general.theme {
+        match Theme::from_name(name) {
+          Some(t) => {
+            self.theme_name = name.clone();
+            self.theme = t;
+          }
+          None => errors.push(format!(
+            "unknown theme {:?} (available: {:?})",
+            name,
+            Theme::available_themes()
+          )),
+        }
+      }
+      if let Some(ref st) = general.syntax_theme {
+        self.syntax_theme = st.clone();
       }
     }
 
@@ -335,6 +360,8 @@ impl Config {
 tree_ratio = 30       # initial tree pane width (percentage)
 tick_rate_ms = 100    # event loop tick rate in ms
 use_trash = true      # move to trash instead of permanent delete
+theme = "dark"                      # "dark", "light", "catppuccin-mocha"
+syntax_theme = "base16-ocean.dark"  # syntect theme for code highlighting
 
 [keys.normal]
 j = "move_down"

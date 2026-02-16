@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, StatefulWidget, Widget};
 use ratatui_image::StatefulImage;
@@ -9,18 +9,19 @@ use ratatui_image::protocol::StatefulProtocol;
 use crate::app::App;
 use crate::preview::metadata::{format_permissions, format_size, format_time};
 use crate::preview::{PreviewContent, PreviewType};
+use crate::theme::Theme;
 
 const METADATA_PANEL_HEIGHT: u16 = 7;
 
-pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
+pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   let blame_enabled = app.preview.blame_enabled;
   let title = if blame_enabled { " Blame " } else { " Preview " };
 
   let block = Block::default()
     .borders(Borders::ALL)
-    .border_style(Style::default().fg(Color::Indexed(240)))
+    .border_style(Style::default().fg(theme.border))
     .title(title)
-    .title_style(Style::default().fg(if blame_enabled { Color::Indexed(214) } else { Color::Indexed(75) }));
+    .title_style(Style::default().fg(if blame_enabled { theme.warning } else { theme.accent }));
 
   let inner = block.inner(area);
   block.render(area, buf);
@@ -53,7 +54,7 @@ pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
     if let Some(meta_area) = metadata_area
       && let Some(content) = app.preview.get_content()
     {
-      render_metadata_panel(content, meta_area, buf);
+      render_metadata_panel(content, meta_area, buf, theme);
     }
     return;
   }
@@ -63,7 +64,7 @@ pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
     && let Some(content) = app.preview.get_content()
   {
     if let Some(ref blame_data) = content.blame_data {
-      let lines = blame_data.render(content_area.height as usize, app.preview.scroll_offset);
+      let lines = blame_data.render(content_area.height as usize, app.preview.scroll_offset, theme);
       let paragraph = Paragraph::new(lines);
       paragraph.render(content_area, buf);
       return;
@@ -100,13 +101,13 @@ pub fn render_preview(app: &mut App, area: Rect, buf: &mut Buffer) {
   if let Some(meta_area) = metadata_area
     && let Some(content) = app.preview.get_content()
   {
-    render_metadata_panel(content, meta_area, buf);
+    render_metadata_panel(content, meta_area, buf, theme);
   }
 }
 
-fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer) {
+fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer, theme: &Theme) {
   // Draw separator line
-  let sep_style = Style::default().fg(Color::Indexed(240));
+  let sep_style = Style::default().fg(theme.border);
   for x in area.x..area.x + area.width {
     buf[(x, area.y)].set_symbol("─").set_style(sep_style);
   }
@@ -205,40 +206,40 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
   .max()
   .unwrap_or(0);
 
-  // Line 1: size │ mod time │ permissions
+  // Line 1: size | mod time | permissions
   if content.metadata.is_some() {
     let mut spans1: Vec<Span> = Vec::new();
     if let Some(ref size) = size_str {
       spans1.push(Span::styled(
         format!("{:width$}", size, width = col1_width),
-        Style::default().fg(Color::Indexed(75)),
+        Style::default().fg(theme.accent),
       ));
     }
     if let Some(ref mod_s) = mod_str {
       spans1.push(Span::raw(" │ "));
       spans1.push(Span::styled(
         format!("{:width$}", mod_s, width = col2_width),
-        Style::default().fg(Color::Indexed(252)),
+        Style::default().fg(theme.text),
       ));
     }
     if let Some(ref perms) = perms_str {
       spans1.push(Span::raw(" │ "));
       spans1.push(Span::styled(
         format!("{:width$}", perms, width = col3_width),
-        Style::default().fg(Color::Indexed(246)),
+        Style::default().fg(theme.meta_secondary),
       ));
     }
     if !spans1.is_empty() {
       top_lines.push(Line::from(spans1));
     }
 
-    // Line 2: owner:group │ created time │ line count
+    // Line 2: owner:group | created time | line count
     if owner_group.is_some() || created_str.is_some() || lines_str.is_some() {
       let mut spans2: Vec<Span> = Vec::new();
       if let Some(ref og) = owner_group {
         spans2.push(Span::styled(
           format!("{:width$}", og, width = col1_width),
-          Style::default().fg(Color::Indexed(246)),
+          Style::default().fg(theme.meta_secondary),
         ));
       } else {
         spans2.push(Span::raw(format!("{:width$}", "", width = col1_width)));
@@ -248,7 +249,7 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
         if let Some(ref created) = created_str {
           spans2.push(Span::styled(
             format!("{:width$}", created, width = col2_width),
-            Style::default().fg(Color::Indexed(246)),
+            Style::default().fg(theme.meta_secondary),
           ));
         } else {
           spans2.push(Span::raw(format!("{:width$}", "", width = col2_width)));
@@ -258,27 +259,27 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
         spans2.push(Span::raw(" │ "));
         spans2.push(Span::styled(
           format!("{:width$}", lines, width = col3_width),
-          Style::default().fg(Color::Indexed(114)),
+          Style::default().fg(theme.success),
         ));
       }
       top_lines.push(Line::from(spans2));
     }
   }
 
-  // Line 3 (images): dimensions aspect │ camera │ ISO exposure
+  // Line 3 (images): dimensions aspect | camera | ISO exposure
   if content.image_metadata.is_some() {
     let mut spans3: Vec<Span> = Vec::new();
     if let Some(ref dims) = img_dims_str {
       spans3.push(Span::styled(
         format!("{:width$}", dims, width = col1_width),
-        Style::default().fg(Color::Indexed(75)),
+        Style::default().fg(theme.accent),
       ));
     }
     if let Some(ref camera) = img_camera_str {
       spans3.push(Span::raw(" │ "));
       spans3.push(Span::styled(
         format!("{:width$}", camera, width = col2_width),
-        Style::default().fg(Color::Indexed(252)),
+        Style::default().fg(theme.text),
       ));
     } else if img_iso_exposure_str.is_some() {
       spans3.push(Span::raw(" │ "));
@@ -290,7 +291,7 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
       spans3.push(Span::raw(" │ "));
       spans3.push(Span::styled(
         format!("{:width$}", iso_exp, width = col3_width),
-        Style::default().fg(Color::Indexed(214)),
+        Style::default().fg(theme.warning),
       ));
     }
     if !spans3.is_empty() {
@@ -306,7 +307,7 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
     spans.push(Span::styled(
       &commit.hash,
       Style::default()
-        .fg(Color::Indexed(214))
+        .fg(theme.warning)
         .add_modifier(Modifier::BOLD),
     ));
 
@@ -314,7 +315,7 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
     spans.push(Span::raw(" "));
     spans.push(Span::styled(
       &commit.date,
-      Style::default().fg(Color::Indexed(246)),
+      Style::default().fg(theme.meta_secondary),
     ));
 
     // Message (truncated to fit)
@@ -327,7 +328,7 @@ fn render_metadata_panel(content: &PreviewContent, area: Rect, buf: &mut Buffer)
     };
 
     spans.push(Span::raw(" "));
-    spans.push(Span::styled(msg, Style::default().fg(Color::Indexed(252))));
+    spans.push(Span::styled(msg, Style::default().fg(theme.text)));
 
     git_lines.push(Line::from(spans));
   }

@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use tar::Archive as TarArchive;
+
+use crate::theme::Theme;
 use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
@@ -178,7 +180,7 @@ fn format_size(size: u64) -> String {
 }
 
 /// Render a simple archive summary (without reading contents)
-pub fn render_archive_summary(archive_type: &str, file_size: u64) -> Vec<Line<'static>> {
+pub fn render_archive_summary(archive_type: &str, file_size: u64, theme: &Theme) -> Vec<Line<'static>> {
   let format_name = match archive_type {
     "zip" => "ZIP",
     "tar" => "TAR",
@@ -196,19 +198,19 @@ pub fn render_archive_summary(archive_type: &str, file_size: u64) -> Vec<Line<'s
     Line::from(vec![
       Span::styled(
         format!("  {format_name} archive"),
-        Style::default().fg(Color::Cyan),
+        Style::default().fg(theme.info),
       ),
     ]),
     Line::from(""),
     Line::from(vec![
-      Span::styled("  Size: ", Style::default().fg(Color::DarkGray)),
-      Span::styled(format_size(file_size), Style::default().fg(Color::Yellow)),
+      Span::styled("  Size: ", Style::default().fg(theme.text_dim)),
+      Span::styled(format_size(file_size), Style::default().fg(theme.warning)),
     ]),
     Line::from(""),
     Line::from(vec![
       Span::styled(
         "  Press x to extract",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.text_dim),
       ),
     ]),
   ]
@@ -216,28 +218,28 @@ pub fn render_archive_summary(archive_type: &str, file_size: u64) -> Vec<Line<'s
 
 /// Render archive contents as styled lines for preview
 #[allow(dead_code)]
-pub fn render_archive_contents(entries: &[ArchiveEntry]) -> Vec<Line<'static>> {
+pub fn render_archive_contents(entries: &[ArchiveEntry], theme: &Theme) -> Vec<Line<'static>> {
   let mut lines = Vec::new();
 
   // Header
   lines.push(Line::from(vec![
     Span::styled(
       format!(" Archive contents ({} entries)", entries.len()),
-      Style::default().fg(Color::Cyan),
+      Style::default().fg(theme.info),
     ),
   ]));
   lines.push(Line::from(""));
 
   // Column header
   lines.push(Line::from(vec![
-    Span::styled(" Size", Style::default().fg(Color::DarkGray)),
+    Span::styled(" Size", Style::default().fg(theme.text_dim)),
     Span::raw("       "),
-    Span::styled("Name", Style::default().fg(Color::DarkGray)),
+    Span::styled("Name", Style::default().fg(theme.text_dim)),
   ]));
   lines.push(Line::from(vec![
-    Span::styled(" ----", Style::default().fg(Color::DarkGray)),
+    Span::styled(" ----", Style::default().fg(theme.text_dim)),
     Span::raw("       "),
-    Span::styled("----", Style::default().fg(Color::DarkGray)),
+    Span::styled("----", Style::default().fg(theme.text_dim)),
   ]));
 
   for entry in entries {
@@ -248,7 +250,7 @@ pub fn render_archive_contents(entries: &[ArchiveEntry]) -> Vec<Line<'static>> {
     };
 
     let name_style = if entry.is_dir {
-      Style::default().fg(Color::Blue)
+      Style::default().fg(theme.accent)
     } else {
       Style::default()
     };
@@ -260,7 +262,7 @@ pub fn render_archive_contents(entries: &[ArchiveEntry]) -> Vec<Line<'static>> {
     };
 
     lines.push(Line::from(vec![
-      Span::styled(format!(" {size_str}"), Style::default().fg(Color::Yellow)),
+      Span::styled(format!(" {size_str}"), Style::default().fg(theme.warning)),
       Span::raw("  "),
       Span::styled(name, name_style),
     ]));
@@ -856,7 +858,7 @@ mod tests {
       },
     ];
 
-    let lines = render_archive_contents(&entries);
+    let lines = render_archive_contents(&entries, &Theme::dark());
     assert!(lines.len() > 4); // Header + separator + entries
   }
 
