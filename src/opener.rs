@@ -151,7 +151,7 @@ fn dedup_key(app: &OpenApp) -> String {
   }
 }
 
-pub fn detect_apps(custom: &[OpenApp]) -> Vec<OpenApp> {
+pub fn detect_apps(custom: &[OpenApp], use_known: bool) -> Vec<OpenApp> {
   let mut apps = Vec::new();
   let mut seen = std::collections::HashSet::new();
 
@@ -162,10 +162,12 @@ pub fn detect_apps(custom: &[OpenApp]) -> Vec<OpenApp> {
     }
   }
 
-  // Built-in apps
-  for app in known_apps() {
-    if app_available(&app) && seen.insert(dedup_key(&app)) {
-      apps.push(app);
+  // Built-in apps (skipped when apps.toml exists on disk)
+  if use_known {
+    for app in known_apps() {
+      if app_available(&app) && seen.insert(dedup_key(&app)) {
+        apps.push(app);
+      }
     }
   }
 
@@ -225,7 +227,7 @@ mod tests {
       opens_dir: false,
       dir_mode: false,
     }];
-    let apps = detect_apps(&custom);
+    let apps = detect_apps(&custom, true);
     let vim_count = apps.iter().filter(|a| a.command == "vim").count();
     assert!(vim_count <= 1, "vim should appear at most once, found {vim_count}");
     // If vim is available, the custom one should be first
@@ -244,7 +246,7 @@ mod tests {
       opens_dir: false,
       dir_mode: false,
     }];
-    let apps = detect_apps(&custom);
+    let apps = detect_apps(&custom, true);
     // Custom nonexistent app should not appear
     assert!(!apps.iter().any(|a| a.command == "custom_nonexistent_binary_12345"));
   }
@@ -258,5 +260,30 @@ mod tests {
   #[test]
   fn test_command_not_exists() {
     assert!(!command_exists("nonexistent_binary_xyz_99999"));
+  }
+
+  #[test]
+  fn test_detect_apps_skips_known_when_flag_false() {
+    let custom = vec![OpenApp {
+      name: "Custom".into(),
+      command: "which".into(), // use `which` since it always exists
+      is_tui: false,
+      macos_app: None,
+      opens_dir: false,
+      dir_mode: false,
+    }];
+    let apps = detect_apps(&custom, false);
+    // Only custom app should appear, no built-in known apps
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].name, "Custom");
+  }
+
+  #[test]
+  fn test_detect_apps_includes_known_when_flag_true() {
+    let apps = detect_apps(&[], true);
+    // Should include any available known apps (at least some on most systems)
+    // We can't assert exact count since it depends on installed software,
+    // but the function should not panic
+    let _ = apps;
   }
 }

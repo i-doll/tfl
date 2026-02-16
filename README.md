@@ -249,13 +249,13 @@ If no path is given, opens the current directory.
 | Flag | Description |
 |---|---|
 | `-a`, `--all` | Show hidden files |
-| `--init` | Write default config to `~/.config/tfl/config.toml` |
+| `--init` | Write default `config.toml` and `apps.toml` to `~/.config/tfl/` |
 | `-h`, `--help` | Print help message |
 | `-V`, `--version` | Print version |
 
 ## Configuration
 
-tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/.config/tfl/config.toml`). General settings are optional — unspecified values keep their defaults. Key sections (`[keys.normal]`, `[keys.g_prefix]`) **replace** the defaults entirely when present, so include all bindings you want. Use `tfl --init` to get a starting config with all defaults.
+tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/.config/tfl/config.toml`). General settings are optional — unspecified values keep their defaults. Key sections (`[keys.normal]`, `[keys.g_prefix]`) **replace** the defaults entirely when present, so include all bindings you want. Use `tfl --init` to generate both `config.toml` and `apps.toml` with all defaults as a starting point.
 
 **Live reload:** Changes to `config.toml`, `apps.toml`, and `favorites` are detected automatically via OS-native file watchers (FSEvents on macOS, inotify on Linux). Keybindings, custom apps, and favorites update immediately — no restart required. Layout settings (`tree_ratio`, `tick_rate_ms`) are only applied at startup to preserve any manual adjustments during the session.
 
@@ -359,7 +359,9 @@ Search and prompt mode keys are not configurable (they handle text input).
 
 ### Custom apps (`apps.toml`)
 
-Custom apps for the open-with picker live in a separate file at `~/.config/tfl/apps.toml`:
+The open-with picker (`o`) is configured via `~/.config/tfl/apps.toml`. Run `tfl --init` to generate it with all built-in apps as a starting point, then reorder, remove, or add entries as you like.
+
+When `apps.toml` exists on disk, the hardcoded built-in app list is skipped entirely — only apps listed in the file are considered. Delete `apps.toml` to restore the default built-in list.
 
 ```toml
 [[apps]]
@@ -376,7 +378,7 @@ name = "Pages"
 macos_app = "Pages"    # macOS only — opens via `open -a "Pages"`
 ```
 
-Each entry needs at least `command` or `macos_app`. The `tui` flag (default `false`) enables suspend/resume for terminal editors. Custom apps appear before built-in apps in the picker. Keeping apps separate from `config.toml` means `tfl --init` can update default keybindings without touching your app list.
+Each entry needs at least `command` or `macos_app`. The `tui` flag (default `false`) enables suspend/resume for terminal editors. The `opens_dir` flag (default `false`) adds a "open containing folder" variant for files. Only apps found on your system will appear in the picker.
 
 ## Module structure
 

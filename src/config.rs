@@ -57,6 +57,7 @@ pub struct Config {
   pub use_gitignore: bool,
   pub use_custom_ignore: bool,
   pub ignore_glob_set: GlobSet,
+  pub has_apps_file: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -219,6 +220,7 @@ impl Config {
       use_gitignore: true,
       use_custom_ignore: true,
       ignore_glob_set: GlobSet::empty(),
+      has_apps_file: false,
     }
   }
 
@@ -417,6 +419,99 @@ use_custom = true      # apply custom patterns (toggle with I)
     Ok(())
   }
 
+  pub fn apps_path() -> Result<std::path::PathBuf, String> {
+    dirs::config_dir()
+      .map(|d| d.join("tfl").join("apps.toml"))
+      .ok_or_else(|| "could not determine config directory".to_string())
+  }
+
+  pub fn default_apps_toml() -> &'static str {
+    r#"# Default apps for the open-with picker.
+# Reorder, remove, or add entries as you like.
+# Apps are shown in the order listed here.
+# Only apps found on your system will appear in the picker.
+#
+# Fields:
+#   name      - display name
+#   command   - CLI command (required unless macos_app is set)
+#   tui       - true for terminal editors (suspend/resume)
+#   opens_dir - true to offer "open containing folder" on files
+#   macos_app - macOS .app bundle name (optional)
+
+[[apps]]
+name = "VS Code"
+command = "code"
+macos_app = "Visual Studio Code"
+opens_dir = true
+
+[[apps]]
+name = "Cursor"
+command = "cursor"
+macos_app = "Cursor"
+opens_dir = true
+
+[[apps]]
+name = "Zed"
+command = "zed"
+macos_app = "Zed"
+opens_dir = true
+
+[[apps]]
+name = "Sublime Text"
+command = "subl"
+macos_app = "Sublime Text"
+opens_dir = true
+
+[[apps]]
+name = "IntelliJ IDEA"
+command = "idea"
+macos_app = "IntelliJ IDEA"
+opens_dir = true
+
+[[apps]]
+name = "Neovim"
+command = "nvim"
+tui = true
+
+[[apps]]
+name = "Vim"
+command = "vim"
+tui = true
+
+[[apps]]
+name = "Helix"
+command = "hx"
+tui = true
+
+[[apps]]
+name = "Emacs"
+command = "emacs"
+tui = true
+
+[[apps]]
+name = "Nano"
+command = "nano"
+tui = true
+
+[[apps]]
+name = "Micro"
+command = "micro"
+tui = true
+"#
+  }
+
+  pub fn dump_default_apps(path: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+      std::fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+
+    std::fs::write(path, Self::default_apps_toml())
+      .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+
+    Ok(())
+  }
+
   pub fn load() -> (Config, Vec<String>) {
     let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
     let mut errors = Vec::new();
@@ -436,13 +531,14 @@ use_custom = true      # apply custom patterns (toggle with I)
       .and_then(|p| std::fs::read_to_string(p).ok());
 
     if let Some(s) = apps_content {
+      config.has_apps_file = true;
       config.load_apps_str(&s, &mut errors);
     }
 
     (config, errors)
   }
 
-  fn load_apps_str(&mut self, s: &str, errors: &mut Vec<String>) {
+  pub fn load_apps_str(&mut self, s: &str, errors: &mut Vec<String>) {
     let apps_file: AppsFile = match toml::from_str(s) {
       Ok(f) => f,
       Err(e) => {
@@ -1173,5 +1269,33 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     let kb = KeyBinding { code: KeyCode::Char('i'), modifiers: KeyModifiers::NONE };
     assert_eq!(config.normal_keys.get(&kb), Some(&Action::ShowProperties));
+  }
+
+  #[test]
+  fn test_default_apps_toml_round_trip() {
+    let mut config = Config::default();
+    let mut errors = Vec::new();
+    config.load_apps_str(Config::default_apps_toml(), &mut errors);
+    assert!(errors.is_empty(), "parse errors: {errors:?}");
+    assert_eq!(config.custom_apps.len(), 11, "expected 11 apps, got {}", config.custom_apps.len());
+
+    // Check specific app flags
+    let vscode = config.custom_apps.iter().find(|a| a.name == "VS Code").unwrap();
+    assert_eq!(vscode.command, "code");
+    assert!(vscode.opens_dir);
+    assert!(!vscode.is_tui);
+    assert_eq!(vscode.macos_app, Some("Visual Studio Code".into()));
+
+    let nvim = config.custom_apps.iter().find(|a| a.name == "Neovim").unwrap();
+    assert_eq!(nvim.command, "nvim");
+    assert!(nvim.is_tui);
+    assert!(!nvim.opens_dir);
+    assert_eq!(nvim.macos_app, None);
+  }
+
+  #[test]
+  fn test_default_has_apps_file_false() {
+    let config = Config::default();
+    assert!(!config.has_apps_file);
   }
 }

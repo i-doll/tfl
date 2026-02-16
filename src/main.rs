@@ -62,7 +62,7 @@ Usage: tfl [options] [path]
 
 Options:
   -a, --all      Show hidden files
-  --init         Write default config to ~/.config/tfl/config.toml
+  --init         Write default config.toml and apps.toml to ~/.config/tfl/
   -h, --help     Print this help message
   -V, --version  Print version
 
@@ -77,7 +77,7 @@ If no path is given, opens the current directory."
   }
 
   if show_init {
-    let path = match config::Config::config_path() {
+    let config_path = match config::Config::config_path() {
       Ok(p) => p,
       Err(e) => {
         eprintln!("tfl: {e}");
@@ -85,25 +85,53 @@ If no path is given, opens the current directory."
       }
     };
 
-    if path.exists() {
-      eprint!("{} already exists. Overwrite? [y/N] ", path.display());
-      let mut answer = String::new();
-      io::stdin().read_line(&mut answer).unwrap_or(0);
-      if !answer.trim().eq_ignore_ascii_case("y") {
-        return Ok(());
-      }
-    }
-
-    match config::Config::dump_default_config(&path) {
-      Ok(()) => {
-        println!("{}", path.display());
-        return Ok(());
-      }
+    let apps_path = match config::Config::apps_path() {
+      Ok(p) => p,
       Err(e) => {
         eprintln!("tfl: {e}");
         std::process::exit(1);
       }
+    };
+
+    let write_config = if config_path.exists() {
+      eprint!("{} already exists. Overwrite? [y/N] ", config_path.display());
+      let mut answer = String::new();
+      io::stdin().read_line(&mut answer).unwrap_or(0);
+      answer.trim().eq_ignore_ascii_case("y")
+    } else {
+      true
+    };
+
+    let write_apps = if apps_path.exists() {
+      eprint!("{} already exists. Overwrite? [y/N] ", apps_path.display());
+      let mut answer = String::new();
+      io::stdin().read_line(&mut answer).unwrap_or(0);
+      answer.trim().eq_ignore_ascii_case("y")
+    } else {
+      true
+    };
+
+    if write_config {
+      match config::Config::dump_default_config(&config_path) {
+        Ok(()) => println!("{}", config_path.display()),
+        Err(e) => {
+          eprintln!("tfl: {e}");
+          std::process::exit(1);
+        }
+      }
     }
+
+    if write_apps {
+      match config::Config::dump_default_apps(&apps_path) {
+        Ok(()) => println!("{}", apps_path.display()),
+        Err(e) => {
+          eprintln!("tfl: {e}");
+          std::process::exit(1);
+        }
+      }
+    }
+
+    return Ok(());
   }
 
   let (mut config, config_errors) = config::Config::load();
@@ -236,6 +264,7 @@ fn reload_config(config: &mut config::Config, app: &mut App) {
   config.g_prefix_keys = new.g_prefix_keys;
   config.custom_apps = new.custom_apps;
   config.claude_yolo = new.claude_yolo;
+  config.has_apps_file = new.has_apps_file;
   config.ignore_patterns = new.ignore_patterns;
   config.use_gitignore = new.use_gitignore;
   config.use_custom_ignore = new.use_custom_ignore;

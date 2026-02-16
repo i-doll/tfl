@@ -162,6 +162,7 @@ pub struct App {
   pub dual_left_ratio: u16,
   pub dual_right_ratio: u16,
   pub file_properties: Option<FileProperties>,
+  pub has_apps_file: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +221,7 @@ impl App {
       dual_left_ratio: config.tree_ratio,
       dual_right_ratio: config.tree_ratio,
       file_properties: None,
+      has_apps_file: config.has_apps_file,
     })
   }
 
@@ -845,7 +847,7 @@ impl App {
   fn open_with_start(&mut self) {
     if let Some(entry) = self.selected_entry() {
       let is_dir = entry.is_dir;
-      let mut apps = opener::detect_apps(&self.custom_apps);
+      let mut apps = opener::detect_apps(&self.custom_apps, !self.has_apps_file);
       if !is_dir {
         let folder_apps: Vec<opener::OpenApp> = apps
           .iter()
@@ -1657,6 +1659,7 @@ impl App {
   pub fn apply_config(&mut self, config: &Config) {
     self.custom_apps = config.custom_apps.clone();
     self.claude_yolo = config.claude_yolo;
+    self.has_apps_file = config.has_apps_file;
     self.tree.set_ignore_patterns(config.ignore_glob_set.clone());
   }
 
