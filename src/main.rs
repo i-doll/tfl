@@ -10,6 +10,7 @@ mod opener;
 mod preview;
 mod ui;
 
+use std::collections::HashSet;
 use std::io;
 use std::panic;
 use std::path::PathBuf;
@@ -248,7 +249,9 @@ Options:
   }
 
   let events = EventLoop::new(Duration::from_millis(config.tick_rate_ms), config_dir.as_deref());
+  events.set_watched_dirs(compute_watched_dirs(&app));
   let mut last_reload = Instant::now() - Duration::from_secs(1);
+  let mut last_tree_change: Option<Instant> = None;
 
   loop {
     terminal.draw(|frame| ui::draw(frame, &mut app, &config))?;
@@ -257,6 +260,7 @@ Options:
       Event::Key(key) => {
         let action = map_key(key, app.input_mode, &config);
         app.update(action)?;
+        events.set_watched_dirs(compute_watched_dirs(&app));
       }
       Event::Mouse(mouse) => {
         // Handle mouse clicks in the header row (row 0) for breadcrumb navigation
@@ -264,6 +268,7 @@ Options:
           && let Some(action) = map_breadcrumb_click(mouse.column, &app.breadcrumb_segments)
         {
           app.update(action)?;
+          events.set_watched_dirs(compute_watched_dirs(&app));
         }
       }
       Event::Resize(w, h) => {
@@ -278,6 +283,15 @@ Options:
           last_reload = Instant::now();
         }
       }
+      Event::TreeChanged => {
+        if app.tree_reloaded {
+          // Suppress self-triggered events from app's own file ops
+          app.tree_reloaded = false;
+          last_tree_change = Some(Instant::now());
+        } else {
+          last_tree_change = Some(last_tree_change.unwrap_or_else(Instant::now));
+        }
+      }
       Event::Tick => {
         app.update(crate::action::Action::Tick)?;
         // Clear status message after it's been visible for a few ticks
@@ -288,7 +302,31 @@ Options:
             app.status_message = None;
           }
         }
+        // Debounced tree reload from external changes
+        if let Some(ts) = last_tree_change
+          && ts.elapsed() >= Duration::from_millis(150)
+        {
+          last_tree_change = None;
+          let cursor_path = app.selected_entry().map(|e| e.path.clone());
+          app.tree.reload()?;
+          if let Some(ref mut pane) = app.right_pane {
+            let _ = pane.tree.reload();
+          }
+          if let Some(ref path) = cursor_path {
+            app.reposition_cursor_to(path);
+          }
+          app.preview.invalidate();
+          app.update_preview();
+          events.set_watched_dirs(compute_watched_dirs(&app));
+        }
       }
+    }
+
+    // Suppress watcher events from app's own tree.reload() calls
+    if app.tree_reloaded {
+      app.tree_reloaded = false;
+      last_tree_change = Some(Instant::now());
+      events.set_watched_dirs(compute_watched_dirs(&app));
     }
 
     // Handle suspend actions (editor, claude, shell)
@@ -308,6 +346,7 @@ Options:
         let path = entry.path.clone();
         app.preview.request_preview(&path, app.picker.as_ref(), app.tree.git_repo());
       }
+      events.set_watched_dirs(compute_watched_dirs(&app));
     }
 
     if app.should_quit {
@@ -328,6 +367,14 @@ Options:
   }
 
   Ok(())
+}
+
+fn compute_watched_dirs(app: &App) -> HashSet<PathBuf> {
+  let mut dirs = app.tree.watched_dirs();
+  if let Some(ref pane) = app.right_pane {
+    dirs.extend(pane.tree.watched_dirs());
+  }
+  dirs
 }
 
 fn setup_terminal() -> Result<()> {
