@@ -1,12 +1,13 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::app::App;
+use crate::theme::Theme;
 
-pub fn render_open_with(app: &App, area: Rect, buf: &mut Buffer) {
+pub fn render_open_with(app: &App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   let apps = &app.open_with_apps;
   let item_count = 1 + apps.len(); // "Default Application" + detected apps
   let width = 40.min(area.width.saturating_sub(4));
@@ -26,7 +27,7 @@ pub fn render_open_with(app: &App, area: Rect, buf: &mut Buffer) {
 
   // "Default Application" entry at index 0
   let selected = app.open_with_cursor == 0;
-  lines.push(app_line("Default Application", None, selected));
+  lines.push(app_line("Default Application", None, selected, theme));
 
   // Detected apps
   for (i, app_entry) in apps.iter().enumerate() {
@@ -38,27 +39,27 @@ pub fn render_open_with(app: &App, area: Rect, buf: &mut Buffer) {
     } else {
       None
     };
-    lines.push(app_line(&app_entry.name, suffix, selected));
+    lines.push(app_line(&app_entry.name, suffix, selected, theme));
   }
 
   let block = Block::default()
     .borders(Borders::ALL)
     .title(" Open with ")
-    .border_style(Style::default().fg(Color::Indexed(245)))
-    .style(Style::default().bg(Color::Indexed(235)));
+    .border_style(Style::default().fg(theme.title_inactive))
+    .style(Style::default().bg(theme.bg_overlay));
 
   let paragraph = Paragraph::new(lines).block(block);
   paragraph.render(popup, buf);
 }
 
-fn app_line(name: &str, suffix: Option<&str>, selected: bool) -> Line<'static> {
+fn app_line(name: &str, suffix: Option<&str>, selected: bool, theme: &Theme) -> Line<'static> {
   let prefix = if selected { " > " } else { "   " };
   let style = if selected {
     Style::default()
-      .fg(Color::Indexed(75))
+      .fg(theme.accent)
       .add_modifier(Modifier::BOLD)
   } else {
-    Style::default().fg(Color::Indexed(252))
+    Style::default().fg(theme.text)
   };
 
   let mut spans = vec![Span::styled(format!("{prefix}{name}"), style)];
@@ -66,7 +67,7 @@ fn app_line(name: &str, suffix: Option<&str>, selected: bool) -> Line<'static> {
   if let Some(tag) = suffix {
     spans.push(Span::styled(
       format!(" ({tag})"),
-      Style::default().fg(Color::Indexed(241)),
+      Style::default().fg(theme.text_muted),
     ));
   }
 

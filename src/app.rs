@@ -211,7 +211,7 @@ impl App {
     Ok(Self {
       tree,
       cursor: 0,
-      preview: PreviewState::new(),
+      preview: PreviewState::new(&config.syntax_theme, config.theme.clone()),
       picker,
       input_mode: InputMode::Normal,
       search_query: String::new(),
@@ -1924,6 +1924,8 @@ impl App {
     self.use_trash = config.use_trash;
     self.has_apps_file = config.has_apps_file;
     self.tree.set_ignore_patterns(config.ignore_glob_set.clone());
+    self.preview.set_syntax_theme(&config.syntax_theme);
+    self.preview.set_theme(config.theme.clone());
   }
 
   pub fn reload_favorites(&mut self) {

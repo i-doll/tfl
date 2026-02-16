@@ -1,12 +1,13 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 use super::text::SyntaxHighlighter;
+use crate::theme::Theme;
 
 /// Renders markdown content to styled terminal lines
-pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Line<'static>> {
+pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter, theme: &Theme) -> Vec<Line<'static>> {
   let mut options = Options::empty();
   options.insert(Options::ENABLE_TABLES);
   options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -69,7 +70,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
           };
           current_spans.push(Span::styled(
             bullet,
-            Style::default().fg(Color::Indexed(75)),
+            Style::default().fg(theme.accent),
           ));
         }
         Tag::Emphasis => {
@@ -86,7 +87,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
         }
         Tag::Link { dest_url, .. } => {
           let current = *style_stack.last().unwrap_or(&Style::default());
-          style_stack.push(current.fg(Color::Indexed(75)).add_modifier(Modifier::UNDERLINED));
+          style_stack.push(current.fg(theme.accent).add_modifier(Modifier::UNDERLINED));
           // Store URL for later
           current_spans.push(Span::raw("")); // Placeholder to mark link start
           // We'll append URL after link text
@@ -116,7 +117,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
       },
       Event::End(tag) => match tag {
         TagEnd::Heading(_) => {
-          let style = heading_style(heading_level);
+          let style = heading_style(heading_level, theme);
           let prefix = heading_prefix(heading_level);
 
           // Build the heading line with prefix
@@ -137,7 +138,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
           // Add code block delimiter
           lines.push(Line::from(Span::styled(
             "```".to_string() + &code_block_lang,
-            Style::default().fg(Color::Indexed(240)),
+            Style::default().fg(theme.border),
           )));
 
           // Add highlighted lines (strip line numbers from highlighter output)
@@ -153,7 +154,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
 
           lines.push(Line::from(Span::styled(
             "```",
-            Style::default().fg(Color::Indexed(240)),
+            Style::default().fg(theme.border),
           )));
 
           in_code_block = false;
@@ -178,7 +179,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
           if !url.is_empty() {
             current_spans.push(Span::styled(
               format!(" ({url})"),
-              Style::default().fg(Color::Indexed(240)),
+              Style::default().fg(theme.border),
             ));
           }
         }
@@ -187,7 +188,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
         }
         TagEnd::Table => {
           // Render the complete table
-          render_table(&table_rows, &table_alignments, &mut lines);
+          render_table(&table_rows, &table_alignments, &mut lines, theme);
           table_rows.clear();
         }
         TagEnd::TableHead => {
@@ -218,11 +219,11 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
             }
             current_spans.push(Span::styled(
               "> ",
-              Style::default().fg(Color::Indexed(240)),
+              Style::default().fg(theme.border),
             ));
             current_spans.push(Span::styled(
               line.to_string(),
-              Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::ITALIC),
+              Style::default().fg(theme.text).add_modifier(Modifier::ITALIC),
             ));
           }
         } else {
@@ -234,7 +235,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
         // Inline code
         current_spans.push(Span::styled(
           format!("`{code}`"),
-          Style::default().fg(Color::Indexed(214)).bg(Color::Indexed(236)),
+          Style::default().fg(theme.warning).bg(theme.bg_inline_code),
         ));
       }
       Event::SoftBreak | Event::HardBreak => {
@@ -244,7 +245,7 @@ pub fn render_markdown(content: &str, highlighter: &SyntaxHighlighter) -> Vec<Li
         flush_line(&mut current_spans, &mut lines);
         lines.push(Line::from(Span::styled(
           "---",
-          Style::default().fg(Color::Indexed(240)),
+          Style::default().fg(theme.border),
         )));
       }
       _ => {}
@@ -263,25 +264,25 @@ fn flush_line(spans: &mut Vec<Span<'static>>, lines: &mut Vec<Line<'static>>) {
   }
 }
 
-fn heading_style(level: HeadingLevel) -> Style {
+fn heading_style(level: HeadingLevel, theme: &Theme) -> Style {
   match level {
     HeadingLevel::H1 => Style::default()
-      .fg(Color::Indexed(75))
+      .fg(theme.accent)
       .add_modifier(Modifier::BOLD),
     HeadingLevel::H2 => Style::default()
-      .fg(Color::Indexed(114))
+      .fg(theme.success)
       .add_modifier(Modifier::BOLD),
     HeadingLevel::H3 => Style::default()
-      .fg(Color::Indexed(214))
+      .fg(theme.warning)
       .add_modifier(Modifier::BOLD),
     HeadingLevel::H4 => Style::default()
-      .fg(Color::Indexed(252))
+      .fg(theme.text)
       .add_modifier(Modifier::BOLD),
     HeadingLevel::H5 => Style::default()
-      .fg(Color::Indexed(246))
+      .fg(theme.meta_secondary)
       .add_modifier(Modifier::BOLD),
     HeadingLevel::H6 => Style::default()
-      .fg(Color::Indexed(240))
+      .fg(theme.border)
       .add_modifier(Modifier::BOLD),
   }
 }
@@ -301,6 +302,7 @@ fn render_table(
   rows: &[Vec<String>],
   alignments: &[pulldown_cmark::Alignment],
   lines: &mut Vec<Line<'static>>,
+  theme: &Theme,
 ) {
   if rows.is_empty() {
     return;
@@ -323,8 +325,8 @@ fn render_table(
     *w = (*w).max(3);
   }
 
-  let border_style = Style::default().fg(Color::Indexed(240));
-  let header_style = Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD);
+  let border_style = Style::default().fg(theme.border);
+  let header_style = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
   let cell_style = Style::default();
 
   for (row_idx, row) in rows.iter().enumerate() {
@@ -402,14 +404,18 @@ mod tests {
   use super::*;
 
   fn highlighter() -> SyntaxHighlighter {
-    SyntaxHighlighter::new()
+    SyntaxHighlighter::new("base16-ocean.dark")
+  }
+
+  fn theme() -> Theme {
+    Theme::dark()
   }
 
   #[test]
   fn test_heading_renders_with_style() {
     let h = highlighter();
     let content = "# Hello World";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     assert!(!lines.is_empty(), "Should produce at least one line");
     let first_line = &lines[0];
@@ -425,8 +431,8 @@ mod tests {
   #[test]
   fn test_h2_renders_differently_from_h1() {
     let h = highlighter();
-    let h1_lines = render_markdown("# H1", &h);
-    let h2_lines = render_markdown("## H2", &h);
+    let h1_lines = render_markdown("# H1", &h, &theme());
+    let h2_lines = render_markdown("## H2", &h, &theme());
 
     assert!(!h1_lines.is_empty());
     assert!(!h2_lines.is_empty());
@@ -441,7 +447,7 @@ mod tests {
   fn test_code_block_has_highlighting() {
     let h = highlighter();
     let content = "```rust\nfn main() {}\n```";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     // Should have: opening ```, code line(s), closing ```
     assert!(lines.len() >= 3, "Code block should produce multiple lines");
@@ -458,7 +464,7 @@ mod tests {
   fn test_list_renders_correctly() {
     let h = highlighter();
     let content = "- Item 1\n- Item 2\n- Item 3";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     // Should have at least 3 lines (one per item)
     assert!(lines.len() >= 3, "List should produce lines for each item");
@@ -478,7 +484,7 @@ mod tests {
   fn test_ordered_list() {
     let h = highlighter();
     let content = "1. First\n2. Second\n3. Third";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     let text: String = lines.iter()
       .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -493,7 +499,7 @@ mod tests {
   fn test_emphasis_renders_with_italic() {
     let h = highlighter();
     let content = "*italic text*";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     assert!(!lines.is_empty());
 
@@ -510,7 +516,7 @@ mod tests {
   fn test_strong_renders_with_bold() {
     let h = highlighter();
     let content = "**bold text**";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     assert!(!lines.is_empty());
 
@@ -526,7 +532,7 @@ mod tests {
   fn test_inline_code() {
     let h = highlighter();
     let content = "Use `println!` macro";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     let text: String = lines.iter()
       .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -539,7 +545,7 @@ mod tests {
   fn test_link_shows_url() {
     let h = highlighter();
     let content = "[Rust](https://rust-lang.org)";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     let text: String = lines.iter()
       .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -553,7 +559,7 @@ mod tests {
   fn test_horizontal_rule() {
     let h = highlighter();
     let content = "Above\n\n---\n\nBelow";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     let has_rule = lines.iter().any(|line| {
       line.spans.iter().any(|span| span.content.contains("---"))
@@ -565,7 +571,7 @@ mod tests {
   fn test_blockquote() {
     let h = highlighter();
     let content = "> This is a quote";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     let text: String = lines.iter()
       .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -582,7 +588,7 @@ mod tests {
     let content = "# Title\n\nParagraph 1\n\nParagraph 2\n\nParagraph 3";
 
     let raw_lines: Vec<&str> = content.lines().collect();
-    let rendered_lines = render_markdown(content, &h);
+    let rendered_lines = render_markdown(content, &h, &theme());
 
     // Both should have content
     assert!(!raw_lines.is_empty());
@@ -593,7 +599,7 @@ mod tests {
   fn test_table_renders() {
     let h = highlighter();
     let content = "| Flag | Description |\n|---|---|\n| `-a` | Show all |\n| `-h` | Help |";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     // Should have multiple lines for table
     assert!(lines.len() >= 3, "Table should produce multiple lines");
@@ -612,7 +618,7 @@ mod tests {
   fn test_table_with_alignment() {
     let h = highlighter();
     let content = "| Left | Center | Right |\n|:---|:---:|---:|\n| L | C | R |";
-    let lines = render_markdown(content, &h);
+    let lines = render_markdown(content, &h, &theme());
 
     assert!(!lines.is_empty(), "Table should produce lines");
 

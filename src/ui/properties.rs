@@ -1,16 +1,17 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::fs::FileProperties;
+use crate::theme::Theme;
 
-const LABEL_STYLE: Style = Style::new().fg(Color::Indexed(245));
-const VALUE_STYLE: Style = Style::new().fg(Color::Indexed(252));
-const PATH_STYLE: Style = Style::new().fg(Color::Indexed(75));
+pub fn render_properties(props: &FileProperties, area: Rect, buf: &mut Buffer, theme: &Theme) {
+  let label_style = Style::default().fg(theme.title_inactive);
+  let value_style = Style::default().fg(theme.text);
+  let path_style = Style::default().fg(theme.accent);
 
-pub fn render_properties(props: &FileProperties, area: Rect, buf: &mut Buffer) {
   let width = 60.min(area.width.saturating_sub(4));
   let height = 20.min(area.height.saturating_sub(2));
 
@@ -33,20 +34,20 @@ pub fn render_properties(props: &FileProperties, area: Rect, buf: &mut Buffer) {
   } else {
     props.path.clone()
   };
-  lines.push(property_line("Path", &path_display, PATH_STYLE));
+  lines.push(property_line("Path", &path_display, path_style, label_style));
 
   // Type
-  lines.push(property_line("Type", &props.file_type, VALUE_STYLE));
+  lines.push(property_line("Type", &props.file_type, value_style, label_style));
 
   // MIME type (if available)
   if let Some(ref mime) = props.mime_type {
-    lines.push(property_line("MIME", mime, VALUE_STYLE));
+    lines.push(property_line("MIME", mime, value_style, label_style));
   }
 
   // Size
   if !props.is_dir {
     let size_str = format!("{} ({} bytes)", props.size_human, props.size);
-    lines.push(property_line("Size", &size_str, VALUE_STYLE));
+    lines.push(property_line("Size", &size_str, value_style, label_style));
   }
 
   // Symlink target
@@ -57,50 +58,50 @@ pub fn render_properties(props: &FileProperties, area: Rect, buf: &mut Buffer) {
     } else {
       target.clone()
     };
-    lines.push(property_line("Target", &target_display, PATH_STYLE));
+    lines.push(property_line("Target", &target_display, path_style, label_style));
   }
 
   // Permissions
   let perms_str = format!("{} ({})", props.permissions_rwx, props.permissions_octal);
-  lines.push(property_line("Permissions", &perms_str, VALUE_STYLE));
+  lines.push(property_line("Permissions", &perms_str, value_style, label_style));
 
   // Owner/Group
   let owner_str = format!("{} / {}", props.owner, props.group);
-  lines.push(property_line("Owner/Group", &owner_str, VALUE_STYLE));
+  lines.push(property_line("Owner/Group", &owner_str, value_style, label_style));
 
   // Timestamps
   if let Some(ref modified) = props.modified {
-    lines.push(property_line("Modified", modified, VALUE_STYLE));
+    lines.push(property_line("Modified", modified, value_style, label_style));
   }
   if let Some(ref accessed) = props.accessed {
-    lines.push(property_line("Accessed", accessed, VALUE_STYLE));
+    lines.push(property_line("Accessed", accessed, value_style, label_style));
   }
   if let Some(ref created) = props.created {
-    lines.push(property_line("Created", created, VALUE_STYLE));
+    lines.push(property_line("Created", created, value_style, label_style));
   }
 
   // Footer
   lines.push(Line::from(""));
   lines.push(Line::from(Span::styled(
     " Press i, q, or Esc to close".to_string(),
-    Style::default().fg(Color::Indexed(241)),
+    Style::default().fg(theme.text_muted),
   )));
 
   let block = Block::default()
     .borders(Borders::ALL)
     .title(" Properties ")
-    .border_style(Style::default().fg(Color::Indexed(245)))
-    .style(Style::default().bg(Color::Indexed(235)));
+    .border_style(Style::default().fg(theme.title_inactive))
+    .style(Style::default().bg(theme.bg_overlay));
 
   let paragraph = Paragraph::new(lines).block(block);
   paragraph.render(popup, buf);
 }
 
-fn property_line(label: &str, value: &str, value_style: Style) -> Line<'static> {
+fn property_line(label: &str, value: &str, value_style: Style, label_style: Style) -> Line<'static> {
   Line::from(vec![
     Span::styled(
       format!("  {label:<12}"),
-      LABEL_STYLE.add_modifier(Modifier::BOLD),
+      label_style.add_modifier(Modifier::BOLD),
     ),
     Span::styled(value.to_string(), value_style),
   ])
@@ -109,6 +110,7 @@ fn property_line(label: &str, value: &str, value_style: Style) -> Line<'static> 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::theme::Theme;
 
   fn make_test_props() -> FileProperties {
     FileProperties {
@@ -132,7 +134,10 @@ mod tests {
 
   #[test]
   fn test_property_line_formatting() {
-    let line = property_line("Size", "1.21 KB", VALUE_STYLE);
+    let theme = Theme::dark();
+    let value_style = Style::default().fg(theme.text);
+    let label_style = Style::default().fg(theme.title_inactive);
+    let line = property_line("Size", "1.21 KB", value_style, label_style);
     // Just verify it creates a line with 2 spans
     assert_eq!(line.spans.len(), 2);
   }
@@ -140,18 +145,20 @@ mod tests {
   #[test]
   fn test_render_properties_small_area_returns_early() {
     let props = make_test_props();
+    let theme = Theme::dark();
     let area = Rect::new(0, 0, 10, 5); // Too small
     let mut buf = Buffer::empty(area);
-    render_properties(&props, area, &mut buf);
+    render_properties(&props, area, &mut buf, &theme);
     // Should return early without crashing
   }
 
   #[test]
   fn test_render_properties_normal_area() {
     let props = make_test_props();
+    let theme = Theme::dark();
     let area = Rect::new(0, 0, 80, 30);
     let mut buf = Buffer::empty(area);
-    render_properties(&props, area, &mut buf);
+    render_properties(&props, area, &mut buf, &theme);
     // Should complete without crashing
   }
 
@@ -162,9 +169,10 @@ mod tests {
     props.symlink_target = Some("/path/to/target".to_string());
     props.file_type = "Symbolic link".to_string();
 
+    let theme = Theme::dark();
     let area = Rect::new(0, 0, 80, 30);
     let mut buf = Buffer::empty(area);
-    render_properties(&props, area, &mut buf);
+    render_properties(&props, area, &mut buf, &theme);
     // Should complete without crashing and include target line
   }
 
@@ -175,9 +183,10 @@ mod tests {
     props.file_type = "Directory".to_string();
     props.mime_type = None;
 
+    let theme = Theme::dark();
     let area = Rect::new(0, 0, 80, 30);
     let mut buf = Buffer::empty(area);
-    render_properties(&props, area, &mut buf);
+    render_properties(&props, area, &mut buf, &theme);
     // Should complete without crashing, size line should be skipped
   }
 }

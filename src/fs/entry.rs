@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use ratatui::style::Color;
 
+use crate::theme::Theme;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitFileStatus {
   Modified,
@@ -23,26 +25,26 @@ impl GitStatus {
     self.staged.is_none() && self.unstaged.is_none()
   }
 
-  pub fn display_color(&self) -> Option<Color> {
-    // Conflicted → red
+  pub fn display_color(&self, theme: &Theme) -> Option<Color> {
+    // Conflicted
     if self.staged == Some(GitFileStatus::Conflicted)
       || self.unstaged == Some(GitFileStatus::Conflicted)
     {
-      return Some(Color::Indexed(196));
+      return Some(theme.git_conflicted);
     }
-    // Untracked → red (167)
+    // Untracked
     if self.staged == Some(GitFileStatus::Untracked)
       || self.unstaged == Some(GitFileStatus::Untracked)
     {
-      return Some(Color::Indexed(167));
+      return Some(theme.git_untracked);
     }
-    // Unstaged changes → yellow
+    // Unstaged changes
     if self.unstaged.is_some() {
-      return Some(Color::Indexed(214));
+      return Some(theme.git_modified);
     }
-    // Staged only → green
+    // Staged only
     if self.staged.is_some() {
-      return Some(Color::Indexed(114));
+      return Some(theme.git_staged);
     }
     None
   }
@@ -247,9 +249,10 @@ mod tests {
 
   #[test]
   fn test_git_status_default_is_clean() {
+    let theme = Theme::dark();
     let status = GitStatus::default();
     assert!(status.is_clean());
-    assert_eq!(status.display_color(), None);
+    assert_eq!(status.display_color(&theme), None);
   }
 
   #[test]
@@ -272,47 +275,52 @@ mod tests {
 
   #[test]
   fn test_display_color_staged_only() {
+    let theme = Theme::dark();
     let status = GitStatus {
       staged: Some(GitFileStatus::Added),
       unstaged: None,
     };
-    assert_eq!(status.display_color(), Some(Color::Indexed(114)));
+    assert_eq!(status.display_color(&theme), Some(theme.git_staged));
   }
 
   #[test]
   fn test_display_color_unstaged() {
+    let theme = Theme::dark();
     let status = GitStatus {
       staged: None,
       unstaged: Some(GitFileStatus::Modified),
     };
-    assert_eq!(status.display_color(), Some(Color::Indexed(214)));
+    assert_eq!(status.display_color(&theme), Some(theme.git_modified));
   }
 
   #[test]
   fn test_display_color_untracked() {
+    let theme = Theme::dark();
     let status = GitStatus {
       staged: None,
       unstaged: Some(GitFileStatus::Untracked),
     };
-    assert_eq!(status.display_color(), Some(Color::Indexed(167)));
+    assert_eq!(status.display_color(&theme), Some(theme.git_untracked));
   }
 
   #[test]
   fn test_display_color_conflicted() {
+    let theme = Theme::dark();
     let status = GitStatus {
       staged: Some(GitFileStatus::Conflicted),
       unstaged: None,
     };
-    assert_eq!(status.display_color(), Some(Color::Indexed(196)));
+    assert_eq!(status.display_color(&theme), Some(theme.git_conflicted));
   }
 
   #[test]
-  fn test_display_color_mixed_is_yellow() {
+  fn test_display_color_mixed_is_modified() {
+    let theme = Theme::dark();
     let status = GitStatus {
       staged: Some(GitFileStatus::Added),
       unstaged: Some(GitFileStatus::Modified),
     };
-    assert_eq!(status.display_color(), Some(Color::Indexed(214)));
+    assert_eq!(status.display_color(&theme), Some(theme.git_modified));
   }
 
   #[test]

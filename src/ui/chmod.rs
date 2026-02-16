@@ -1,12 +1,13 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::app::App;
+use crate::theme::Theme;
 
-pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer) {
+pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   let width = 50.min(area.width.saturating_sub(4));
   let height = 14.min(area.height.saturating_sub(2));
 
@@ -24,9 +25,9 @@ pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer) {
   let mode = chmod_state.new_mode;
   let original_mode = chmod_state.original_mode;
 
-  let dim = Style::default().fg(Color::Indexed(241));
-  let changed = Style::default().fg(Color::Indexed(114));
-  let highlight = Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD);
+  let dim = Style::default().fg(theme.text_muted);
+  let changed = Style::default().fg(theme.success);
+  let highlight = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
 
   let mut lines: Vec<Line> = Vec::new();
 
@@ -36,7 +37,7 @@ pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer) {
     .unwrap_or_else(|| chmod_state.path.to_string_lossy().to_string());
   lines.push(Line::from(vec![
     Span::styled(" File: ", dim),
-    Span::styled(name, Style::default().fg(Color::Indexed(252))),
+    Span::styled(name, Style::default().fg(theme.text)),
   ]));
 
   lines.push(Line::from(""));
@@ -50,21 +51,21 @@ pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer) {
   // Owner row
   let owner_spans = render_permission_row(
     PermRowConfig { label: "Owner", r_key: 'r', w_key: 'w', x_key: 'x', shift: 6 },
-    mode, original_mode, changed,
+    mode, original_mode, changed, theme,
   );
   lines.push(Line::from(owner_spans));
 
   // Group row
   let group_spans = render_permission_row(
     PermRowConfig { label: "Group", r_key: 'R', w_key: 'W', x_key: 'X', shift: 3 },
-    mode, original_mode, changed,
+    mode, original_mode, changed, theme,
   );
   lines.push(Line::from(group_spans));
 
   // Others row
   let others_spans = render_permission_row(
     PermRowConfig { label: "Others", r_key: '4', w_key: '2', x_key: '1', shift: 0 },
-    mode, original_mode, changed,
+    mode, original_mode, changed, theme,
   );
   lines.push(Line::from(others_spans));
 
@@ -73,13 +74,13 @@ pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer) {
   // Octal display
   let octal_str = format!("{:03o}", mode & 0o777);
   let original_octal = format!("{:03o}", original_mode & 0o777);
-  let octal_style = if octal_str != original_octal { changed } else { Style::default().fg(Color::Indexed(252)) };
+  let octal_style = if octal_str != original_octal { changed } else { Style::default().fg(theme.text) };
 
   if chmod_state.octal_mode {
     lines.push(Line::from(vec![
       Span::styled(" Octal: ", dim),
       Span::styled(&chmod_state.octal_input, highlight),
-      Span::styled("_", Style::default().fg(Color::Indexed(245))),
+      Span::styled("_", Style::default().fg(theme.title_inactive)),
       Span::styled(format!(" (was {})", original_octal), dim),
     ]));
   } else {
@@ -112,8 +113,8 @@ pub fn render_chmod(app: &App, area: Rect, buf: &mut Buffer) {
   let block = Block::default()
     .borders(Borders::ALL)
     .title(title)
-    .border_style(Style::default().fg(Color::Indexed(245)))
-    .style(Style::default().bg(Color::Indexed(235)));
+    .border_style(Style::default().fg(theme.title_inactive))
+    .style(Style::default().bg(theme.bg_overlay));
 
   let paragraph = Paragraph::new(lines).block(block);
   paragraph.render(popup, buf);
@@ -133,10 +134,11 @@ fn render_permission_row<'a>(
   mode: u32,
   original_mode: u32,
   changed: Style,
+  theme: &Theme,
 ) -> Vec<Span<'a>> {
-  let dim = Style::default().fg(Color::Indexed(241));
-  let on = Style::default().fg(Color::Indexed(114));
-  let off = Style::default().fg(Color::Indexed(167));
+  let dim = Style::default().fg(theme.text_muted);
+  let on = Style::default().fg(theme.success);
+  let off = Style::default().fg(theme.error);
 
   let r_bit = 0o4 << cfg.shift;
   let w_bit = 0o2 << cfg.shift;
@@ -170,6 +172,8 @@ fn render_permission_row<'a>(
 mod tests {
   use super::*;
   use crate::app::ChmodState;
+  use crate::theme::Theme;
+  use ratatui::style::Color;
   use std::path::PathBuf;
 
   fn make_chmod_state(mode: u32, is_dir: bool) -> ChmodState {
@@ -186,9 +190,10 @@ mod tests {
 
   #[test]
   fn test_render_permission_row_all_on() {
+    let theme = Theme::dark();
     let changed = Style::default().fg(Color::Indexed(114));
     let cfg = PermRowConfig { label: "Owner", r_key: 'r', w_key: 'w', x_key: 'x', shift: 6 };
-    let spans = render_permission_row(cfg, 0o700, 0o700, changed);
+    let spans = render_permission_row(cfg, 0o700, 0o700, changed, &theme);
     // Check that rwx are rendered
     assert!(spans.iter().any(|s| s.content.contains("r")));
     assert!(spans.iter().any(|s| s.content.contains("w")));
@@ -197,9 +202,10 @@ mod tests {
 
   #[test]
   fn test_render_permission_row_all_off() {
+    let theme = Theme::dark();
     let changed = Style::default().fg(Color::Indexed(114));
     let cfg = PermRowConfig { label: "Owner", r_key: 'r', w_key: 'w', x_key: 'x', shift: 6 };
-    let spans = render_permission_row(cfg, 0o000, 0o000, changed);
+    let spans = render_permission_row(cfg, 0o000, 0o000, changed, &theme);
     // Check that --- are rendered (dashes instead of letters)
     let content: String = spans.iter().map(|s| s.content.to_string()).collect();
     assert!(content.contains("-"));

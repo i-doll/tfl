@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
@@ -5,13 +7,16 @@ use syntect::highlighting::{FontStyle, ThemeSet};
 use syntect::parsing::{SyntaxDefinition, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+const CATPPUCCIN_MOCHA_THEME: &[u8] = include_bytes!("themes/catppuccin-mocha.tmTheme");
+
 pub struct SyntaxHighlighter {
   syntax_set: SyntaxSet,
   theme_set: ThemeSet,
+  theme_name: String,
 }
 
 impl SyntaxHighlighter {
-  pub fn new() -> Self {
+  pub fn new(syntax_theme: &str) -> Self {
     let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
     let toml_syntax = SyntaxDefinition::load_from_str(
       include_str!("syntaxes/TOML.sublime-syntax"),
@@ -21,10 +26,22 @@ impl SyntaxHighlighter {
     .expect("valid TOML syntax definition");
     builder.add(toml_syntax);
 
+    let mut theme_set = ThemeSet::load_defaults();
+
+    // Load Catppuccin Mocha theme
+    if let Ok(theme) = ThemeSet::load_from_reader(&mut Cursor::new(CATPPUCCIN_MOCHA_THEME)) {
+      theme_set.themes.insert("Catppuccin Mocha".to_string(), theme);
+    }
+
     Self {
       syntax_set: builder.build(),
-      theme_set: ThemeSet::load_defaults(),
+      theme_set,
+      theme_name: syntax_theme.to_string(),
     }
+  }
+
+  pub fn set_theme_name(&mut self, name: &str) {
+    self.theme_name = name.to_string();
   }
 
   pub fn highlight<'a>(&self, content: &str, extension: &str) -> Vec<Line<'a>> {
@@ -33,7 +50,9 @@ impl SyntaxHighlighter {
       .or_else(|| self.syntax_set.find_syntax_by_extension(extension))
       .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
-    let theme = &self.theme_set.themes["base16-ocean.dark"];
+    let theme = self.theme_set.themes.get(&self.theme_name)
+      .or_else(|| self.theme_set.themes.get("base16-ocean.dark"))
+      .expect("fallback theme must exist");
     let mut highlighter = HighlightLines::new(syntax, theme);
     let mut lines = Vec::new();
 
@@ -113,20 +132,20 @@ mod tests {
 
   #[test]
   fn test_highlighter_creates() {
-    let h = SyntaxHighlighter::new();
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
     assert!(!h.syntax_set.syntaxes().is_empty());
   }
 
   #[test]
   fn test_highlight_plain_text() {
-    let h = SyntaxHighlighter::new();
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
     let lines = h.highlight("hello\nworld\n", "txt");
     assert_eq!(lines.len(), 2);
   }
 
   #[test]
   fn test_highlight_rust() {
-    let h = SyntaxHighlighter::new();
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
     let lines = h.highlight("fn main() {}\n", "rs");
     assert_eq!(lines.len(), 1);
     // First span is line number
@@ -135,7 +154,7 @@ mod tests {
 
   #[test]
   fn test_highlight_toml() {
-    let h = SyntaxHighlighter::new();
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
     let toml_content = "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n";
     let lines = h.highlight(toml_content, "toml");
     assert_eq!(lines.len(), 3);
@@ -148,7 +167,7 @@ mod tests {
 
   #[test]
   fn test_highlight_line_numbers() {
-    let h = SyntaxHighlighter::new();
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
     let content = (1..=15).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
     let lines = h.highlight(&content, "txt");
     assert_eq!(lines.len(), 15);
@@ -208,7 +227,7 @@ mod tests {
 
   #[test]
   fn test_highlight_modeline_overrides_ext() {
-    let h = SyntaxHighlighter::new();
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
     let content = "# vim: ft=python\ndef hello():\n  pass\n";
     let lines_py = h.highlight(content, "txt");
     let lines_txt = h.highlight("def hello():\n  pass\n", "txt");
@@ -216,5 +235,30 @@ mod tests {
     let py_spans: usize = lines_py.iter().map(|l| l.spans.len()).sum();
     let txt_spans: usize = lines_txt.iter().map(|l| l.spans.len()).sum();
     assert!(py_spans > txt_spans, "modeline should trigger Python highlighting");
+  }
+
+  #[test]
+  fn test_catppuccin_mocha_theme_loaded() {
+    let h = SyntaxHighlighter::new("Catppuccin Mocha");
+    assert!(h.theme_set.themes.contains_key("Catppuccin Mocha"));
+    // Verify it can highlight with the theme
+    let lines = h.highlight("fn main() {}\n", "rs");
+    assert_eq!(lines.len(), 1);
+  }
+
+  #[test]
+  fn test_set_theme_name() {
+    let mut h = SyntaxHighlighter::new("base16-ocean.dark");
+    assert_eq!(h.theme_name, "base16-ocean.dark");
+    h.set_theme_name("Catppuccin Mocha");
+    assert_eq!(h.theme_name, "Catppuccin Mocha");
+  }
+
+  #[test]
+  fn test_fallback_theme_on_invalid_name() {
+    let h = SyntaxHighlighter::new("nonexistent-theme");
+    // Should still work with fallback
+    let lines = h.highlight("hello\n", "txt");
+    assert_eq!(lines.len(), 1);
   }
 }

@@ -5,8 +5,10 @@
 use std::path::Path;
 
 use git2::{DiffOptions, Repository};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+
+use crate::theme::Theme;
 
 /// Represents a line in a diff hunk
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,7 +111,7 @@ pub fn generate_diff(repo_root: &Path, file_path: &Path) -> Option<FileDiff> {
 }
 
 /// Render the diff as styled ratatui Lines
-pub fn render_diff(diff: &FileDiff) -> Vec<Line<'static>> {
+pub fn render_diff(diff: &FileDiff, theme: &Theme) -> Vec<Line<'static>> {
   diff
     .lines
     .iter()
@@ -117,18 +119,18 @@ pub fn render_diff(diff: &FileDiff) -> Vec<Line<'static>> {
       let (prefix, style) = match line.kind {
         DiffLineKind::Added => (
           "+",
-          Style::default().fg(Color::Indexed(114)), // Green
+          Style::default().fg(theme.success),
         ),
         DiffLineKind::Removed => (
           "-",
-          Style::default().fg(Color::Indexed(167)), // Red
+          Style::default().fg(theme.error),
         ),
-        DiffLineKind::Context => (" ", Style::default().fg(Color::Indexed(252))),
+        DiffLineKind::Context => (" ", Style::default().fg(theme.text)),
         DiffLineKind::HunkHeader => (
           "",
-          Style::default().fg(Color::Indexed(75)), // Blue
+          Style::default().fg(theme.accent),
         ),
-        DiffLineKind::Header => ("", Style::default().fg(Color::Indexed(246))),
+        DiffLineKind::Header => ("", Style::default().fg(theme.meta_secondary)),
       };
 
       // Build line number gutter
@@ -150,7 +152,7 @@ pub fn render_diff(diff: &FileDiff) -> Vec<Line<'static>> {
       let content = line.content.trim_end_matches('\n');
 
       Line::from(vec![
-        Span::styled(gutter, Style::default().fg(Color::DarkGray)),
+        Span::styled(gutter, Style::default().fg(theme.text_dim)),
         Span::styled(format!("{prefix}{content}"), style),
       ])
     })
@@ -158,16 +160,17 @@ pub fn render_diff(diff: &FileDiff) -> Vec<Line<'static>> {
 }
 
 /// Render a message when file has no diff (unmodified)
-pub fn render_no_diff_message() -> Vec<Line<'static>> {
+pub fn render_no_diff_message(theme: &Theme) -> Vec<Line<'static>> {
   vec![Line::from(Span::styled(
     " File has no uncommitted changes",
-    Style::default().fg(Color::Indexed(246)),
+    Style::default().fg(theme.meta_secondary),
   ))]
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::theme::Theme;
   use std::fs;
   use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -298,7 +301,7 @@ mod tests {
       new_line_no: Some(2),
     });
 
-    let lines = render_diff(&diff);
+    let lines = render_diff(&diff, &Theme::dark());
     assert_eq!(lines.len(), 3);
 
     // Verify spans exist (gutter + content)
@@ -309,7 +312,7 @@ mod tests {
 
   #[test]
   fn test_render_no_diff_message() {
-    let lines = render_no_diff_message();
+    let lines = render_no_diff_message(&Theme::dark());
     assert_eq!(lines.len(), 1);
     let content: String = lines[0].spans.iter().map(|s| s.content.to_string()).collect();
     assert!(content.contains("no uncommitted changes"));
@@ -384,7 +387,7 @@ mod tests {
       new_line_no: Some(42),
     });
 
-    let lines = render_diff(&diff);
+    let lines = render_diff(&diff, &Theme::dark());
     let gutter = &lines[0].spans[0].content;
     assert!(gutter.contains("42"), "gutter should show line number 42");
   }

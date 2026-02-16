@@ -1,12 +1,13 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::app::App;
+use crate::theme::Theme;
 
-pub fn render_compress(app: &App, area: Rect, buf: &mut Buffer) {
+pub fn render_compress(app: &App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   let count = app.operation_targets().len();
   let title = if count == 1 {
     " Compress (1 file) ".to_string()
@@ -27,9 +28,9 @@ pub fn render_compress(app: &App, area: Rect, buf: &mut Buffer) {
 
   Clear.render(popup, buf);
 
-  let item_style = Style::default().fg(Color::Indexed(252));
-  let key_style = Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD);
-  let dim_style = Style::default().fg(Color::Indexed(241));
+  let item_style = Style::default().fg(theme.text);
+  let key_style = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
+  let dim_style = Style::default().fg(theme.text_muted);
 
   let lines = vec![
     Line::from(vec![
@@ -59,8 +60,8 @@ pub fn render_compress(app: &App, area: Rect, buf: &mut Buffer) {
   let block = Block::default()
     .borders(Borders::ALL)
     .title(title)
-    .border_style(Style::default().fg(Color::Indexed(245)))
-    .style(Style::default().bg(Color::Indexed(235)));
+    .border_style(Style::default().fg(theme.title_inactive))
+    .style(Style::default().bg(theme.bg_overlay));
 
   let paragraph = Paragraph::new(lines).block(block);
   paragraph.render(popup, buf);

@@ -8,6 +8,7 @@ use crate::app::App;
 use crate::event::{InputMode, PromptKind};
 use crate::fs::{GitFileStatus, GitStatus};
 use crate::preview::directory::format_size;
+use crate::theme::Theme;
 
 fn git_status_label(status: &GitStatus) -> Option<&'static str> {
   if status.is_clean() {
@@ -39,9 +40,9 @@ fn git_status_label(status: &GitStatus) -> Option<&'static str> {
   }
 }
 
-fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color) -> Vec<Span<'static>> {
-  let text_style = Style::default().fg(Color::Indexed(252));
-  let cursor_style = Style::default().fg(Color::Indexed(234)).bg(cursor_color);
+fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color, theme: &Theme) -> Vec<Span<'static>> {
+  let text_style = Style::default().fg(theme.text);
+  let cursor_style = Style::default().fg(theme.bg_selected).bg(cursor_color);
 
   let char_count = input.chars().count();
   let byte_at = |pos: usize| -> usize {
@@ -67,48 +68,48 @@ fn prompt_input_spans(input: &str, cursor: usize, cursor_color: Color) -> Vec<Sp
   }
 }
 
-pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
+pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer, theme: &Theme) {
   let line = match app.input_mode {
     InputMode::Search => {
       Line::from(vec![
-        Span::styled(" /", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled(&app.search_query, Style::default().fg(Color::Indexed(252))),
-        Span::styled("▌", Style::default().fg(Color::Indexed(75))),
+        Span::styled(" /", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(&app.search_query, Style::default().fg(theme.text)),
+        Span::styled("▌", Style::default().fg(theme.accent)),
       ])
     }
     InputMode::GPrefix => {
       Line::from(vec![
-        Span::styled(" g", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
-        Span::styled(" (press g for top)", Style::default().fg(Color::DarkGray)),
+        Span::styled(" g", Style::default().fg(theme.marked).add_modifier(Modifier::BOLD)),
+        Span::styled(" (press g for top)", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Help => {
       Line::from(vec![
-        Span::styled(" ? ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("Help — press q, ? or Esc to close", Style::default().fg(Color::DarkGray)),
+        Span::styled(" ? ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("Help — press q, ? or Esc to close", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Prompt => {
       match app.prompt_kind {
         Some(PromptKind::Rename) => {
           let mut spans = vec![
-            Span::styled(" Rename: ", Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)),
+            Span::styled(" Rename: ", Style::default().fg(theme.marked).add_modifier(Modifier::BOLD)),
           ];
-          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(208)));
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, theme.marked, theme));
           Line::from(spans)
         }
         Some(PromptKind::NewFile) => {
           let mut spans = vec![
-            Span::styled(" New file: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+            Span::styled(" New file: ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
           ];
-          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, theme.success, theme));
           Line::from(spans)
         }
         Some(PromptKind::NewDir) => {
           let mut spans = vec![
-            Span::styled(" New dir: ", Style::default().fg(Color::Indexed(114)).add_modifier(Modifier::BOLD)),
+            Span::styled(" New dir: ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
           ];
-          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, Color::Indexed(114)));
+          spans.extend(prompt_input_spans(&app.prompt_input, app.prompt_cursor, theme.success, theme));
           Line::from(spans)
         }
         Some(PromptKind::ConfirmDelete) => {
@@ -116,7 +117,7 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           Line::from(vec![
             Span::styled(
               format!(" Delete {name}? (y/N)"),
-              Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD),
+              Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
             ),
           ])
         }
@@ -124,7 +125,7 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           Line::from(vec![
             Span::styled(
               format!(" Delete {count} items? (y/N)"),
-              Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD),
+              Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
             ),
           ])
         }
@@ -133,51 +134,51 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           Line::from(vec![
             Span::styled(
               format!(" Extract and delete {name}? (y/N)"),
-              Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+              Style::default().fg(theme.marked).add_modifier(Modifier::BOLD),
             ),
           ])
         }
         None => {
           Line::from(vec![
-            Span::styled(" ...", Style::default().fg(Color::DarkGray)),
+            Span::styled(" ...", Style::default().fg(theme.text_dim)),
           ])
         }
       }
     }
     InputMode::Favorites => {
       Line::from(vec![
-        Span::styled(" Favorites ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("a:add  d:remove  Enter:go  Esc:close", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Favorites ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("a:add  d:remove  Enter:go  Esc:close", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::OpenWith => {
       Line::from(vec![
-        Span::styled(" Open with ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("Enter:open  Esc:close", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Open with ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("Enter:open  Esc:close", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Chmod => {
       Line::from(vec![
-        Span::styled(" Chmod ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("r/w/x:toggle  Tab:octal  Enter:apply  Esc:cancel", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Chmod ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("r/w/x:toggle  Tab:octal  Enter:apply  Esc:cancel", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Properties => {
       Line::from(vec![
-        Span::styled(" Properties ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("i/q/Esc:close", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Properties ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("i/q/Esc:close", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Compress => {
       Line::from(vec![
-        Span::styled(" Compress ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
-        Span::styled("1-4:format  Esc:cancel", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Compress ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("1-4:format  Esc:cancel", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Error => {
       Line::from(vec![
-        Span::styled(" Error ", Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD)),
-        Span::styled("Esc:dismiss", Style::default().fg(Color::DarkGray)),
+        Span::styled(" Error ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
+        Span::styled("Esc:dismiss", Style::default().fg(theme.text_dim)),
       ])
     }
     InputMode::Normal => {
@@ -187,8 +188,8 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         badges.push(Span::styled(
           " PICK ",
           Style::default()
-            .fg(Color::Indexed(234))
-            .bg(Color::Indexed(208))
+            .fg(theme.bg_selected)
+            .bg(theme.marked)
             .add_modifier(Modifier::BOLD),
         ));
       }
@@ -198,30 +199,30 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         badges.push(Span::styled(
           format!(" {mark_count} marked "),
           Style::default()
-            .fg(Color::Indexed(234))
-            .bg(Color::Indexed(208))
+            .fg(theme.bg_selected)
+            .bg(theme.marked)
             .add_modifier(Modifier::BOLD),
         ));
       }
 
       if let Some(ref msg) = app.status_message {
         let mut spans = badges;
-        spans.push(Span::styled(format!(" {msg}"), Style::default().fg(Color::Indexed(150))));
+        spans.push(Span::styled(format!(" {msg}"), Style::default().fg(theme.info)));
         Line::from(spans)
       } else if let Some(entry) = app.selected_entry() {
         let mut spans = badges;
         spans.push(Span::styled(
             format!(" {}", entry.name),
-            Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
           ));
         spans.push(Span::styled(
             format!(" | {}", format_size(entry.size)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_dim),
           ));
 
         // Per-file git status label
         if let Some(label) = git_status_label(&entry.git_status) {
-          let color = entry.git_status.display_color().unwrap_or(Color::DarkGray);
+          let color = entry.git_status.display_color(theme).unwrap_or(theme.text_dim);
           spans.push(Span::styled(
             format!(" [{label}]"),
             Style::default().fg(color),
@@ -232,19 +233,19 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           if content.file_size > 0 && content.file_size != entry.size {
             spans.push(Span::styled(
               format!(" ({})", format_size(content.file_size)),
-              Style::default().fg(Color::DarkGray),
+              Style::default().fg(theme.text_dim),
             ));
           }
           if !content.extension.is_empty() {
             spans.push(Span::styled(
               format!(" | {}", content.extension),
-              Style::default().fg(Color::DarkGray),
+              Style::default().fg(theme.text_dim),
             ));
           }
           if content.line_count > 0 {
             spans.push(Span::styled(
               format!(" | {} lines", content.line_count),
-              Style::default().fg(Color::DarkGray),
+              Style::default().fg(theme.text_dim),
             ));
           }
         }
@@ -255,25 +256,25 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           || info.modified_count > 0
           || info.untracked_count > 0;
         if has_git_stats {
-          spans.push(Span::styled("  ", Style::default().fg(Color::DarkGray)));
+          spans.push(Span::styled("  ", Style::default().fg(theme.text_dim)));
           if info.staged_count > 0 {
             spans.push(Span::styled(
               format!("+{}", info.staged_count),
-              Style::default().fg(Color::Indexed(114)),
+              Style::default().fg(theme.success),
             ));
             spans.push(Span::styled(" ", Style::default()));
           }
           if info.modified_count > 0 {
             spans.push(Span::styled(
               format!("~{}", info.modified_count),
-              Style::default().fg(Color::Indexed(214)),
+              Style::default().fg(theme.warning),
             ));
             spans.push(Span::styled(" ", Style::default()));
           }
           if info.untracked_count > 0 {
             spans.push(Span::styled(
               format!("?{}", info.untracked_count),
-              Style::default().fg(Color::Indexed(167)),
+              Style::default().fg(theme.error),
             ));
           }
         }
@@ -282,7 +283,7 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         if has_upstream {
           spans.push(Span::styled(
             format!(" \u{2191}{}\u{2193}{}", info.ahead, info.behind),
-            Style::default().fg(Color::Indexed(75)),
+            Style::default().fg(theme.accent),
           ));
         }
 
@@ -292,18 +293,18 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
           app.cursor + 1,
           app.visible_entries().len()
         );
-        spans.push(Span::styled(pos_info, Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(pos_info, Style::default().fg(theme.text_dim)));
 
         Line::from(spans)
       } else {
         let mut spans = badges;
-        spans.push(Span::styled(" No selection", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(" No selection", Style::default().fg(theme.text_dim)));
         Line::from(spans)
       }
     }
   };
 
   let paragraph = Paragraph::new(line)
-    .style(Style::default().bg(Color::Indexed(236)));
+    .style(Style::default().bg(theme.bg_bar));
   paragraph.render(area, buf);
 }

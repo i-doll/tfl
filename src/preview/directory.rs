@@ -1,9 +1,10 @@
 use std::path::Path;
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::icons::{file_icon, file_name_color};
+use crate::theme::Theme;
 
 pub struct DirSummary {
   pub file_count: usize,
@@ -57,7 +58,7 @@ pub fn summarize_dir(path: &Path) -> DirSummary {
   summary
 }
 
-pub fn render_dir_summary<'a>(summary: &DirSummary) -> Vec<Line<'a>> {
+pub fn render_dir_summary<'a>(summary: &DirSummary, theme: &Theme) -> Vec<Line<'a>> {
   let mut lines = Vec::new();
 
   lines.push(Line::from(vec![
@@ -68,7 +69,7 @@ pub fn render_dir_summary<'a>(summary: &DirSummary) -> Vec<Line<'a>> {
         summary.dir_count,
         format_size(summary.total_size)
       ),
-      Style::default().fg(Color::Indexed(248)),
+      Style::default().fg(theme.text),
     ),
   ]));
   lines.push(Line::from(""));
@@ -86,7 +87,7 @@ pub fn render_dir_summary<'a>(summary: &DirSummary) -> Vec<Line<'a>> {
       Span::styled(" ", Style::default()),
       Span::styled(icon.glyph, Style::default().fg(icon.color)),
       Span::styled(entry.name.clone(), Style::default().fg(color)),
-      Span::styled(size_str, Style::default().fg(Color::DarkGray)),
+      Span::styled(size_str, Style::default().fg(theme.text_dim)),
     ]));
   }
 
@@ -164,7 +165,7 @@ mod tests {
         DirEntry { name: "main.rs".to_string(), is_dir: false, size: 512 },
       ],
     };
-    let lines = render_dir_summary(&summary);
+    let lines = render_dir_summary(&summary, &Theme::dark());
     assert!(!lines.is_empty());
     // First line should mention counts
     let first_line_text: String = lines[0].spans.iter().map(|s| s.content.to_string()).collect();

@@ -1,17 +1,18 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::app::{App, ClipboardOp};
 use crate::icons::{file_icon, file_name_color};
+use crate::theme::Theme;
 
-pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
-  render_file_tree_with_active(app, area, buf, true, false);
+pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer, theme: &Theme) {
+  render_file_tree_with_active(app, area, buf, true, false, theme);
 }
 
-pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_active: bool, is_right_pane: bool) {
+pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_active: bool, is_right_pane: bool, theme: &Theme) {
   let (entries, cursor, scroll_offset, tree, search_query, marks) = if is_right_pane {
     if let Some(ref pane) = app.right_pane {
       (pane.visible_entries(), pane.cursor, pane.scroll_offset, &pane.tree, &pane.search_query, &pane.marked)
@@ -48,25 +49,25 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
 
     let (icon_style, name_style) = if is_selected && is_active && is_marked {
       let sel = Style::default()
-        .fg(Color::Indexed(234))
-        .bg(Color::Indexed(208))
+        .fg(theme.bg_selected)
+        .bg(theme.marked)
         .add_modifier(Modifier::BOLD);
       (sel, sel)
     } else if is_selected && is_active {
       let sel = Style::default()
-        .fg(Color::Indexed(234))
-        .bg(Color::Indexed(75))
+        .fg(theme.bg_selected)
+        .bg(theme.accent)
         .add_modifier(Modifier::BOLD);
       (sel, sel)
     } else if is_selected && !is_active {
       let sel = Style::default()
-        .fg(Color::Indexed(234))
-        .bg(Color::Indexed(240));
+        .fg(theme.bg_selected)
+        .bg(theme.border);
       (sel, sel)
     } else if is_marked {
       (
-        Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
-        Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme.marked).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme.marked).add_modifier(Modifier::BOLD),
       )
     } else if is_cut {
       (
@@ -78,7 +79,7 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
         Style::default().fg(icon.color).add_modifier(Modifier::DIM),
         Style::default().fg(name_color).add_modifier(Modifier::DIM),
       )
-    } else if let Some(status_color) = entry.git_status.display_color() {
+    } else if let Some(status_color) = entry.git_status.display_color(theme) {
       (
         Style::default().fg(status_color),
         Style::default().fg(status_color),
@@ -94,7 +95,7 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
     let mark_style = if is_selected && is_active {
       name_style
     } else if is_marked {
-      Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)
+      Style::default().fg(theme.marked).add_modifier(Modifier::BOLD)
     } else {
       Style::default()
     };
@@ -104,7 +105,7 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
       Span::styled(indent, name_style),
       Span::styled(icon.glyph, icon_style),
       Span::styled(entry.name.clone(), name_style),
-      Span::styled(symlink_indicator, Style::default().fg(Color::DarkGray)),
+      Span::styled(symlink_indicator, Style::default().fg(theme.text_dim)),
     ]);
 
     lines.push(line);
@@ -123,15 +124,15 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
   };
 
   let border_color = if is_active {
-    Color::Indexed(75) // Blue for active pane
+    theme.accent
   } else {
-    Color::Indexed(240) // Gray for inactive pane
+    theme.border
   };
 
   let title_color = if is_active {
-    Color::Indexed(75)
+    theme.accent
   } else {
-    Color::Indexed(245)
+    theme.title_inactive
   };
 
   let block = Block::default()
@@ -146,4 +147,3 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
   // Suppress unused variable warning
   let _ = search_query;
 }
-
