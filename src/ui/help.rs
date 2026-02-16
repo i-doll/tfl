@@ -57,7 +57,6 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::MoveLeft, "Collapse / parent"),
     entry_line(&lookup, Action::MoveRight, "Expand / select"),
     entry_line(&lookup, Action::ToggleExpand, "Toggle expand"),
-    entry_line(&lookup, Action::EnterDir, "Enter directory"),
     entry_line(&lookup, Action::GoToTop, "Go to top"),
     entry_line(&lookup, Action::GoToBottom, "Go to bottom"),
     entry_line(&lookup, Action::GoHome, "Go to home"),
