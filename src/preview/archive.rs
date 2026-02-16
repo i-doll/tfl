@@ -1,5 +1,5 @@
-use std::io::{Read, Seek};
-use std::path::Path;
+use std::io::{Read, Seek, Write};
+use std::path::{Path, PathBuf};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
@@ -389,11 +389,125 @@ pub fn extract_archive(path: &Path, dest_dir: &Path) -> Result<(), String> {
   }
 }
 
+/// Compress files/directories into an archive
+pub fn compress_to_archive(paths: &[PathBuf], dest: &Path, format: &str) -> Result<(), String> {
+  match format {
+    "zip" => compress_zip(paths, dest),
+    "tar.gz" => compress_tar(paths, dest, "gz"),
+    "tar.bz2" => compress_tar(paths, dest, "bz2"),
+    "tar.xz" => compress_tar(paths, dest, "xz"),
+    _ => Err(format!("Unsupported format: {format}")),
+  }
+}
+
+fn compress_zip(paths: &[PathBuf], dest: &Path) -> Result<(), String> {
+  let file = std::fs::File::create(dest)
+    .map_err(|e| format!("Failed to create archive: {e}"))?;
+  let mut zip = zip::ZipWriter::new(file);
+  let options = zip::write::FileOptions::default()
+    .compression_method(zip::CompressionMethod::Deflated);
+
+  for path in paths {
+    if path.is_dir() {
+      zip_add_dir_recursive(&mut zip, path, path, options)
+        .map_err(|e| format!("Failed to add directory: {e}"))?;
+    } else {
+      let name = path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+      zip.start_file(name, options)
+        .map_err(|e| format!("Failed to add file: {e}"))?;
+      let data = std::fs::read(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+      zip.write_all(&data)
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+    }
+  }
+
+  zip.finish().map_err(|e| format!("Failed to finalize archive: {e}"))?;
+  Ok(())
+}
+
+fn zip_add_dir_recursive(
+  zip: &mut zip::ZipWriter<std::fs::File>,
+  base: &Path,
+  path: &Path,
+  options: zip::write::FileOptions,
+) -> Result<(), String> {
+  let base_parent = base.parent().unwrap_or(base);
+  for entry in std::fs::read_dir(path)
+    .map_err(|e| format!("Failed to read directory: {e}"))?
+  {
+    let entry = entry.map_err(|e| format!("Failed to read entry: {e}"))?;
+    let entry_path = entry.path();
+    let rel = entry_path.strip_prefix(base_parent)
+      .unwrap_or(&entry_path);
+    let name = rel.to_string_lossy().to_string();
+
+    if entry_path.is_dir() {
+      zip.add_directory(&name, options)
+        .map_err(|e| format!("Failed to add directory: {e}"))?;
+      zip_add_dir_recursive(zip, base, &entry_path, options)?;
+    } else {
+      zip.start_file(&name, options)
+        .map_err(|e| format!("Failed to add file: {e}"))?;
+      let data = std::fs::read(&entry_path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+      zip.write_all(&data)
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+    }
+  }
+  Ok(())
+}
+
+fn compress_tar(paths: &[PathBuf], dest: &Path, compression: &str) -> Result<(), String> {
+  let file = std::fs::File::create(dest)
+    .map_err(|e| format!("Failed to create archive: {e}"))?;
+
+  match compression {
+    "gz" => {
+      let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+      compress_tar_inner(paths, encoder)?;
+    }
+    "bz2" => {
+      let encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::default());
+      compress_tar_inner(paths, encoder)?;
+    }
+    "xz" => {
+      let encoder = xz2::write::XzEncoder::new(file, 6);
+      compress_tar_inner(paths, encoder)?;
+    }
+    _ => return Err(format!("Unsupported compression: {compression}")),
+  }
+
+  Ok(())
+}
+
+fn compress_tar_inner<W: Write>(paths: &[PathBuf], writer: W) -> Result<(), String> {
+  let mut builder = tar::Builder::new(writer);
+
+  for path in paths {
+    let name = path.file_name()
+      .and_then(|n| n.to_str())
+      .unwrap_or("file");
+    if path.is_dir() {
+      builder.append_dir_all(name, path)
+        .map_err(|e| format!("Failed to add directory: {e}"))?;
+    } else {
+      builder.append_path_with_name(path, name)
+        .map_err(|e| format!("Failed to add file: {e}"))?;
+    }
+  }
+
+  builder.into_inner()
+    .map_err(|e| format!("Failed to finalize archive: {e}"))?;
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use std::fs;
-  use std::io::Write;
   use std::sync::atomic::{AtomicU32, Ordering};
 
   static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -762,6 +876,72 @@ mod tests {
 
     let result = list_zip(&path);
     assert!(result.is_err());
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
+  fn test_compress_zip() {
+    let dir = test_dir("compress_zip");
+    fs::write(dir.join("file1.txt"), "hello").unwrap();
+    fs::write(dir.join("file2.txt"), "world").unwrap();
+
+    let dest = dir.join("archive.zip");
+    compress_to_archive(
+      &[dir.join("file1.txt"), dir.join("file2.txt")],
+      &dest,
+      "zip",
+    ).unwrap();
+
+    assert!(dest.exists());
+    let entries = list_zip(&dest).unwrap();
+    assert_eq!(entries.len(), 2);
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"file1.txt"));
+    assert!(names.contains(&"file2.txt"));
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
+  fn test_compress_tar_gz() {
+    let dir = test_dir("compress_tar_gz");
+    fs::write(dir.join("data.txt"), "compressed content").unwrap();
+
+    let dest = dir.join("archive.tar.gz");
+    compress_to_archive(
+      &[dir.join("data.txt")],
+      &dest,
+      "tar.gz",
+    ).unwrap();
+
+    assert!(dest.exists());
+    let entries = list_tar_gz(&dest).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "data.txt");
+
+    cleanup_dir(&dir);
+  }
+
+  #[test]
+  fn test_compress_directory() {
+    let dir = test_dir("compress_dir");
+    let subdir = dir.join("mydir");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join("inner.txt"), "inside").unwrap();
+
+    let dest = dir.join("archive.tar.gz");
+    compress_to_archive(
+      &[subdir],
+      &dest,
+      "tar.gz",
+    ).unwrap();
+
+    assert!(dest.exists());
+    let entries = list_tar_gz(&dest).unwrap();
+    // Should contain the directory contents recursively
+    assert!(!entries.is_empty());
+    assert!(entries.iter().any(|e| e.name.contains("inner.txt")));
 
     cleanup_dir(&dir);
   }

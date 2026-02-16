@@ -384,6 +384,10 @@ d = "show_diff"
 n = "next_hunk"
 "shift+n" = "prev_hunk"
 i = "show_properties"
+v = "toggle_mark"
+"shift+v" = "mark_all"
+u = "clear_marks"
+"shift+z" = "compress"
 
 [keys.g_prefix]
 g = "go_to_top"
@@ -777,6 +781,10 @@ mod tests {
       (KeyCode::Tab, n, Action::SwitchPane),
       (KeyCode::F(6), n, Action::ToggleDualPane),
       (KeyCode::Char('i'), n, Action::ShowProperties),
+      (KeyCode::Char('v'), n, Action::ToggleMark),
+      (KeyCode::Char('V'), n, Action::MarkAll),
+      (KeyCode::Char('u'), n, Action::ClearMarks),
+      (KeyCode::Char('Z'), n, Action::CompressStart),
     ];
 
     for (code, mods, action) in expected {

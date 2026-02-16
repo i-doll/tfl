@@ -120,6 +120,14 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
             ),
           ])
         }
+        Some(PromptKind::ConfirmDeleteMulti(count)) => {
+          Line::from(vec![
+            Span::styled(
+              format!(" Delete {count} items? (y/N)"),
+              Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD),
+            ),
+          ])
+        }
         Some(PromptKind::ConfirmExtractAndDelete) => {
           let name = app.selected_entry().map(|e| e.name.as_str()).unwrap_or("?");
           Line::from(vec![
@@ -160,6 +168,12 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("i/q/Esc:close", Style::default().fg(Color::DarkGray)),
       ])
     }
+    InputMode::Compress => {
+      Line::from(vec![
+        Span::styled(" Compress ", Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD)),
+        Span::styled("1-4:format  Esc:cancel", Style::default().fg(Color::DarkGray)),
+      ])
+    }
     InputMode::Error => {
       Line::from(vec![
         Span::styled(" Error ", Style::default().fg(Color::Indexed(167)).add_modifier(Modifier::BOLD)),
@@ -167,26 +181,35 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
       ])
     }
     InputMode::Normal => {
-      let pick_badge: Vec<Span<'static>> = if app.picker_mode.is_some() {
-        vec![
-          Span::styled(
-            " PICK ",
-            Style::default()
-              .fg(Color::Indexed(234))
-              .bg(Color::Indexed(208))
-              .add_modifier(Modifier::BOLD),
-          ),
-        ]
-      } else {
-        vec![]
-      };
+      let mut badges: Vec<Span<'static>> = Vec::new();
+
+      if app.picker_mode.is_some() {
+        badges.push(Span::styled(
+          " PICK ",
+          Style::default()
+            .fg(Color::Indexed(234))
+            .bg(Color::Indexed(208))
+            .add_modifier(Modifier::BOLD),
+        ));
+      }
+
+      let mark_count = app.active_marks().len();
+      if mark_count > 0 {
+        badges.push(Span::styled(
+          format!(" {mark_count} marked "),
+          Style::default()
+            .fg(Color::Indexed(234))
+            .bg(Color::Indexed(208))
+            .add_modifier(Modifier::BOLD),
+        ));
+      }
 
       if let Some(ref msg) = app.status_message {
-        let mut spans = pick_badge;
+        let mut spans = badges;
         spans.push(Span::styled(format!(" {msg}"), Style::default().fg(Color::Indexed(150))));
         Line::from(spans)
       } else if let Some(entry) = app.selected_entry() {
-        let mut spans = pick_badge;
+        let mut spans = badges;
         spans.push(Span::styled(
             format!(" {}", entry.name),
             Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
@@ -273,7 +296,7 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
 
         Line::from(spans)
       } else {
-        let mut spans = pick_badge;
+        let mut spans = badges;
         spans.push(Span::styled(" No selection", Style::default().fg(Color::DarkGray)));
         Line::from(spans)
       }

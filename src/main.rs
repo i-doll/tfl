@@ -319,11 +319,11 @@ Options:
 
   // Handle picker output
   let is_picker = app.picker_mode.is_some();
-  if let Err(e) = app.write_picked_path() {
+  if let Err(e) = app.write_picked_paths() {
     eprintln!("tfl: {e}");
     std::process::exit(1);
   }
-  if is_picker && app.picked_path.is_none() {
+  if is_picker && app.picked_paths.is_empty() {
     std::process::exit(1);
   }
 

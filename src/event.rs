@@ -132,6 +132,7 @@ pub enum InputMode {
   OpenWith,
   Chmod,
   Properties,
+  Compress,
   Error,
 }
 
@@ -141,6 +142,7 @@ pub enum PromptKind {
   NewFile,
   NewDir,
   ConfirmDelete,
+  ConfirmDeleteMulti(usize),
   ConfirmExtractAndDelete,
 }
 
@@ -212,6 +214,14 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Tab => Action::ChmodToggleOctal,
       KeyCode::Backspace => Action::ChmodOctalBackspace,
       KeyCode::Char('d') => Action::ChmodToggleRecursive,
+      _ => Action::None,
+    },
+    InputMode::Compress => match key.code {
+      KeyCode::Char('1') => Action::CompressSelect(0),
+      KeyCode::Char('2') => Action::CompressSelect(1),
+      KeyCode::Char('3') => Action::CompressSelect(2),
+      KeyCode::Char('4') => Action::CompressSelect(3),
+      KeyCode::Esc | KeyCode::Char('q') => Action::CompressClose,
       _ => Action::None,
     },
     InputMode::Properties => match key.code {

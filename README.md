@@ -29,6 +29,8 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
 - **File management** — cut, copy, paste, delete, rename, new file/dir, chmod
+- **Multi-select** — mark files with `v`, mark all with `V`, clear with `u`; bulk copy, cut, delete, yank
+- **Compress to archive** — create ZIP, TAR.GZ, TAR.BZ2, TAR.XZ from selected files
 - **Yank path** to clipboard
 - **Open with system default** — press Enter on a file to open with the default app
 - **Open-with picker** — press `o` to choose from detected editors/IDEs
@@ -104,6 +106,10 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `d` | Show git diff for current file |
 | `n` | Jump to next diff hunk |
 | `N` | Jump to previous diff hunk |
+| `v` | Toggle mark on file (multi-select) |
+| `V` | Mark all visible files |
+| `u` | Clear all marks |
+| `Z` | Compress marked/selected files to archive |
 | `i` | Show file properties |
 | `?` | Show help |
 | `q` / `Esc` | Quit |
@@ -363,6 +369,10 @@ f = "favorites_open"
 "-" = "history_back"
 "+" = "history_forward"
 m = "toggle_markdown_mode"
+v = "toggle_mark"
+"shift+v" = "mark_all"
+u = "clear_marks"
+"shift+z" = "compress"
 tab = "switch_pane"
 f6 = "toggle_dual_pane"
 i = "show_properties"
@@ -403,7 +413,7 @@ Press `I` to toggle custom ignore patterns on/off. The `use_gitignore` option co
 
 ### Available actions
 
-`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `toggle_formatted`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `switch_pane`, `toggle_dual_pane`, `show_diff`, `next_hunk`, `prev_hunk`, `show_properties`, `none`
+`quit`, `move_up`, `move_down`, `move_left`, `move_right`, `toggle_expand`, `enter_dir`, `open_default`, `open_with`, `scroll_preview_up`, `scroll_preview_down`, `toggle_hidden`, `toggle_custom_ignore`, `toggle_formatted`, `go_to_top`, `go_to_bottom`, `search_start`, `yank_path`, `open_editor`, `open_claude`, `open_claude_alt`, `open_shell`, `shrink_tree`, `grow_tree`, `g_press`, `toggle_help`, `toggle_markdown_mode`, `go_home`, `favorites_open`, `favorite_add`, `history_back`, `history_forward`, `cut_file`, `copy_file`, `paste`, `delete_file`, `rename_start`, `new_file_start`, `new_dir_start`, `extract_archive`, `extract_and_delete`, `chmod`, `switch_pane`, `toggle_dual_pane`, `show_diff`, `next_hunk`, `prev_hunk`, `show_properties`, `toggle_mark`, `mark_all`, `clear_marks`, `compress`, `none`
 
 Use `"none"` to unbind a key (e.g., `q = "none"`).
 
@@ -464,6 +474,7 @@ src/
     mod.rs         Layout: header, tree/preview split, status bar
     breadcrumb.rs  Breadcrumb path parsing and click detection
     chmod.rs       Chmod dialog for changing file permissions
+    compress.rs    Compress format picker floating overlay
     favorites.rs   Favorites picker floating overlay
     open_with.rs   Open-with picker floating overlay
     properties.rs  File properties floating overlay

@@ -1,5 +1,6 @@
 pub mod breadcrumb;
 pub mod chmod;
+pub mod compress;
 pub mod error;
 pub mod favorites;
 pub mod file_tree;
@@ -96,6 +97,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
   }
   if app.input_mode == crate::event::InputMode::Chmod {
     chmod::render_chmod(app, area, frame.buffer_mut());
+  }
+  if app.input_mode == crate::event::InputMode::Compress {
+    compress::render_compress(app, area, frame.buffer_mut());
   }
   if app.input_mode == crate::event::InputMode::Properties
     && let Some(ref props) = app.file_properties

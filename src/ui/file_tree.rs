@@ -12,14 +12,14 @@ pub fn render_file_tree(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_active: bool, is_right_pane: bool) {
-  let (entries, cursor, scroll_offset, tree, search_query) = if is_right_pane {
+  let (entries, cursor, scroll_offset, tree, search_query, marks) = if is_right_pane {
     if let Some(ref pane) = app.right_pane {
-      (pane.visible_entries(), pane.cursor, pane.scroll_offset, &pane.tree, &pane.search_query)
+      (pane.visible_entries(), pane.cursor, pane.scroll_offset, &pane.tree, &pane.search_query, &pane.marked)
     } else {
       return;
     }
   } else {
-    (app.visible_entries(), app.cursor, app.tree_scroll_offset, &app.tree, &app.search_query)
+    (app.visible_entries(), app.cursor, app.tree_scroll_offset, &app.tree, &app.search_query, &app.marked)
   };
 
   let inner_height = area.height.saturating_sub(2) as usize; // borders
@@ -44,20 +44,30 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
 
     let is_cut = app.clipboard.op == Some(ClipboardOp::Cut)
       && app.clipboard.paths.contains(&entry.path);
+    let is_marked = marks.contains(&entry.path);
 
-    let (icon_style, name_style) = if is_selected && is_active {
-      // Active pane with selected item
+    let (icon_style, name_style) = if is_selected && is_active && is_marked {
+      let sel = Style::default()
+        .fg(Color::Indexed(234))
+        .bg(Color::Indexed(208))
+        .add_modifier(Modifier::BOLD);
+      (sel, sel)
+    } else if is_selected && is_active {
       let sel = Style::default()
         .fg(Color::Indexed(234))
         .bg(Color::Indexed(75))
         .add_modifier(Modifier::BOLD);
       (sel, sel)
     } else if is_selected && !is_active {
-      // Inactive pane with selected item - dimmer highlight
       let sel = Style::default()
         .fg(Color::Indexed(234))
         .bg(Color::Indexed(240));
       (sel, sel)
+    } else if is_marked {
+      (
+        Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD),
+      )
     } else if is_cut {
       (
         Style::default().fg(icon.color).add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
@@ -80,7 +90,17 @@ pub fn render_file_tree_with_active(app: &App, area: Rect, buf: &mut Buffer, is_
       )
     };
 
+    let mark_indicator = if is_marked { "* " } else { "  " };
+    let mark_style = if is_selected && is_active {
+      name_style
+    } else if is_marked {
+      Style::default().fg(Color::Indexed(208)).add_modifier(Modifier::BOLD)
+    } else {
+      Style::default()
+    };
+
     let line = Line::from(vec![
+      Span::styled(mark_indicator.to_string(), mark_style),
       Span::styled(indent, name_style),
       Span::styled(icon.glyph, icon_style),
       Span::styled(entry.name.clone(), name_style),

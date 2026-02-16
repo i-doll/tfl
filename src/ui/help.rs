@@ -36,7 +36,7 @@ fn entry_line(lookup: &HashMap<Action, Vec<String>>, action: Action, desc: &str)
 
 pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
   let width = 44.min(area.width.saturating_sub(4));
-  let height = 42.min(area.height.saturating_sub(2));
+  let height = 48.min(area.height.saturating_sub(2));
 
   if width < 10 || height < 5 {
     return;
@@ -80,6 +80,10 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::OpenShell, "Open $SHELL"),
     entry_line(&lookup, Action::YankPath, "Yank path"),
     entry_line(&lookup, Action::ToggleHidden, "Toggle hidden files"),
+    section_line("Marking"),
+    entry_line(&lookup, Action::ToggleMark, "Toggle mark"),
+    entry_line(&lookup, Action::MarkAll, "Mark all"),
+    entry_line(&lookup, Action::ClearMarks, "Clear marks"),
     section_line("File Operations"),
     entry_line(&lookup, Action::RenameStart, "Rename"),
     entry_line(&lookup, Action::DeleteFile, "Delete"),
@@ -88,6 +92,7 @@ pub fn render_help(config: &Config, area: Rect, buf: &mut Buffer) {
     entry_line(&lookup, Action::Paste, "Paste"),
     entry_line(&lookup, Action::NewFileStart, "New file"),
     entry_line(&lookup, Action::NewDirStart, "New directory"),
+    entry_line(&lookup, Action::CompressStart, "Compress to archive"),
     section_line("Quit"),
     entry_line(&lookup, Action::Quit, "Quit"),
     Line::from(""),

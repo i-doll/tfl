@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -34,6 +35,18 @@ pub struct ExtractResult {
 /// State for an in-progress extraction
 pub struct ExtractingState {
   pub rx: mpsc::Receiver<ExtractResult>,
+}
+
+/// Result of an async archive compression
+pub struct CompressResult {
+  pub name: String,
+  pub path: PathBuf,
+  pub result: Result<(), String>,
+}
+
+/// State for an in-progress compression
+pub struct CompressingState {
+  pub rx: mpsc::Receiver<CompressResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +89,7 @@ pub struct Pane {
   pub cursor: usize,
   pub scroll_offset: usize,
   pub search_query: String,
+  pub marked: HashSet<PathBuf>,
 }
 
 impl Pane {
@@ -86,6 +100,7 @@ impl Pane {
       cursor: 0,
       scroll_offset: 0,
       search_query: String::new(),
+      marked: HashSet::new(),
     })
   }
 
@@ -137,6 +152,7 @@ pub struct App {
   pub viewport_height: usize,
   pub tree_scroll_offset: usize,
   pub clipboard: Clipboard,
+  pub marked: HashSet<PathBuf>,
   pub prompt_kind: Option<PromptKind>,
   pub prompt_input: String,
   pub prompt_cursor: usize,
@@ -149,6 +165,7 @@ pub struct App {
   pub wrote_config: bool,
   pub claude_yolo: bool,
   pub extracting: Option<ExtractingState>,
+  pub compressing: Option<CompressingState>,
   pub chmod_state: ChmodState,
   /// Stack of previously visited directories (for back navigation)
   history_back: Vec<PathBuf>,
@@ -165,7 +182,7 @@ pub struct App {
   pub file_properties: Option<FileProperties>,
   pub has_apps_file: bool,
   pub picker_mode: Option<PickerOutput>,
-  pub picked_path: Option<PathBuf>,
+  pub picked_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +225,7 @@ impl App {
       viewport_height: 20,
       tree_scroll_offset: 0,
       clipboard: Clipboard { paths: Vec::new(), op: None },
+      marked: HashSet::new(),
       prompt_kind: None,
       prompt_input: String::new(),
       prompt_cursor: 0,
@@ -220,6 +238,7 @@ impl App {
       wrote_config: false,
       claude_yolo: config.claude_yolo,
       extracting: None,
+      compressing: None,
       chmod_state: ChmodState::default(),
       history_back: Vec::new(),
       history_forward: Vec::new(),
@@ -233,8 +252,38 @@ impl App {
       file_properties: None,
       has_apps_file: config.has_apps_file,
       picker_mode,
-      picked_path: None,
+      picked_paths: Vec::new(),
     })
+  }
+
+  pub fn active_marks(&self) -> &HashSet<PathBuf> {
+    if self.dual_pane_mode && self.active_pane == 1
+      && let Some(ref pane) = self.right_pane
+    {
+      return &pane.marked;
+    }
+    &self.marked
+  }
+
+  fn active_marks_mut(&mut self) -> &mut HashSet<PathBuf> {
+    if self.dual_pane_mode && self.active_pane == 1
+      && let Some(ref mut pane) = self.right_pane
+    {
+      return &mut pane.marked;
+    }
+    &mut self.marked
+  }
+
+  pub fn operation_targets(&self) -> Vec<PathBuf> {
+    let marks = self.active_marks();
+    if !marks.is_empty() {
+      return marks.iter().cloned().collect();
+    }
+    if let Some(entry) = self.selected_entry() {
+      vec![entry.path.clone()]
+    } else {
+      vec![]
+    }
   }
 
   pub fn update_breadcrumbs(&mut self) {
@@ -415,7 +464,15 @@ impl App {
       Action::CopyFile => self.copy_file(),
       Action::Paste => self.paste_clipboard()?,
       Action::DeleteFile => {
-        if let Some(entry) = self.selected_entry() {
+        let marks = self.active_marks();
+        if marks.len() > 1 {
+          let count = marks.len();
+          self.prompt_kind = Some(PromptKind::ConfirmDeleteMulti(count));
+          self.prompt_input.clear();
+          self.prompt_cursor = 0;
+          self.input_mode = InputMode::Prompt;
+          self.set_status(format!("Delete {count} items? (y/N)"));
+        } else if let Some(entry) = self.selected_entry() {
           let name = entry.name.clone();
           self.prompt_kind = Some(PromptKind::ConfirmDelete);
           self.prompt_input.clear();
@@ -425,7 +482,9 @@ impl App {
         }
       }
       Action::RenameStart => {
-        if let Some(entry) = self.selected_entry() {
+        if self.active_marks().len() > 1 {
+          self.set_status("Cannot rename multiple files".to_string());
+        } else if let Some(entry) = self.selected_entry() {
           self.prompt_input = entry.name.clone();
           self.prompt_cursor = self.prompt_input.chars().count();
           self.prompt_kind = Some(PromptKind::Rename);
@@ -454,6 +513,14 @@ impl App {
               self.set_status("Delete cancelled".to_string());
             }
           }
+          Some(PromptKind::ConfirmDeleteMulti(_)) => {
+            if c == 'y' {
+              self.execute_delete_multi()?;
+            } else {
+              self.cancel_prompt();
+              self.set_status("Delete cancelled".to_string());
+            }
+          }
           Some(PromptKind::ConfirmExtractAndDelete) => {
             if c == 'y' {
               self.execute_extract_and_delete()?;
@@ -476,7 +543,7 @@ impl App {
       Action::PromptBackspace => {
         let is_confirm = matches!(
           self.prompt_kind,
-          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmExtractAndDelete)
+          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmDeleteMulti(_)) | Some(PromptKind::ConfirmExtractAndDelete)
         );
         if !is_confirm && self.prompt_cursor > 0 {
           let byte_pos = self.prompt_input.char_indices()
@@ -490,7 +557,7 @@ impl App {
       Action::PromptDelete => {
         let is_confirm = matches!(
           self.prompt_kind,
-          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmExtractAndDelete)
+          Some(PromptKind::ConfirmDelete) | Some(PromptKind::ConfirmDeleteMulti(_)) | Some(PromptKind::ConfirmExtractAndDelete)
         );
         if !is_confirm && self.prompt_cursor < self.prompt_input.chars().count()
         {
@@ -522,6 +589,10 @@ impl App {
           Some(PromptKind::NewFile) => self.execute_new_file()?,
           Some(PromptKind::NewDir) => self.execute_new_dir()?,
           Some(PromptKind::ConfirmDelete) => {
+            self.cancel_prompt();
+            self.set_status("Delete cancelled".to_string());
+          }
+          Some(PromptKind::ConfirmDeleteMulti(_)) => {
             self.cancel_prompt();
             self.set_status("Delete cancelled".to_string());
           }
@@ -610,9 +681,18 @@ impl App {
         self.file_properties = None;
         self.input_mode = InputMode::Normal;
       }
+      Action::ToggleMark => self.toggle_mark(),
+      Action::MarkAll => self.mark_all(),
+      Action::ClearMarks => self.clear_marks(),
+      Action::CompressStart => self.compress_start(),
+      Action::CompressSelect(idx) => self.compress_select(idx)?,
+      Action::CompressClose => {
+        self.input_mode = InputMode::Normal;
+      }
       Action::Tick => {
         self.preview.check_image_loaded();
         self.check_extraction_complete()?;
+        self.check_compression_complete()?;
       }
       Action::ToggleMarkdownMode => {
         if self.preview.toggle_markdown_mode() {
@@ -634,6 +714,7 @@ impl App {
       self.search_query.clear();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
+      self.marked.clear();
       self.preview.invalidate();
       self.update_preview();
       self.update_breadcrumbs();
@@ -648,6 +729,7 @@ impl App {
       self.search_query.clear();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
+      self.marked.clear();
       self.input_mode = InputMode::Normal;
       self.preview.invalidate();
       self.update_preview();
@@ -675,7 +757,6 @@ impl App {
   fn history_go_back(&mut self) -> Result<()> {
     if let Some(prev) = self.history_back.pop() {
       let current = self.tree.root.clone();
-      // Push current to forward stack (skip if same as last forward entry)
       if self.history_forward.last() != Some(&current) {
         self.history_forward.push(current);
       }
@@ -683,6 +764,7 @@ impl App {
       self.search_query.clear();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
+      self.marked.clear();
       self.preview.invalidate();
       self.update_preview();
       self.update_breadcrumbs();
@@ -694,7 +776,6 @@ impl App {
   fn history_go_forward(&mut self) -> Result<()> {
     if let Some(next) = self.history_forward.pop() {
       let current = self.tree.root.clone();
-      // Push current to back stack (skip if same as last back entry)
       if self.history_back.last() != Some(&current) {
         self.history_back.push(current);
       }
@@ -702,6 +783,7 @@ impl App {
       self.search_query.clear();
       self.cursor = 0;
       self.tree_scroll_offset = 0;
+      self.marked.clear();
       self.preview.invalidate();
       self.update_preview();
       self.update_breadcrumbs();
@@ -812,6 +894,7 @@ impl App {
           self.search_query.clear();
           self.cursor = 0;
           self.tree_scroll_offset = 0;
+          self.marked.clear();
           self.update_breadcrumbs();
         }
         self.preview.invalidate();
@@ -1053,6 +1136,7 @@ impl App {
             pane.search_query.clear();
             pane.cursor = 0;
             pane.scroll_offset = 0;
+            pane.marked.clear();
             self.preview.invalidate();
             self.update_preview();
           } else {
@@ -1069,6 +1153,7 @@ impl App {
           self.search_query.clear();
           self.cursor = 0;
           self.tree_scroll_offset = 0;
+          self.marked.clear();
           self.preview.invalidate();
           self.update_preview();
           self.update_breadcrumbs();
@@ -1081,6 +1166,20 @@ impl App {
   }
 
   fn pick_file(&mut self) -> Result<()> {
+    // If marks exist, collect all marked non-dir paths
+    let marks = self.active_marks();
+    if !marks.is_empty() {
+      let paths: Vec<PathBuf> = marks.iter()
+        .filter(|p| !p.is_dir())
+        .cloned()
+        .collect();
+      if !paths.is_empty() {
+        self.picked_paths = paths;
+        self.should_quit = true;
+      }
+      return Ok(());
+    }
+
     if self.dual_pane_mode && self.active_pane == 1 {
       if let Some(ref mut pane) = self.right_pane {
         let entries = pane.visible_entries();
@@ -1088,7 +1187,7 @@ impl App {
           if pane.tree.entries[idx].is_dir {
             return self.enter_directory();
           }
-          self.picked_path = Some(pane.tree.entries[idx].path.clone());
+          self.picked_paths = vec![pane.tree.entries[idx].path.clone()];
           self.should_quit = true;
         }
       }
@@ -1098,7 +1197,7 @@ impl App {
         if self.tree.entries[idx].is_dir {
           return self.enter_directory();
         }
-        self.picked_path = Some(self.tree.entries[idx].path.clone());
+        self.picked_paths = vec![self.tree.entries[idx].path.clone()];
         self.should_quit = true;
       }
     }
@@ -1252,27 +1351,45 @@ impl App {
   }
 
   fn cut_file(&mut self) {
-    if let Some(entry) = self.selected_entry() {
-      let path = entry.path.clone();
-      let name = entry.name.clone();
-      self.clipboard = Clipboard {
-        paths: vec![path],
-        op: Some(ClipboardOp::Cut),
-      };
-      self.set_status(format!("Cut: {name}"));
+    let targets = self.operation_targets();
+    if targets.is_empty() {
+      return;
     }
+    let msg = if targets.len() == 1 {
+      let name = targets[0].file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("?");
+      format!("Cut: {name}")
+    } else {
+      format!("Cut {} items", targets.len())
+    };
+    self.clipboard = Clipboard {
+      paths: targets,
+      op: Some(ClipboardOp::Cut),
+    };
+    self.active_marks_mut().clear();
+    self.set_status(msg);
   }
 
   fn copy_file(&mut self) {
-    if let Some(entry) = self.selected_entry() {
-      let path = entry.path.clone();
-      let name = entry.name.clone();
-      self.clipboard = Clipboard {
-        paths: vec![path],
-        op: Some(ClipboardOp::Copy),
-      };
-      self.set_status(format!("Copied: {name}"));
+    let targets = self.operation_targets();
+    if targets.is_empty() {
+      return;
     }
+    let msg = if targets.len() == 1 {
+      let name = targets[0].file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("?");
+      format!("Copied: {name}")
+    } else {
+      format!("Copied {} items", targets.len())
+    };
+    self.clipboard = Clipboard {
+      paths: targets,
+      op: Some(ClipboardOp::Copy),
+    };
+    self.active_marks_mut().clear();
+    self.set_status(msg);
   }
 
   fn paste_clipboard(&mut self) -> Result<()> {
@@ -1391,6 +1508,47 @@ impl App {
         self.set_status(format!("Delete failed: {e}"));
       }
     }
+    Ok(())
+  }
+
+  fn execute_delete_multi(&mut self) -> Result<()> {
+    let targets = self.operation_targets();
+    self.cancel_prompt();
+
+    if targets.is_empty() {
+      return Ok(());
+    }
+
+    let count = targets.len();
+    let mut deleted = 0;
+
+    for path in &targets {
+      let result = if path.is_dir() {
+        std::fs::remove_dir_all(path)
+      } else {
+        std::fs::remove_file(path)
+      };
+      if result.is_ok() {
+        deleted += 1;
+        self.clipboard.paths.retain(|p| !p.starts_with(path));
+      }
+    }
+
+    if self.clipboard.paths.is_empty() {
+      self.clipboard.op = None;
+    }
+
+    self.active_marks_mut().clear();
+    self.tree.reload()?;
+    let len = self.visible_entries().len();
+    if len == 0 {
+      self.cursor = 0;
+    } else {
+      self.cursor = self.cursor.min(len - 1);
+    }
+    self.set_status(format!("Deleted {deleted}/{count} items"));
+    self.preview.invalidate();
+    self.update_preview();
     Ok(())
   }
 
@@ -1634,12 +1792,22 @@ impl App {
   }
 
   fn yank_path(&mut self) {
-    if let Some(entry) = self.selected_entry() {
-      let path_str = entry.path.to_string_lossy().to_string();
-      match clipboard_anywhere::set_clipboard(&path_str) {
-        Ok(_) => self.set_status(format!("Yanked: {path_str}")),
-        Err(e) => self.set_status(format!("Yank failed: {e}")),
-      }
+    let targets = self.operation_targets();
+    if targets.is_empty() {
+      return;
+    }
+    let path_str = targets.iter()
+      .map(|p| p.to_string_lossy().to_string())
+      .collect::<Vec<_>>()
+      .join("\n");
+    let msg = if targets.len() == 1 {
+      format!("Yanked: {path_str}")
+    } else {
+      format!("Yanked {} paths", targets.len())
+    };
+    match clipboard_anywhere::set_clipboard(&path_str) {
+      Ok(_) => self.set_status(msg),
+      Err(e) => self.set_status(format!("Yank failed: {e}")),
     }
   }
 
@@ -1731,18 +1899,22 @@ impl App {
     }
   }
 
-  pub fn write_picked_path(&self) -> Result<(), String> {
-    let Some(ref path) = self.picked_path else { return Ok(()) };
+  pub fn write_picked_paths(&self) -> Result<(), String> {
+    if self.picked_paths.is_empty() { return Ok(()) }
     let Some(ref mode) = self.picker_mode else { return Ok(()) };
     match mode {
       PickerOutput::Stdout => {
-        println!("{}", path.display());
+        for path in &self.picked_paths {
+          println!("{}", path.display());
+        }
       }
       PickerOutput::ChooserFile(file) => {
         let mut f = std::fs::File::create(file)
           .map_err(|e| format!("Failed to write chooser file: {e}"))?;
-        writeln!(f, "{}", path.display())
-          .map_err(|e| format!("Failed to write chooser file: {e}"))?;
+        for path in &self.picked_paths {
+          writeln!(f, "{}", path.display())
+            .map_err(|e| format!("Failed to write chooser file: {e}"))?;
+        }
       }
     }
     Ok(())
@@ -1923,6 +2095,156 @@ impl App {
 
   fn chmod_close(&mut self) {
     self.input_mode = InputMode::Normal;
+  }
+
+  fn toggle_mark(&mut self) {
+    if let Some(entry) = self.selected_entry() {
+      let path = entry.path.clone();
+      let marks = self.active_marks_mut();
+      if marks.contains(&path) {
+        marks.remove(&path);
+      } else {
+        marks.insert(path);
+      }
+    }
+    self.move_cursor(1);
+  }
+
+  fn mark_all(&mut self) {
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let paths: Vec<PathBuf> = pane.visible_entries().iter()
+          .map(|&idx| pane.tree.entries[idx].path.clone())
+          .collect();
+        let all_marked = paths.iter().all(|p| pane.marked.contains(p));
+        if all_marked {
+          pane.marked.clear();
+          self.set_status("Marks cleared".to_string());
+        } else {
+          let count = paths.len();
+          pane.marked.extend(paths);
+          self.set_status(format!("{count} marked"));
+        }
+      }
+    } else {
+      let paths: Vec<PathBuf> = self.visible_entries().iter()
+        .map(|&idx| self.tree.entries[idx].path.clone())
+        .collect();
+      let all_marked = paths.iter().all(|p| self.marked.contains(p));
+      if all_marked {
+        self.marked.clear();
+        self.set_status("Marks cleared".to_string());
+      } else {
+        let count = paths.len();
+        self.marked.extend(paths);
+        self.set_status(format!("{count} marked"));
+      }
+    }
+  }
+
+  fn clear_marks(&mut self) {
+    self.active_marks_mut().clear();
+    self.set_status("Marks cleared".to_string());
+  }
+
+  fn compress_start(&mut self) {
+    if self.compressing.is_some() {
+      self.set_status("Compression already in progress".to_string());
+      return;
+    }
+    let targets = self.operation_targets();
+    if targets.is_empty() {
+      self.set_status("No files selected".to_string());
+      return;
+    }
+    self.input_mode = InputMode::Compress;
+  }
+
+  fn compress_select(&mut self, format_idx: usize) -> Result<()> {
+    let formats = ["zip", "tar.gz", "tar.bz2", "tar.xz"];
+    let Some(&format) = formats.get(format_idx) else {
+      return Ok(());
+    };
+
+    let targets = self.operation_targets();
+    if targets.is_empty() {
+      self.input_mode = InputMode::Normal;
+      return Ok(());
+    }
+
+    // Determine archive name
+    let stem = if targets.len() == 1 {
+      targets[0].file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("archive")
+        .to_string()
+    } else {
+      "archive".to_string()
+    };
+
+    let dest_dir = self.tree.root.clone();
+    let raw_dest = dest_dir.join(format!("{stem}.{format}"));
+    let dest = ops::unique_dest_path(&raw_dest);
+
+    let dest_name = dest.file_name()
+      .and_then(|n| n.to_str())
+      .unwrap_or("archive")
+      .to_string();
+
+    self.set_status(format!("Compressing to {dest_name}..."));
+    self.input_mode = InputMode::Normal;
+
+    // Clear marks
+    self.active_marks_mut().clear();
+
+    let (tx, rx) = mpsc::channel();
+    let format_owned = format.to_string();
+    let targets_owned = targets;
+    let dest_owned = dest.clone();
+
+    std::thread::spawn(move || {
+      let result = archive::compress_to_archive(&targets_owned, &dest_owned, &format_owned);
+      let _ = tx.send(CompressResult {
+        name: dest_name,
+        path: dest_owned,
+        result,
+      });
+    });
+
+    self.compressing = Some(CompressingState { rx });
+    Ok(())
+  }
+
+  fn check_compression_complete(&mut self) -> Result<()> {
+    let Some(ref state) = self.compressing else {
+      return Ok(());
+    };
+
+    let result = match state.rx.try_recv() {
+      Ok(r) => r,
+      Err(mpsc::TryRecvError::Empty) => return Ok(()),
+      Err(mpsc::TryRecvError::Disconnected) => {
+        self.compressing = None;
+        self.set_status("Compression failed: thread died".to_string());
+        return Ok(());
+      }
+    };
+
+    self.compressing = None;
+
+    match result.result {
+      Ok(()) => {
+        self.set_status(format!("Created: {}", result.name));
+        self.tree.reload()?;
+        self.reposition_cursor_to(&result.path);
+        self.preview.invalidate();
+        self.update_preview();
+      }
+      Err(e) => {
+        self.set_status(format!("Compress failed: {e}"));
+      }
+    }
+    Ok(())
   }
 }
 
@@ -3907,7 +4229,7 @@ mod tests {
       app.cursor = idx;
       app.update(Action::EnterDir).unwrap();
       assert!(app.should_quit);
-      assert!(app.picked_path.is_some());
+      assert!(!app.picked_paths.is_empty());
     }
     cleanup_test_dir(&dir);
   }
@@ -3922,7 +4244,7 @@ mod tests {
     assert!(app.tree.entries[0].is_dir);
     app.update(Action::EnterDir).unwrap();
     assert!(!app.should_quit);
-    assert!(app.picked_path.is_none());
+    assert!(app.picked_paths.is_empty());
     assert_ne!(app.tree.root, old_root);
     cleanup_test_dir(&dir);
   }
@@ -3933,7 +4255,182 @@ mod tests {
     let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
     app.update(Action::Quit).unwrap();
     assert!(app.should_quit);
-    assert!(app.picked_path.is_none());
+    assert!(app.picked_paths.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  // === Mark (multi-select) tests ===
+
+  #[test]
+  fn test_toggle_mark() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    assert!(app.marked.is_empty());
+
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+
+    assert!(app.marked.contains(&path));
+    // Cursor should advance
+    assert_eq!(app.cursor, 1);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_toggle_mark_unmarks() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+    assert!(app.marked.contains(&path));
+
+    // Move back and toggle again to unmark
+    app.update(Action::MoveUp).unwrap();
+    app.update(Action::ToggleMark).unwrap();
+    assert!(!app.marked.contains(&path));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_mark_all() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    let visible_count = app.visible_entries().len();
+    assert!(visible_count > 0);
+
+    app.update(Action::MarkAll).unwrap();
+    assert_eq!(app.marked.len(), visible_count);
+
+    // When all are marked, MarkAll should clear them
+    app.update(Action::MarkAll).unwrap();
+    assert!(app.marked.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_clear_marks() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    app.update(Action::MarkAll).unwrap();
+    assert!(!app.marked.is_empty());
+
+    app.update(Action::ClearMarks).unwrap();
+    assert!(app.marked.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_marks_cleared_on_dir_change() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    // Mark some files
+    app.update(Action::ToggleMark).unwrap();
+    assert!(!app.marked.is_empty());
+
+    // Enter a directory — marks should clear
+    app.cursor = 0;
+    app.update(Action::EnterDir).unwrap();
+    assert!(app.marked.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_copy_with_marks() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    // Mark two entries
+    app.update(Action::ToggleMark).unwrap();
+    app.update(Action::ToggleMark).unwrap();
+    assert_eq!(app.marked.len(), 2);
+
+    app.update(Action::CopyFile).unwrap();
+    assert_eq!(app.clipboard.op, Some(ClipboardOp::Copy));
+    assert_eq!(app.clipboard.paths.len(), 2);
+    // Marks should be cleared after copy
+    assert!(app.marked.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_cut_with_marks() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    // Mark two entries
+    app.update(Action::ToggleMark).unwrap();
+    app.update(Action::ToggleMark).unwrap();
+    assert_eq!(app.marked.len(), 2);
+
+    app.update(Action::CutFile).unwrap();
+    assert_eq!(app.clipboard.op, Some(ClipboardOp::Cut));
+    assert_eq!(app.clipboard.paths.len(), 2);
+    assert!(app.marked.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_rename_blocked_with_marks() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    // Mark two entries
+    app.update(Action::ToggleMark).unwrap();
+    app.update(Action::ToggleMark).unwrap();
+
+    app.update(Action::RenameStart).unwrap();
+    // Should stay in Normal mode with error
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert!(app.status_message.as_ref().unwrap().contains("rename"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_delete_multi_confirm() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    // Move to files and mark them
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let path1 = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+    let path2 = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+
+    assert!(path1.exists());
+    assert!(path2.exists());
+
+    app.update(Action::DeleteFile).unwrap();
+    assert_eq!(app.input_mode, InputMode::Prompt);
+
+    // Confirm with 'y'
+    app.update(Action::PromptInput('y')).unwrap();
+    assert!(!path1.exists());
+    assert!(!path2.exists());
+    assert!(app.marked.is_empty());
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_marks_survive_tree_reload() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    let path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+    assert!(app.marked.contains(&path));
+
+    // Reload tree
+    app.tree.reload().unwrap();
+    // Marks use PathBuf, so they survive reload
+    assert!(app.marked.contains(&path));
     cleanup_test_dir(&dir);
   }
 
@@ -3951,7 +4448,7 @@ mod tests {
       if !app.tree.entries[idx].is_dir {
         app.update(Action::SearchConfirm).unwrap();
         assert!(app.should_quit);
-        assert!(app.picked_path.is_some());
+        assert!(!app.picked_paths.is_empty());
       }
     }
     cleanup_test_dir(&dir);

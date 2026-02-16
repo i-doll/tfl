@@ -82,6 +82,12 @@ pub enum Action {
   PrevHunk,
   ShowProperties,
   PropertiesClose,
+  ToggleMark,
+  MarkAll,
+  ClearMarks,
+  CompressStart,
+  CompressSelect(usize),
+  CompressClose,
   Resize(u16, u16),
   Tick,
   None,
@@ -141,6 +147,10 @@ impl Action {
       "next_hunk" => Some(Action::NextHunk),
       "prev_hunk" => Some(Action::PrevHunk),
       "show_properties" => Some(Action::ShowProperties),
+      "toggle_mark" => Some(Action::ToggleMark),
+      "mark_all" => Some(Action::MarkAll),
+      "clear_marks" => Some(Action::ClearMarks),
+      "compress" => Some(Action::CompressStart),
       "none" => Some(Action::None),
       _ => None,
     }
@@ -201,6 +211,10 @@ mod tests {
     assert_eq!(Action::from_name("next_hunk"), Some(Action::NextHunk));
     assert_eq!(Action::from_name("prev_hunk"), Some(Action::PrevHunk));
     assert_eq!(Action::from_name("show_properties"), Some(Action::ShowProperties));
+    assert_eq!(Action::from_name("toggle_mark"), Some(Action::ToggleMark));
+    assert_eq!(Action::from_name("mark_all"), Some(Action::MarkAll));
+    assert_eq!(Action::from_name("clear_marks"), Some(Action::ClearMarks));
+    assert_eq!(Action::from_name("compress"), Some(Action::CompressStart));
   }
 
   #[test]
