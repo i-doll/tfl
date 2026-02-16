@@ -50,6 +50,7 @@ pub struct Config {
   pub ratio_step: u16,
   pub tick_rate_ms: u64,
   pub claude_yolo: bool,
+  pub use_trash: bool,
   pub normal_keys: HashMap<KeyBinding, Action>,
   pub g_prefix_keys: HashMap<KeyBinding, Action>,
   pub search_keys: HashMap<KeyBinding, Action>,
@@ -95,6 +96,7 @@ struct GeneralConfig {
   tree_ratio: Option<u16>,
   tick_rate_ms: Option<u64>,
   claude_yolo: Option<bool>,
+  use_trash: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -215,6 +217,7 @@ impl Config {
       ratio_step: 5,
       tick_rate_ms: 100,
       claude_yolo: false,
+      use_trash: true,
       normal_keys: HashMap::new(),
       g_prefix_keys: HashMap::new(),
       search_keys: HashMap::new(),
@@ -245,6 +248,9 @@ impl Config {
       }
       if let Some(yolo) = general.claude_yolo {
         self.claude_yolo = yolo;
+      }
+      if let Some(trash) = general.use_trash {
+        self.use_trash = trash;
       }
     }
 
@@ -328,6 +334,7 @@ impl Config {
     r#"[general]
 tree_ratio = 30       # initial tree pane width (percentage)
 tick_rate_ms = 100    # event loop tick rate in ms
+use_trash = true      # move to trash instead of permanent delete
 
 [keys.normal]
 j = "move_down"

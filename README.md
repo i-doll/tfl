@@ -216,6 +216,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `toml` | TOML config file parsing and pretty-printing |
 | `dirs` | XDG config directory resolution |
 | `open` | Open files with system default application |
+| `trash` | Cross-platform trash/recycle bin support (macOS, Linux) |
 | `notify` | OS-native file watching for live config reload |
 | `git2` | Native Git repository operations (status, commits, branch info) |
 | `kamadak-exif` | EXIF metadata extraction from images |
@@ -322,6 +323,7 @@ tfl loads configuration from `$XDG_CONFIG_HOME/tfl/config.toml` (defaults to `~/
 tree_ratio = 30       # initial tree pane width (percentage, default 30)
 tick_rate_ms = 100    # event loop tick rate in ms (default 100)
 claude_yolo = false   # if true, `c` launches Claude with --dangerously-skip-permissions (default false)
+use_trash = true      # move to trash instead of permanent delete (default true)
 
 [keys.normal]
 j = "move_down"
