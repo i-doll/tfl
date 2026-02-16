@@ -1597,6 +1597,15 @@ impl App {
             *p = new_path.clone();
           }
         }
+        // Remap expanded paths so reload() preserves expansion under the new name
+        let old_prefix = &entry.path;
+        for e in &mut self.tree.entries {
+          if e.expanded && (e.path == *old_prefix || e.path.starts_with(old_prefix))
+            && let Ok(suffix) = e.path.strip_prefix(old_prefix)
+          {
+            e.path = new_path.join(suffix);
+          }
+        }
         self.cancel_prompt();
         self.tree.reload()?;
         self.tree_reloaded = true;
