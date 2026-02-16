@@ -3485,7 +3485,7 @@ mod tests {
     {
       let file = fs::File::create(&zip_path).unwrap();
       let mut zip = zip::ZipWriter::new(file);
-      let options = zip::write::FileOptions::default();
+      let options = zip::write::SimpleFileOptions::default();
       zip.start_file("extracted.txt", options).unwrap();
       zip.write_all(b"extracted content").unwrap();
       zip.finish().unwrap();
@@ -3614,7 +3614,7 @@ mod tests {
     {
       let file = fs::File::create(&zip_path).unwrap();
       let mut zip = zip::ZipWriter::new(file);
-      let options = zip::write::FileOptions::default();
+      let options = zip::write::SimpleFileOptions::default();
       zip.start_file("test.txt", options).unwrap();
       zip.write_all(b"test").unwrap();
       zip.finish().unwrap();
@@ -3778,7 +3778,7 @@ mod tests {
     {
       let file = fs::File::create(&zip_path).unwrap();
       let mut zip = zip::ZipWriter::new(file);
-      let options = zip::write::FileOptions::default();
+      let options = zip::write::SimpleFileOptions::default();
       zip.start_file("extracted.txt", options).unwrap();
       zip.write_all(b"content").unwrap();
       zip.finish().unwrap();

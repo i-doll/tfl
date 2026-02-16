@@ -761,7 +761,7 @@ mod tests {
     {
       let f = fs::File::create(&file).unwrap();
       let mut zip = zip::ZipWriter::new(f);
-      let options = zip::write::FileOptions::default();
+      let options = zip::write::SimpleFileOptions::default();
       zip.start_file("test.txt", options).unwrap();
       std::io::Write::write_all(&mut zip, b"test").unwrap();
       zip.finish().unwrap();

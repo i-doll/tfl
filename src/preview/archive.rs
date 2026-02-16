@@ -404,7 +404,7 @@ fn compress_zip(paths: &[PathBuf], dest: &Path) -> Result<(), String> {
   let file = std::fs::File::create(dest)
     .map_err(|e| format!("Failed to create archive: {e}"))?;
   let mut zip = zip::ZipWriter::new(file);
-  let options = zip::write::FileOptions::default()
+  let options = zip::write::SimpleFileOptions::default()
     .compression_method(zip::CompressionMethod::Deflated);
 
   for path in paths {
@@ -432,7 +432,7 @@ fn zip_add_dir_recursive(
   zip: &mut zip::ZipWriter<std::fs::File>,
   base: &Path,
   path: &Path,
-  options: zip::write::FileOptions,
+  options: zip::write::SimpleFileOptions,
 ) -> Result<(), String> {
   let base_parent = base.parent().unwrap_or(base);
   for entry in std::fs::read_dir(path)
@@ -575,7 +575,7 @@ mod tests {
     {
       let file = fs::File::create(&zip_path).unwrap();
       let mut zip = zip::ZipWriter::new(file);
-      let options = zip::write::FileOptions::default()
+      let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored);
 
       zip.start_file("hello.txt", options).unwrap();
@@ -724,7 +724,7 @@ mod tests {
     {
       let file = fs::File::create(&zip_path).unwrap();
       let mut zip = zip::ZipWriter::new(file);
-      let options = zip::write::FileOptions::default();
+      let options = zip::write::SimpleFileOptions::default();
 
       zip.start_file("hello.txt", options).unwrap();
       zip.write_all(b"Hello World").unwrap();
@@ -959,7 +959,7 @@ mod tests {
     {
       let file = fs::File::create(&zip_path).unwrap();
       let mut zip = zip::ZipWriter::new(file);
-      let options = zip::write::FileOptions::default();
+      let options = zip::write::SimpleFileOptions::default();
       zip.start_file("test.txt", options).unwrap();
       zip.write_all(b"test content").unwrap();
       zip.finish().unwrap();
