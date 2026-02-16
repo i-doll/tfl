@@ -177,6 +177,7 @@ pub enum SuspendAction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub enum PickerOutput {
   Stdout,
   ChooserFile(PathBuf),

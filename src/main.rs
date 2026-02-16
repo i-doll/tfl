@@ -26,7 +26,9 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 
-use crate::app::{App, PickerOutput, SuspendAction};
+use crate::app::{App, SuspendAction};
+#[cfg(target_os = "linux")]
+use crate::app::PickerOutput;
 use crate::event::{Event, EventLoop, map_breadcrumb_click, map_key};
 
 fn main() -> Result<()> {
@@ -37,7 +39,9 @@ fn main() -> Result<()> {
   let mut show_version = false;
   let mut show_init = false;
   let mut show_hidden = false;
+  #[cfg(target_os = "linux")]
   let mut pick_stdout = false;
+  #[cfg(target_os = "linux")]
   let mut chooser_file: Option<String> = None;
   #[cfg(target_os = "linux")]
   let mut install_handler = false;
@@ -55,7 +59,9 @@ fn main() -> Result<()> {
       "--version" | "-V" => show_version = true,
       "--init" => show_init = true,
       "--all" | "-a" => show_hidden = true,
+      #[cfg(target_os = "linux")]
       "--pick" => pick_stdout = true,
+      #[cfg(target_os = "linux")]
       a if a.starts_with("--chooser-file=") => {
         chooser_file = Some(a.strip_prefix("--chooser-file=").unwrap().to_string());
       }
@@ -68,8 +74,13 @@ fn main() -> Result<()> {
       #[cfg(target_os = "linux")]
       "--uninstall-portal" => uninstall_portal = true,
       #[cfg(not(target_os = "linux"))]
-      "--install-handler" | "--uninstall-handler" | "--install-portal" | "--uninstall-portal" => {
+      "--pick" | "--install-handler" | "--uninstall-handler" | "--install-portal" | "--uninstall-portal" => {
         eprintln!("tfl: {arg} is only supported on Linux");
+        std::process::exit(1);
+      }
+      #[cfg(not(target_os = "linux"))]
+      a if a.starts_with("--chooser-file=") => {
+        eprintln!("tfl: --chooser-file is only supported on Linux");
         std::process::exit(1);
       }
       a if !a.starts_with('-') => path_arg = Some(a.to_string()),
@@ -81,26 +92,29 @@ fn main() -> Result<()> {
   }
 
   if show_help {
-    println!(
-      "\
+    println!("\
 tfl - terminal file explorer
 
 Usage: tfl [options] [path]
 
 Options:
-  -a, --all                Show hidden files
-  --pick                   File picker mode: print selected path to stdout
-  --chooser-file=PATH      File picker mode: write selected path to PATH
-  --install-handler        Set tfl as default file manager (Linux)
-  --uninstall-handler      Restore previous default file manager (Linux)
-  --install-portal         Set up file dialog integration (Linux)
-  --uninstall-portal       Restore previous file dialog config (Linux)
-  --init                   Write default config files to ~/.config/tfl/
-  -h, --help               Print this help message
-  -V, --version            Print version
-
-If no path is given, opens the current directory."
-    );
+  -a, --all                Show hidden files");
+    #[cfg(target_os = "linux")]
+    println!(concat!(
+      "  --pick                   File picker mode: print selected path to stdout\n",
+      "  --chooser-file=PATH      File picker mode: write selected path to PATH\n",
+      "  --install-handler        Set tfl as default file manager\n",
+      "  --uninstall-handler      Restore previous default file manager\n",
+      "  --install-portal         Set up file dialog integration\n",
+      "  --uninstall-portal       Restore previous file dialog config",
+    ));
+    println!(concat!(
+      "  --init                   Write default config files to ~/.config/tfl/\n",
+      "  -h, --help               Print this help message\n",
+      "  -V, --version            Print version\n",
+      "\n",
+      "If no path is given, opens the current directory.",
+    ));
     return Ok(());
   }
 
@@ -184,11 +198,14 @@ If no path is given, opens the current directory."
   }
 
   // Determine picker mode
+  #[cfg(target_os = "linux")]
   let picker_mode = if pick_stdout {
     Some(PickerOutput::Stdout)
   } else {
     chooser_file.map(|path| PickerOutput::ChooserFile(PathBuf::from(path)))
   };
+  #[cfg(not(target_os = "linux"))]
+  let picker_mode = None;
 
   let (mut config, config_errors) = config::Config::load();
   let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
