@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -20,12 +21,73 @@ pub enum Event {
   Resize(u16, u16),
   Tick,
   ConfigChanged,
+  TreeChanged,
+}
+
+enum WatchCommand {
+  SetDirs(HashSet<PathBuf>),
+}
+
+pub struct TreeWatcher {
+  cmd_tx: mpsc::Sender<WatchCommand>,
+}
+
+impl TreeWatcher {
+  fn new(event_tx: mpsc::Sender<Event>) -> Option<Self> {
+    let (cmd_tx, cmd_rx) = mpsc::channel::<WatchCommand>();
+
+    let watcher = match notify::recommended_watcher(move |res: std::result::Result<notify::Event, notify::Error>| {
+      if let Ok(ev) = res {
+        use notify::EventKind;
+        let dominated = matches!(
+          ev.kind,
+          EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))
+        );
+        if dominated {
+          let _ = event_tx.send(Event::TreeChanged);
+        }
+      }
+    }) {
+      Ok(w) => w,
+      Err(e) => {
+        eprintln!("tfl: failed to create tree watcher: {e}");
+        return None;
+      }
+    };
+
+    thread::spawn(move || {
+      let mut watcher = watcher;
+      let mut current: HashSet<PathBuf> = HashSet::new();
+      while let Ok(cmd) = cmd_rx.recv() {
+        match cmd {
+          WatchCommand::SetDirs(new_dirs) => {
+            // Unwatch dirs no longer needed
+            for dir in current.difference(&new_dirs) {
+              let _ = watcher.unwatch(dir);
+            }
+            // Watch new dirs
+            for dir in new_dirs.difference(&current) {
+              let _ = watcher.watch(dir, notify::RecursiveMode::NonRecursive);
+            }
+            current = new_dirs;
+          }
+        }
+      }
+    });
+
+    Some(Self { cmd_tx })
+  }
+
+  fn set_dirs(&self, dirs: HashSet<PathBuf>) {
+    let _ = self.cmd_tx.send(WatchCommand::SetDirs(dirs));
+  }
 }
 
 pub struct EventLoop {
   rx: mpsc::Receiver<Event>,
   paused: Arc<AtomicBool>,
   _watcher: Option<RecommendedWatcher>,
+  tree_watcher: Option<TreeWatcher>,
 }
 
 impl EventLoop {
@@ -65,6 +127,7 @@ impl EventLoop {
       Some(watcher)
     });
 
+    let tree_tx = tx.clone();
     thread::spawn(move || loop {
       if thread_paused.load(Ordering::Relaxed) {
         thread::sleep(tick_rate);
@@ -97,7 +160,9 @@ impl EventLoop {
       }
     });
 
-    Self { rx, paused, _watcher: watcher }
+    let tree_watcher = TreeWatcher::new(tree_tx);
+
+    Self { rx, paused, _watcher: watcher, tree_watcher }
   }
 
   pub fn pause(&self) {
@@ -111,8 +176,15 @@ impl EventLoop {
       if matches!(ev, Event::ConfigChanged) {
         config_changed = true;
       }
+      // Drain stale TreeChanged events accumulated during suspend
     }
     config_changed
+  }
+
+  pub fn set_watched_dirs(&self, dirs: HashSet<PathBuf>) {
+    if let Some(ref tw) = self.tree_watcher {
+      tw.set_dirs(dirs);
+    }
   }
 
   pub fn next(&self) -> Result<Event> {

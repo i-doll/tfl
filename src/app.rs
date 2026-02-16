@@ -183,6 +183,7 @@ pub struct App {
   pub has_apps_file: bool,
   pub picker_mode: Option<PickerOutput>,
   pub picked_paths: Vec<PathBuf>,
+  pub tree_reloaded: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +254,7 @@ impl App {
       has_apps_file: config.has_apps_file,
       picker_mode,
       picked_paths: Vec::new(),
+      tree_reloaded: false,
     })
   }
 
@@ -1446,6 +1448,7 @@ impl App {
               Err(e) => {
                 self.set_status(format!("Paste failed: {e}"));
                 self.tree.reload()?;
+                self.tree_reloaded = true;
                 return Ok(());
               }
             }
@@ -1455,6 +1458,7 @@ impl App {
           if let Err(e) = ops::copy_path(source, &dest) {
             self.set_status(format!("Paste failed: {e}"));
             self.tree.reload()?;
+            self.tree_reloaded = true;
             return Ok(());
           }
         }
@@ -1467,6 +1471,7 @@ impl App {
     }
 
     self.tree.reload()?;
+    self.tree_reloaded = true;
 
     if let Some(dest) = last_dest {
       self.reposition_cursor_to(&dest);
@@ -1500,6 +1505,7 @@ impl App {
         }
         self.cancel_prompt();
         self.tree.reload()?;
+        self.tree_reloaded = true;
         let len = self.visible_entries().len();
         if len == 0 {
           self.cursor = 0;
@@ -1547,6 +1553,7 @@ impl App {
 
     self.active_marks_mut().clear();
     self.tree.reload()?;
+    self.tree_reloaded = true;
     let len = self.visible_entries().len();
     if len == 0 {
       self.cursor = 0;
@@ -1590,8 +1597,18 @@ impl App {
             *p = new_path.clone();
           }
         }
+        // Remap expanded paths so reload() preserves expansion under the new name
+        let old_prefix = &entry.path;
+        for e in &mut self.tree.entries {
+          if e.expanded && (e.path == *old_prefix || e.path.starts_with(old_prefix))
+            && let Ok(suffix) = e.path.strip_prefix(old_prefix)
+          {
+            e.path = new_path.join(suffix);
+          }
+        }
         self.cancel_prompt();
         self.tree.reload()?;
+        self.tree_reloaded = true;
         self.reposition_cursor_to(&new_path);
         self.set_status(format!("Renamed to {new_name}"));
         self.preview.invalidate();
@@ -1626,6 +1643,7 @@ impl App {
       Ok(_) => {
         self.cancel_prompt();
         self.tree.reload()?;
+        self.tree_reloaded = true;
         self.reposition_cursor_to(&new_path);
         self.set_status(format!("Created: {name}"));
         self.preview.invalidate();
@@ -1660,6 +1678,7 @@ impl App {
       Ok(()) => {
         self.cancel_prompt();
         self.tree.reload()?;
+        self.tree_reloaded = true;
         self.reposition_cursor_to(&new_path);
         self.set_status(format!("Created dir: {name}"));
         self.preview.invalidate();
@@ -1749,6 +1768,7 @@ impl App {
           self.set_status(format!("Extracted: {}", result.name));
         }
         self.tree.reload()?;
+        self.tree_reloaded = true;
         self.preview.invalidate();
         self.update_preview();
       }
@@ -1783,7 +1803,7 @@ impl App {
     self.extract_archive_start(true)
   }
 
-  fn reposition_cursor_to(&mut self, path: &PathBuf) {
+  pub fn reposition_cursor_to(&mut self, path: &PathBuf) {
     let entries = self.visible_entries();
     if let Some(pos) = entries.iter().position(|&idx| self.tree.entries[idx].path == *path) {
       self.cursor = pos;
@@ -1818,7 +1838,7 @@ impl App {
     }
   }
 
-  fn update_preview(&mut self) {
+  pub fn update_preview(&mut self) {
     if self.dual_pane_mode && self.active_pane == 1 {
       if let Some(ref pane) = self.right_pane {
         let entries = pane.visible_entries();
@@ -2243,6 +2263,7 @@ impl App {
       Ok(()) => {
         self.set_status(format!("Created: {}", result.name));
         self.tree.reload()?;
+        self.tree_reloaded = true;
         self.reposition_cursor_to(&result.path);
         self.preview.invalidate();
         self.update_preview();

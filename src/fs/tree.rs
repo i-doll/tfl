@@ -100,6 +100,17 @@ impl FileTree {
     self.git_repo.as_ref()
   }
 
+  pub fn watched_dirs(&self) -> std::collections::HashSet<PathBuf> {
+    let mut dirs = std::collections::HashSet::new();
+    dirs.insert(self.root.clone());
+    for entry in &self.entries {
+      if entry.is_dir && entry.expanded {
+        dirs.insert(entry.path.clone());
+      }
+    }
+    dirs
+  }
+
   pub fn load_dir(&mut self, path: &Path, depth: usize) -> Result<()> {
     let insert_pos = if depth == 0 {
       self.entries.clear();
