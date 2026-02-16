@@ -51,6 +51,9 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Image EXIF data** — camera model, ISO, exposure for photos with embedded metadata
 - **Archive browsing** — preview contents of ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ files with file listing
 - **Archive extraction** — extract archives to current directory, with optional delete after extract
+- **File picker mode** — use as a file picker from scripts or editors (`--pick` / `--chooser-file`)
+- **Default file manager** — register/unregister as XDG default file manager (Linux)
+- **File dialog integration** — desktop file dialog support via xdg-desktop-portal-termfilechooser (Linux)
 
 ## Keybindings
 
@@ -241,6 +244,8 @@ Download from [GitHub Releases](https://github.com/i-doll/tfl/releases).
 tfl [options] [path]
 tfl --init
 tfl -a ~/projects
+tfl --pick
+tfl --chooser-file=/tmp/chosen
 tfl --help
 ```
 
@@ -249,9 +254,56 @@ If no path is given, opens the current directory.
 | Flag | Description |
 |---|---|
 | `-a`, `--all` | Show hidden files |
+| `--pick` | File picker mode: print selected path to stdout |
+| `--chooser-file=PATH` | File picker mode: write selected path to PATH |
+| `--install-handler` | Set tfl as default file manager (Linux) |
+| `--uninstall-handler` | Restore previous default file manager (Linux) |
+| `--install-portal` | Set up file dialog integration (Linux) |
+| `--uninstall-portal` | Restore previous file dialog config (Linux) |
 | `--init` | Write default `config.toml` and `apps.toml` to `~/.config/tfl/` |
 | `-h`, `--help` | Print help message |
 | `-V`, `--version` | Print version |
+
+### File picker mode
+
+Use `--pick` or `--chooser-file=PATH` to run tfl as a file picker. Navigate to a file and press Enter to select it. Pressing `q` or `Esc` cancels the selection.
+
+- `--pick` prints the selected file path to stdout (exit code 0), or exits with code 1 if cancelled.
+- `--chooser-file=PATH` writes the selected path to the given file instead of stdout.
+
+Directories are navigated into (not selected) when you press Enter in picker mode. A `PICK` badge is shown in the status bar as a visual indicator.
+
+Example: select a file and open it in vim:
+
+```sh
+vim "$(tfl --pick)"
+```
+
+### Default file manager (Linux)
+
+Register tfl as the default handler for `inode/directory` via XDG MIME:
+
+```sh
+tfl --install-handler    # set tfl as default file manager
+tfl --uninstall-handler  # restore previous default
+```
+
+The previous handler is backed up to `~/.config/tfl/handler-backup/` and restored on uninstall.
+
+### File dialog integration (Linux)
+
+Integrate tfl with desktop file open/save dialogs via [xdg-desktop-portal-termfilechooser](https://github.com/GermainZ/xdg-desktop-portal-termfilechooser):
+
+```sh
+tfl --install-portal    # set up portal integration
+tfl --uninstall-portal  # restore previous config
+```
+
+This requires `xdg-desktop-portal-termfilechooser` to be installed. The command backs up existing configs and installs a wrapper script. After installing, restart the portal:
+
+```sh
+systemctl --user restart xdg-desktop-portal
+```
 
 ## Configuration
 
@@ -419,4 +471,7 @@ src/
     preview.rs     Preview pane rendering (text, image, hex)
     status_bar.rs  Status bar: search input, file info, position
     help.rs        Floating help overlay with keybinding reference
+contrib/
+  tfl.desktop      Desktop entry for XDG file manager registration
+  tfl-wrapper.sh   Wrapper script for xdg-desktop-portal-termfilechooser
 ```

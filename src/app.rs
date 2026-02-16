@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -163,6 +164,8 @@ pub struct App {
   pub dual_right_ratio: u16,
   pub file_properties: Option<FileProperties>,
   pub has_apps_file: bool,
+  pub picker_mode: Option<PickerOutput>,
+  pub picked_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -173,8 +176,14 @@ pub enum SuspendAction {
   OpenWith(String, PathBuf),
 }
 
+#[derive(Debug, Clone)]
+pub enum PickerOutput {
+  Stdout,
+  ChooserFile(PathBuf),
+}
+
 impl App {
-  pub fn new(root: PathBuf, picker: Option<Picker>, config: &Config) -> Result<Self> {
+  pub fn new(root: PathBuf, picker: Option<Picker>, config: &Config, picker_mode: Option<PickerOutput>) -> Result<Self> {
     let mut tree = FileTree::with_ignore_patterns(root, config.ignore_glob_set.clone())?;
     // Initialize custom ignore state from config
     tree.show_custom_ignored = !config.use_custom_ignore;
@@ -222,6 +231,8 @@ impl App {
       dual_right_ratio: config.tree_ratio,
       file_properties: None,
       has_apps_file: config.has_apps_file,
+      picker_mode,
+      picked_path: None,
     })
   }
 
@@ -236,7 +247,13 @@ impl App {
       Action::MoveUp => self.move_cursor(-1),
       Action::ToggleExpand => self.enter_or_expand()?,
       Action::MoveRight => self.expand_only()?,
-      Action::EnterDir => self.enter_directory()?,
+      Action::EnterDir => {
+        if self.picker_mode.is_some() {
+          self.pick_file()?;
+        } else {
+          self.enter_directory()?;
+        }
+      }
       Action::MoveLeft => self.go_parent_or_collapse()?,
       Action::ScrollPreviewDown => self.preview.scroll_down(3),
       Action::ScrollPreviewUp => self.preview.scroll_up(3),
@@ -310,7 +327,11 @@ impl App {
       Action::SearchConfirm => {
         self.input_mode = InputMode::Normal;
         // Enter directory while filter is still active so cursor resolves correctly
-        self.enter_directory()?;
+        if self.picker_mode.is_some() {
+          self.pick_file()?;
+        } else {
+          self.enter_directory()?;
+        }
         // Clear query for non-dir entries (enter_directory already clears for dirs)
         if self.dual_pane_mode && self.active_pane == 1 {
           if let Some(ref mut pane) = self.right_pane {
@@ -834,6 +855,9 @@ impl App {
   }
 
   fn open_default_action(&mut self) -> Result<()> {
+    if self.picker_mode.is_some() {
+      return self.pick_file();
+    }
     let entries = self.visible_entries();
     if let Some(idx) = entries.get(self.cursor).copied() {
       if self.tree.entries[idx].is_dir {
@@ -1050,6 +1074,31 @@ impl App {
         } else {
           self.update_preview();
         }
+      }
+    }
+    Ok(())
+  }
+
+  fn pick_file(&mut self) -> Result<()> {
+    if self.dual_pane_mode && self.active_pane == 1 {
+      if let Some(ref mut pane) = self.right_pane {
+        let entries = pane.visible_entries();
+        if let Some(idx) = entries.get(pane.cursor).copied() {
+          if pane.tree.entries[idx].is_dir {
+            return self.enter_directory();
+          }
+          self.picked_path = Some(pane.tree.entries[idx].path.clone());
+          self.should_quit = true;
+        }
+      }
+    } else {
+      let entries = self.visible_entries();
+      if let Some(idx) = entries.get(self.cursor).copied() {
+        if self.tree.entries[idx].is_dir {
+          return self.enter_directory();
+        }
+        self.picked_path = Some(self.tree.entries[idx].path.clone());
+        self.should_quit = true;
       }
     }
     Ok(())
@@ -1681,6 +1730,23 @@ impl App {
     }
   }
 
+  pub fn write_picked_path(&self) -> Result<(), String> {
+    let Some(ref path) = self.picked_path else { return Ok(()) };
+    let Some(ref mode) = self.picker_mode else { return Ok(()) };
+    match mode {
+      PickerOutput::Stdout => {
+        println!("{}", path.display());
+      }
+      PickerOutput::ChooserFile(file) => {
+        let mut f = std::fs::File::create(file)
+          .map_err(|e| format!("Failed to write chooser file: {e}"))?;
+        writeln!(f, "{}", path.display())
+          .map_err(|e| format!("Failed to write chooser file: {e}"))?;
+      }
+    }
+    Ok(())
+  }
+
   pub fn handle_suspend(&mut self) -> Option<SuspendAction> {
     self.should_suspend.take()
   }
@@ -1890,7 +1956,7 @@ mod tests {
   #[test]
   fn test_app_creation() {
     let dir = setup_test_dir();
-    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert_eq!(app.cursor, 0);
     assert!(!app.should_quit);
     assert!(!app.tree.entries.is_empty());
@@ -1902,7 +1968,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut c = cfg();
     c.tree_ratio = 50;
-    let app = App::new(dir.clone(), None, &c).unwrap();
+    let app = App::new(dir.clone(), None, &c, None).unwrap();
     assert_eq!(app.tree_ratio, 50);
     cleanup_test_dir(&dir);
   }
@@ -1910,7 +1976,7 @@ mod tests {
   #[test]
   fn test_move_down_up() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert_eq!(app.cursor, 0);
     app.update(Action::MoveDown).unwrap();
     assert_eq!(app.cursor, 1);
@@ -1925,7 +1991,7 @@ mod tests {
   #[test]
   fn test_move_down_clamps() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     let max = app.visible_entries().len() - 1;
     for _ in 0..100 {
       app.update(Action::MoveDown).unwrap();
@@ -1937,7 +2003,7 @@ mod tests {
   #[test]
   fn test_go_to_top_bottom() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     let max = app.visible_entries().len() - 1;
     app.update(Action::GoToBottom).unwrap();
     assert_eq!(app.cursor, max);
@@ -1949,7 +2015,7 @@ mod tests {
   #[test]
   fn test_toggle_hidden() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     let initial_count = app.tree.entries.len();
     assert!(!app.tree.show_hidden);
     // Hidden files should not be shown
@@ -1967,7 +2033,7 @@ mod tests {
   #[test]
   fn test_quit() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(!app.should_quit);
     app.update(Action::Quit).unwrap();
     assert!(app.should_quit);
@@ -1977,7 +2043,7 @@ mod tests {
   #[test]
   fn test_search_filter() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::SearchStart).unwrap();
     assert_eq!(app.input_mode, InputMode::Search);
 
@@ -2002,7 +2068,7 @@ mod tests {
     let dir = setup_test_dir();
     // Create a file inside aaa_dir
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // First entry should be a directory (dirs come first)
     assert!(app.tree.entries[0].is_dir);
@@ -2027,7 +2093,7 @@ mod tests {
   fn test_go_parent() {
     let dir = setup_test_dir();
     let child_dir = dir.join("aaa_dir");
-    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(child_dir.clone(), None, &cfg(), None).unwrap();
     assert_eq!(app.tree.root, child_dir);
 
     // Navigate to parent (cursor is on a non-expanded dir or file)
@@ -2040,7 +2106,7 @@ mod tests {
   #[test]
   fn test_visible_entries_with_search() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Without search, all entries visible
     assert_eq!(app.visible_entries().len(), app.tree.entries.len());
@@ -2059,7 +2125,7 @@ mod tests {
   #[test]
   fn test_g_prefix_mode() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::MoveDown).unwrap();
     app.update(Action::MoveDown).unwrap();
     assert!(app.cursor > 0);
@@ -2078,7 +2144,7 @@ mod tests {
   #[test]
   fn test_open_editor_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file (after dirs)
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2092,7 +2158,7 @@ mod tests {
   #[test]
   fn test_open_claude_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::OpenClaude).unwrap();
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::Claude(_, false))));
@@ -2102,7 +2168,7 @@ mod tests {
   #[test]
   fn test_open_claude_alt_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::OpenClaudeAlt).unwrap();
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::Claude(_, true))));
@@ -2114,7 +2180,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut c = cfg();
     c.claude_yolo = true;
-    let mut app = App::new(dir.clone(), None, &c).unwrap();
+    let mut app = App::new(dir.clone(), None, &c, None).unwrap();
 
     // OpenClaude should pass yolo=true when config is true
     app.update(Action::OpenClaude).unwrap();
@@ -2131,7 +2197,7 @@ mod tests {
   #[test]
   fn test_apply_config_syncs_claude_yolo() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(!app.claude_yolo);
 
     let mut c = cfg();
@@ -2144,7 +2210,7 @@ mod tests {
   #[test]
   fn test_open_shell_suspend() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::OpenShell).unwrap();
     let suspend = app.handle_suspend();
     assert!(matches!(suspend, Some(SuspendAction::Shell(_))));
@@ -2155,7 +2221,7 @@ mod tests {
   fn test_enter_dir_changes_root() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // First entry should be aaa_dir (dirs first, alphabetical)
     assert!(app.tree.entries[0].is_dir);
     assert_eq!(app.tree.entries[0].name, "aaa_dir");
@@ -2171,7 +2237,7 @@ mod tests {
   #[test]
   fn test_enter_dir_on_file_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move cursor to a file (past the dirs)
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2186,7 +2252,7 @@ mod tests {
   fn test_move_right_only_expands() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(app.tree.entries[0].is_dir);
     assert!(!app.tree.entries[0].expanded);
 
@@ -2204,7 +2270,7 @@ mod tests {
   fn test_go_parent_clears_search_query() {
     let dir = setup_test_dir();
     let child_dir = dir.join("aaa_dir");
-    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(child_dir.clone(), None, &cfg(), None).unwrap();
 
     // Set a search filter
     app.search_query = "nonexistent".to_string();
@@ -2224,7 +2290,7 @@ mod tests {
   fn test_enter_dir_clears_search_query() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Search for "aaa" to filter to the dir
     app.search_query = "aaa".to_string();
@@ -2243,7 +2309,7 @@ mod tests {
   fn test_search_confirm_enters_directory() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Search for "aaa" — should filter to just aaa_dir
     app.update(Action::SearchStart).unwrap();
@@ -2264,7 +2330,7 @@ mod tests {
   #[test]
   fn test_search_confirm_on_file_clears_query() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Search for "bbb" — should filter to just bbb.txt
     app.update(Action::SearchStart).unwrap();
@@ -2284,7 +2350,7 @@ mod tests {
   #[test]
   fn test_toggle_help() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(!app.show_help);
     assert_eq!(app.input_mode, InputMode::Normal);
 
@@ -2303,7 +2369,7 @@ mod tests {
   fn test_toggle_expand_still_toggles() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(!app.tree.entries[0].expanded);
 
     // ToggleExpand should expand
@@ -2319,7 +2385,7 @@ mod tests {
   #[test]
   fn test_cut_stores_path_in_clipboard() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2335,7 +2401,7 @@ mod tests {
   #[test]
   fn test_copy_stores_path_in_clipboard() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2350,7 +2416,7 @@ mod tests {
   #[test]
   fn test_paste_copy_creates_new_file() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to bbb.txt
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
@@ -2371,7 +2437,7 @@ mod tests {
   #[test]
   fn test_paste_cut_moves_file() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to bbb.txt
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
@@ -2394,7 +2460,7 @@ mod tests {
     let dir = setup_test_dir();
     // Create bbb.txt inside aaa_dir to cause conflict
     fs::write(dir.join("aaa_dir").join("bbb.txt"), "existing").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Copy bbb.txt
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
@@ -2415,7 +2481,7 @@ mod tests {
   #[test]
   fn test_paste_empty_clipboard_shows_message() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::Paste).unwrap();
     assert_eq!(app.status_message.as_deref(), Some("Nothing to paste"));
     cleanup_test_dir(&dir);
@@ -2424,7 +2490,7 @@ mod tests {
   #[test]
   fn test_cut_paste_same_dir_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to bbb.txt
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
@@ -2441,7 +2507,7 @@ mod tests {
   #[test]
   fn test_delete_with_y_confirmation() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to bbb.txt
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
@@ -2462,7 +2528,7 @@ mod tests {
   #[test]
   fn test_delete_cancel_does_not_remove() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2477,7 +2543,7 @@ mod tests {
   #[test]
   fn test_delete_cancel_with_esc() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2491,7 +2557,7 @@ mod tests {
   #[test]
   fn test_rename_file() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2513,7 +2579,7 @@ mod tests {
   #[test]
   fn test_rename_to_existing_shows_error() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2530,7 +2596,7 @@ mod tests {
   #[test]
   fn test_new_file_creation() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file so current_dir() returns the root
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2550,7 +2616,7 @@ mod tests {
   #[test]
   fn test_new_dir_creation() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file so current_dir() returns the root
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2570,7 +2636,7 @@ mod tests {
   #[test]
   fn test_empty_name_rejected() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::NewFileStart).unwrap();
     app.prompt_input = "  ".to_string();
     app.update(Action::PromptConfirm).unwrap();
@@ -2582,7 +2648,7 @@ mod tests {
   #[test]
   fn test_prompt_cancel_returns_to_normal() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::NewFileStart).unwrap();
     assert_eq!(app.input_mode, InputMode::Prompt);
     app.update(Action::PromptCancel).unwrap();
@@ -2595,7 +2661,7 @@ mod tests {
   #[test]
   fn test_cursor_repositions_after_rename() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "bbb.txt") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2613,7 +2679,7 @@ mod tests {
   fn test_open_default_on_dir_enters() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // First entry is aaa_dir
     assert!(app.tree.entries[0].is_dir);
     let old_root = app.tree.root.clone();
@@ -2627,7 +2693,7 @@ mod tests {
   #[test]
   fn test_open_with_start_on_file() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2641,7 +2707,7 @@ mod tests {
   #[test]
   fn test_open_with_start_on_dir() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // First entry is a dir
     assert!(app.selected_entry().unwrap().is_dir);
     app.update(Action::OpenWithStart).unwrap();
@@ -2652,7 +2718,7 @@ mod tests {
   #[test]
   fn test_open_with_dir_variants_on_file() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Inject a custom app with opens_dir
     app.custom_apps = vec![OpenApp {
       name: "TestIDE".into(),
@@ -2678,7 +2744,7 @@ mod tests {
   #[test]
   fn test_open_with_no_dir_variants_on_dir() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.custom_apps = vec![OpenApp {
       name: "TestIDE".into(),
       command: "which".into(),
@@ -2699,7 +2765,7 @@ mod tests {
   #[test]
   fn test_open_with_cursor_movement() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2723,7 +2789,7 @@ mod tests {
   #[test]
   fn test_open_with_close() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2737,7 +2803,7 @@ mod tests {
   #[test]
   fn test_open_with_select_tui_suspends() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -2763,7 +2829,7 @@ mod tests {
   #[test]
   fn test_apply_config_updates_custom_apps() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(app.custom_apps.is_empty());
 
     let mut c = cfg();
@@ -2784,7 +2850,7 @@ mod tests {
   #[test]
   fn test_reload_favorites_clamps_cursor() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Manually set cursor past what reload will return
     app.favorites_cursor = 100;
     app.reload_favorites();
@@ -2799,7 +2865,7 @@ mod tests {
   #[test]
   fn test_reload_favorites_empty() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Clear favorites and set cursor
     app.favorites_cursor = 5;
     app.reload_favorites();
@@ -2814,7 +2880,7 @@ mod tests {
   fn test_move_left_to_parent_in_tree() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Expand aaa_dir
     assert_eq!(app.tree.entries[0].name, "aaa_dir");
@@ -2845,7 +2911,7 @@ mod tests {
     // Create nested structure: aaa_dir/subdir/file.txt
     fs::create_dir_all(dir.join("aaa_dir").join("subdir")).unwrap();
     fs::write(dir.join("aaa_dir").join("subdir").join("file.txt"), "data").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Expand aaa_dir
     app.update(Action::MoveRight).unwrap();
@@ -2871,7 +2937,7 @@ mod tests {
   fn test_move_left_with_search_parent_hidden() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Expand aaa_dir
     app.update(Action::MoveRight).unwrap();
@@ -2898,7 +2964,7 @@ mod tests {
     // Create nested structure: aaa_dir/subdir/file.txt
     fs::create_dir_all(dir.join("aaa_dir").join("subdir")).unwrap();
     fs::write(dir.join("aaa_dir").join("subdir").join("file.txt"), "data").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Expand aaa_dir
     app.update(Action::MoveRight).unwrap();
@@ -2931,7 +2997,7 @@ mod tests {
   #[test]
   fn test_extract_archive_non_archive_shows_status() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a text file
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -2947,7 +3013,7 @@ mod tests {
   fn test_history_back_returns_to_previous_dir() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Start in root dir
     assert_eq!(app.tree.root, dir);
@@ -2968,7 +3034,7 @@ mod tests {
   #[test]
   fn test_breadcrumb_segments_initialized() {
     let dir = setup_test_dir();
-    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Breadcrumb segments should be populated
     assert!(!app.breadcrumb_segments.is_empty());
     // Last segment should point to the root path
@@ -2982,7 +3048,7 @@ mod tests {
   #[test]
   fn test_app_starts_in_single_pane_mode() {
     let dir = setup_test_dir();
-    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(!app.dual_pane_mode);
     assert_eq!(app.active_pane, 0);
     assert!(app.right_pane.is_none());
@@ -2992,7 +3058,7 @@ mod tests {
   #[test]
   fn test_toggle_blame() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(!app.preview.blame_enabled);
 
     app.update(Action::ToggleBlame).unwrap();
@@ -3007,7 +3073,7 @@ mod tests {
   #[test]
   fn test_toggle_dual_pane_enables_mode() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ToggleDualPane).unwrap();
     assert!(app.dual_pane_mode);
     assert_eq!(app.active_pane, 0);
@@ -3018,7 +3084,7 @@ mod tests {
   #[test]
   fn test_chmod_start_opens_dialog() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -3034,7 +3100,7 @@ mod tests {
   #[test]
   fn test_show_properties_opens_properties_mode() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file
     while app.selected_entry().map_or(true, |e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
@@ -3048,7 +3114,7 @@ mod tests {
   #[test]
   fn test_toggle_dual_pane_twice_disables_mode() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ToggleDualPane).unwrap();
     assert!(app.dual_pane_mode);
     app.update(Action::ToggleDualPane).unwrap();
@@ -3062,7 +3128,7 @@ mod tests {
   fn test_history_forward_after_back() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Enter aaa_dir
     app.update(Action::EnterDir).unwrap();
@@ -3095,7 +3161,7 @@ mod tests {
       zip.finish().unwrap();
     }
 
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Find and select the zip file
     while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
@@ -3140,7 +3206,7 @@ mod tests {
     fs::write(dir.join("debug.log"), "log").unwrap();
 
     let config = cfg_with_ignore_patterns(&["*.log"]);
-    let app = App::new(dir.clone(), None, &config).unwrap();
+    let app = App::new(dir.clone(), None, &config, None).unwrap();
 
     // .log file should be hidden by default
     assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".log")));
@@ -3151,7 +3217,7 @@ mod tests {
   #[test]
   fn test_chmod_start_on_dir() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // First entry is a dir
     assert!(app.selected_entry().unwrap().is_dir);
     app.update(Action::ChmodStart).unwrap();
@@ -3163,7 +3229,7 @@ mod tests {
   #[test]
   fn test_show_properties_for_directory() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // First entry should be a directory
     assert!(app.selected_entry().unwrap().is_dir);
     app.update(Action::ShowProperties).unwrap();
@@ -3176,7 +3242,7 @@ mod tests {
   #[test]
   fn test_switch_pane_in_single_mode_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert_eq!(app.active_pane, 0);
     app.update(Action::SwitchPane).unwrap();
     assert_eq!(app.active_pane, 0); // Should not change
@@ -3189,7 +3255,7 @@ mod tests {
     fs::write(dir.join("debug.log"), "log").unwrap();
 
     let config = cfg_with_ignore_patterns(&["*.log"]);
-    let mut app = App::new(dir.clone(), None, &config).unwrap();
+    let mut app = App::new(dir.clone(), None, &config, None).unwrap();
 
     // Initially hidden
     assert!(!app.tree.entries.iter().any(|e| e.name.ends_with(".log")));
@@ -3224,7 +3290,7 @@ mod tests {
       zip.finish().unwrap();
     }
 
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -3244,7 +3310,7 @@ mod tests {
   #[test]
   fn test_chmod_toggle_bit() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -3263,7 +3329,7 @@ mod tests {
   #[test]
   fn test_switch_pane_toggles_active_pane() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ToggleDualPane).unwrap();
     assert_eq!(app.active_pane, 0);
 
@@ -3278,7 +3344,7 @@ mod tests {
   #[test]
   fn test_chmod_toggle_recursive_only_for_dirs() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -3292,7 +3358,7 @@ mod tests {
   #[test]
   fn test_right_pane_initialized_with_same_root() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ToggleDualPane).unwrap();
 
     let right_pane = app.right_pane.as_ref().unwrap();
@@ -3303,7 +3369,7 @@ mod tests {
   #[test]
   fn test_chmod_toggle_recursive_for_dirs() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // First entry is a dir
     assert!(app.selected_entry().unwrap().is_dir);
     app.update(Action::ChmodStart).unwrap();
@@ -3317,7 +3383,7 @@ mod tests {
   #[test]
   fn test_pane_navigates_independently() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ToggleDualPane).unwrap();
 
     // Move left pane cursor
@@ -3336,7 +3402,7 @@ mod tests {
   #[test]
   fn test_chmod_close() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ChmodStart).unwrap();
     assert_eq!(app.input_mode, InputMode::Chmod);
     app.update(Action::ChmodClose).unwrap();
@@ -3347,7 +3413,7 @@ mod tests {
   #[test]
   fn test_inactive_pane_dir_returns_none_in_single_mode() {
     let dir = setup_test_dir();
-    let app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(app.inactive_pane_dir().is_none());
     cleanup_test_dir(&dir);
   }
@@ -3355,7 +3421,7 @@ mod tests {
   #[test]
   fn test_inactive_pane_dir_returns_other_pane_root() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ToggleDualPane).unwrap();
 
     // Active pane is left (0), inactive is right
@@ -3388,7 +3454,7 @@ mod tests {
       zip.finish().unwrap();
     }
 
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.name != "test.zip") {
       app.update(Action::MoveDown).unwrap();
     }
@@ -3414,7 +3480,7 @@ mod tests {
   #[test]
   fn test_chmod_apply_changes_permissions() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
@@ -3434,7 +3500,7 @@ mod tests {
   #[test]
   fn test_chmod_toggle_octal_mode() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ChmodStart).unwrap();
     assert!(!app.chmod_state.octal_mode);
     app.update(Action::ChmodToggleOctal).unwrap();
@@ -3449,7 +3515,7 @@ mod tests {
     let dir = setup_test_dir();
     // Create file inside aaa_dir
     fs::write(dir.join("aaa_dir").join("inner.txt"), "content").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Select aaa_dir
     assert_eq!(app.tree.entries[0].name, "aaa_dir");
@@ -3474,7 +3540,7 @@ mod tests {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
     fs::write(dir.join("zzz_dir").join("other.txt"), "other").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Enter aaa_dir
     app.update(Action::EnterDir).unwrap();
@@ -3508,7 +3574,7 @@ mod tests {
       current = subdir;
     }
 
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Navigate through all 60 directories
     for _ in 0..60 {
@@ -3541,7 +3607,7 @@ mod tests {
   fn test_history_skips_duplicates() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "inner").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Enter aaa_dir
     app.update(Action::EnterDir).unwrap();
@@ -3573,7 +3639,7 @@ mod tests {
     fs::write(dir.join("test.tmp"), "tmp").unwrap();
 
     // Start with no matching patterns (default patterns don't include *.tmp)
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     assert!(app.tree.entries.iter().any(|e| e.name == "test.tmp"));
 
     // Apply config with ignore patterns that include *.tmp
@@ -3590,7 +3656,7 @@ mod tests {
   fn test_go_parent_adds_to_history() {
     let dir = setup_test_dir();
     let child_dir = dir.join("aaa_dir");
-    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(child_dir.clone(), None, &cfg(), None).unwrap();
     assert_eq!(app.tree.root, child_dir);
 
     // Go to parent via MoveLeft
@@ -3613,7 +3679,7 @@ mod tests {
     let dir = setup_test_dir();
     let child_dir = dir.join("aaa_dir");
     fs::write(child_dir.join("inner.txt"), "data").unwrap();
-    let mut app = App::new(child_dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(child_dir.clone(), None, &cfg(), None).unwrap();
     assert_eq!(app.tree.root, child_dir);
 
     // Find the parent segment index (the one before last)
@@ -3632,7 +3698,7 @@ mod tests {
   #[test]
   fn test_go_home_adds_to_history() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Go home
     app.update(Action::GoHome).unwrap();
@@ -3648,7 +3714,7 @@ mod tests {
   fn test_favorites_select_adds_to_history() {
     let dir = setup_test_dir();
     let target = dir.join("aaa_dir");
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // Add target to favorites and select it
     app.favorites.add(target.clone());
@@ -3668,7 +3734,7 @@ mod tests {
   #[test]
   fn test_history_back_on_empty_history_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // No navigation yet, history should be empty
     let root_before = app.tree.root.clone();
@@ -3681,7 +3747,7 @@ mod tests {
   #[test]
   fn test_breadcrumb_select_current_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     let root_before = app.tree.root.clone();
 
     // Select the last segment (current directory)
@@ -3696,7 +3762,7 @@ mod tests {
   #[test]
   fn test_history_forward_on_empty_forward_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     // No navigation yet
     let root_before = app.tree.root.clone();
@@ -3709,7 +3775,7 @@ mod tests {
   #[test]
   fn test_breadcrumb_select_out_of_bounds_is_noop() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     let root_before = app.tree.root.clone();
 
     // Select an index way out of bounds
@@ -3723,7 +3789,7 @@ mod tests {
   #[test]
   fn test_toggle_blame_resets_scroll() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.preview.scroll_offset = 10;
 
     app.update(Action::ToggleBlame).unwrap();
@@ -3736,7 +3802,7 @@ mod tests {
   fn test_breadcrumb_updates_on_enter_dir() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     let initial_len = app.breadcrumb_segments.len();
 
@@ -3755,7 +3821,7 @@ mod tests {
   fn test_history_back_updates_breadcrumbs() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     let initial_len = app.breadcrumb_segments.len();
 
@@ -3777,7 +3843,7 @@ mod tests {
   fn test_history_forward_updates_breadcrumbs() {
     let dir = setup_test_dir();
     fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
 
     let initial_len = app.breadcrumb_segments.len();
 
@@ -3802,7 +3868,7 @@ mod tests {
   #[test]
   fn test_toggle_preserves_left_pane_state() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move cursor and expand a dir
     app.update(Action::MoveDown).unwrap();
     let cursor_before = app.cursor;
@@ -3820,12 +3886,73 @@ mod tests {
   #[test]
   fn test_properties_close() {
     let dir = setup_test_dir();
-    let mut app = App::new(dir.clone(), None, &cfg()).unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     app.update(Action::ShowProperties).unwrap();
     assert_eq!(app.input_mode, InputMode::Properties);
     app.update(Action::PropertiesClose).unwrap();
     assert_eq!(app.input_mode, InputMode::Normal);
     assert!(app.file_properties.is_none());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_picker_file_selects_and_quits() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    // Move to a file (first entry is aaa_dir, second should be a file)
+    // Find a file entry
+    let file_idx = app.tree.entries.iter().position(|e| !e.is_dir);
+    if let Some(idx) = file_idx {
+      app.cursor = idx;
+      app.update(Action::EnterDir).unwrap();
+      assert!(app.should_quit);
+      assert!(app.picked_path.is_some());
+    }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_picker_dir_navigates() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    let old_root = app.tree.root.clone();
+    // First entry should be aaa_dir (dirs first)
+    app.cursor = 0;
+    assert!(app.tree.entries[0].is_dir);
+    app.update(Action::EnterDir).unwrap();
+    assert!(!app.should_quit);
+    assert!(app.picked_path.is_none());
+    assert_ne!(app.tree.root, old_root);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_picker_quit_leaves_no_picked_path() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    app.update(Action::Quit).unwrap();
+    assert!(app.should_quit);
+    assert!(app.picked_path.is_none());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_picker_search_confirm_picks_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    // Search for a file
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchInput('b')).unwrap();
+    // After search, cursor should be on a matching entry
+    let entries = app.visible_entries();
+    if !entries.is_empty() {
+      let idx = entries[app.cursor];
+      if !app.tree.entries[idx].is_dir {
+        app.update(Action::SearchConfirm).unwrap();
+        assert!(app.should_quit);
+        assert!(app.picked_path.is_some());
+      }
+    }
     cleanup_test_dir(&dir);
   }
 }

@@ -26,7 +26,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 
-use crate::app::{App, SuspendAction};
+use crate::app::{App, PickerOutput, SuspendAction};
 use crate::event::{Event, EventLoop, map_breadcrumb_click, map_key};
 
 fn main() -> Result<()> {
@@ -37,6 +37,16 @@ fn main() -> Result<()> {
   let mut show_version = false;
   let mut show_init = false;
   let mut show_hidden = false;
+  let mut pick_stdout = false;
+  let mut chooser_file: Option<String> = None;
+  #[cfg(target_os = "linux")]
+  let mut install_handler = false;
+  #[cfg(target_os = "linux")]
+  let mut uninstall_handler = false;
+  #[cfg(target_os = "linux")]
+  let mut install_portal = false;
+  #[cfg(target_os = "linux")]
+  let mut uninstall_portal = false;
   let mut path_arg: Option<String> = None;
 
   for arg in &args {
@@ -45,6 +55,23 @@ fn main() -> Result<()> {
       "--version" | "-V" => show_version = true,
       "--init" => show_init = true,
       "--all" | "-a" => show_hidden = true,
+      "--pick" => pick_stdout = true,
+      a if a.starts_with("--chooser-file=") => {
+        chooser_file = Some(a.strip_prefix("--chooser-file=").unwrap().to_string());
+      }
+      #[cfg(target_os = "linux")]
+      "--install-handler" => install_handler = true,
+      #[cfg(target_os = "linux")]
+      "--uninstall-handler" => uninstall_handler = true,
+      #[cfg(target_os = "linux")]
+      "--install-portal" => install_portal = true,
+      #[cfg(target_os = "linux")]
+      "--uninstall-portal" => uninstall_portal = true,
+      #[cfg(not(target_os = "linux"))]
+      "--install-handler" | "--uninstall-handler" | "--install-portal" | "--uninstall-portal" => {
+        eprintln!("tfl: {arg} is only supported on Linux");
+        std::process::exit(1);
+      }
       a if !a.starts_with('-') => path_arg = Some(a.to_string()),
       _ => {
         eprintln!("tfl: unknown option '{arg}'");
@@ -61,10 +88,16 @@ tfl - terminal file explorer
 Usage: tfl [options] [path]
 
 Options:
-  -a, --all      Show hidden files
-  --init         Write default config.toml and apps.toml to ~/.config/tfl/
-  -h, --help     Print this help message
-  -V, --version  Print version
+  -a, --all                Show hidden files
+  --pick                   File picker mode: print selected path to stdout
+  --chooser-file=PATH      File picker mode: write selected path to PATH
+  --install-handler        Set tfl as default file manager (Linux)
+  --uninstall-handler      Restore previous default file manager (Linux)
+  --install-portal         Set up file dialog integration (Linux)
+  --uninstall-portal       Restore previous file dialog config (Linux)
+  --init                   Write default config files to ~/.config/tfl/
+  -h, --help               Print this help message
+  -V, --version            Print version
 
 If no path is given, opens the current directory."
     );
@@ -74,6 +107,22 @@ If no path is given, opens the current directory."
   if show_version {
     println!("tfl {}", env!("CARGO_PKG_VERSION"));
     return Ok(());
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    if install_handler {
+      return handler::install();
+    }
+    if uninstall_handler {
+      return handler::uninstall();
+    }
+    if install_portal {
+      return portal::install();
+    }
+    if uninstall_portal {
+      return portal::uninstall();
+    }
   }
 
   if show_init {
@@ -134,6 +183,13 @@ If no path is given, opens the current directory."
     return Ok(());
   }
 
+  // Determine picker mode
+  let picker_mode = if pick_stdout {
+    Some(PickerOutput::Stdout)
+  } else {
+    chooser_file.map(|path| PickerOutput::ChooserFile(PathBuf::from(path)))
+  };
+
   let (mut config, config_errors) = config::Config::load();
   let config_dir = dirs::config_dir().map(|d| d.join("tfl"));
 
@@ -157,7 +213,7 @@ If no path is given, opens the current directory."
   let backend = CrosstermBackend::new(io::stdout());
   let mut terminal = Terminal::new(backend)?;
 
-  let mut app = App::new(root, picker, &config)?;
+  let mut app = App::new(root, picker, &config, picker_mode)?;
 
   if show_hidden {
     app.tree.show_hidden = true;
@@ -243,6 +299,17 @@ If no path is given, opens the current directory."
   }
 
   restore_terminal()?;
+
+  // Handle picker output
+  let is_picker = app.picker_mode.is_some();
+  if let Err(e) = app.write_picked_path() {
+    eprintln!("tfl: {e}");
+    std::process::exit(1);
+  }
+  if is_picker && app.picked_path.is_none() {
+    std::process::exit(1);
+  }
+
   Ok(())
 }
 
@@ -293,4 +360,272 @@ fn suspend_and_resume(
   let backend = CrosstermBackend::new(io::stdout());
   let terminal = Terminal::new(backend)?;
   Ok(terminal)
+}
+
+/// Returns the backup directory for handler/portal operations.
+#[cfg(target_os = "linux")]
+fn backup_dir() -> Result<PathBuf> {
+  let dir = dirs::config_dir()
+    .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?
+    .join("tfl")
+    .join("handler-backup");
+  std::fs::create_dir_all(&dir)?;
+  Ok(dir)
+}
+
+#[cfg(target_os = "linux")]
+mod handler {
+  use std::path::PathBuf;
+  use std::process::Command;
+
+  use anyhow::Result;
+
+  const DESKTOP_ENTRY: &str = "\
+[Desktop Entry]
+Type=Application
+Name=tfl
+GenericName=File Manager
+Comment=Terminal file explorer with vim-style navigation
+Exec=tfl %f
+Icon=system-file-manager
+Terminal=true
+Categories=System;FileManager;ConsoleOnly;
+MimeType=inode/directory;
+";
+
+  pub fn install() -> Result<()> {
+    let backup = super::backup_dir()?;
+
+    // Query current default handler
+    let output = Command::new("xdg-mime")
+      .args(["query", "default", "inode/directory"])
+      .output()?;
+    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !current.is_empty() && current != "tfl.desktop" {
+      let backup_file = backup.join("mime-handler");
+      std::fs::write(&backup_file, &current)?;
+      println!("Backed up current handler: {current}");
+    }
+
+    // Write desktop file
+    let apps_dir = dirs::data_dir()
+      .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))?
+      .join("applications");
+    std::fs::create_dir_all(&apps_dir)?;
+    let desktop_path = apps_dir.join("tfl.desktop");
+    std::fs::write(&desktop_path, DESKTOP_ENTRY)?;
+    println!("Installed: {}", desktop_path.display());
+
+    // Set as default
+    let status = Command::new("xdg-mime")
+      .args(["default", "tfl.desktop", "inode/directory"])
+      .status()?;
+    if !status.success() {
+      anyhow::bail!("xdg-mime default failed");
+    }
+    println!("Set tfl as default file manager for inode/directory");
+
+    Ok(())
+  }
+
+  pub fn uninstall() -> Result<()> {
+    let backup = super::backup_dir()?;
+    let backup_file = backup.join("mime-handler");
+
+    // Restore previous handler
+    if backup_file.exists() {
+      let old_handler = std::fs::read_to_string(&backup_file)?.trim().to_string();
+      if !old_handler.is_empty() {
+        let status = Command::new("xdg-mime")
+          .args(["default", &old_handler, "inode/directory"])
+          .status()?;
+        if !status.success() {
+          anyhow::bail!("xdg-mime default failed");
+        }
+        println!("Restored default handler: {old_handler}");
+      }
+      std::fs::remove_file(&backup_file)?;
+    } else {
+      println!("No backup found — nothing to restore");
+    }
+
+    // Remove desktop file
+    let desktop_path: PathBuf = dirs::data_dir()
+      .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))?
+      .join("applications")
+      .join("tfl.desktop");
+    if desktop_path.exists() {
+      std::fs::remove_file(&desktop_path)?;
+      println!("Removed: {}", desktop_path.display());
+    }
+
+    Ok(())
+  }
+}
+
+#[cfg(target_os = "linux")]
+mod portal {
+  use std::path::PathBuf;
+
+  use anyhow::Result;
+
+  const WRAPPER_SCRIPT: &str = r#"#!/bin/bash
+# tfl wrapper for xdg-desktop-portal-termfilechooser
+# Args: $1=multiple $2=directory $3=save $4=path $5=out_file $6=debug
+set -euo pipefail
+
+multiple="$1"
+directory="$2"
+save="$3"
+path="$4"
+out="$5"
+
+if [ "$save" = "1" ]; then
+  dir="$(dirname "$path")"
+  tfl --chooser-file="$out" "$dir"
+elif [ "$directory" = "1" ]; then
+  tfl --chooser-file="$out" "${path:-.}"
+else
+  tfl --chooser-file="$out" "${path:-.}"
+fi
+"#;
+
+  fn find_portal_file() -> bool {
+    let search_dirs = [
+      "/usr/share/xdg-desktop-portal/portals",
+      "/usr/lib/xdg-desktop-portal/portals",
+    ];
+    for dir in &search_dirs {
+      let path = PathBuf::from(dir).join("termfilechooser.portal");
+      if path.exists() {
+        return true;
+      }
+    }
+    false
+  }
+
+  pub fn install() -> Result<()> {
+    if !find_portal_file() {
+      anyhow::bail!(
+        "xdg-desktop-portal-termfilechooser not found.\n\
+         Install it first: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser"
+      );
+    }
+
+    let backup = super::backup_dir()?;
+    let config_home = dirs::config_dir()
+      .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
+
+    // termfilechooser config dir
+    let tfc_dir = config_home.join("xdg-desktop-portal-termfilechooser");
+    std::fs::create_dir_all(&tfc_dir)?;
+
+    // Backup existing termfilechooser config
+    let tfc_config = tfc_dir.join("config");
+    if tfc_config.exists() {
+      let backup_file = backup.join("termfilechooser-config");
+      std::fs::copy(&tfc_config, &backup_file)?;
+      println!("Backed up: {}", tfc_config.display());
+    }
+
+    // Backup existing portals.conf
+    let portal_dir = config_home.join("xdg-desktop-portal");
+    std::fs::create_dir_all(&portal_dir)?;
+    let portals_conf = portal_dir.join("portals.conf");
+    if portals_conf.exists() {
+      let backup_file = backup.join("portals.conf");
+      std::fs::copy(&portals_conf, &backup_file)?;
+      println!("Backed up: {}", portals_conf.display());
+    }
+
+    // Write wrapper script
+    let wrapper_path = tfc_dir.join("tfl-wrapper.sh");
+    std::fs::write(&wrapper_path, WRAPPER_SCRIPT)?;
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      std::fs::set_permissions(&wrapper_path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    println!("Installed: {}", wrapper_path.display());
+
+    // Write termfilechooser config
+    std::fs::write(&tfc_config, "[filechooser]\ncmd=tfl-wrapper.sh\n")?;
+    println!("Wrote: {}", tfc_config.display());
+
+    // Update portals.conf
+    let portal_key = "org.freedesktop.impl.portal.FileChooser";
+    let portal_value = "termfilechooser";
+    let new_line = format!("{portal_key}={portal_value}");
+
+    if portals_conf.exists() {
+      let content = std::fs::read_to_string(&portals_conf)?;
+      if content.contains(portal_key) {
+        // Replace existing line
+        let updated: Vec<String> = content
+          .lines()
+          .map(|line| {
+            if line.trim_start().starts_with(portal_key) {
+              new_line.clone()
+            } else {
+              line.to_string()
+            }
+          })
+          .collect();
+        std::fs::write(&portals_conf, updated.join("\n") + "\n")?;
+      } else {
+        // Append to file
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&portals_conf)?;
+        writeln!(f, "{new_line}")?;
+      }
+    } else {
+      std::fs::write(&portals_conf, format!("[preferred]\n{new_line}\n"))?;
+    }
+    println!("Updated: {}", portals_conf.display());
+    println!("\nRestart the portal to apply: systemctl --user restart xdg-desktop-portal");
+
+    Ok(())
+  }
+
+  pub fn uninstall() -> Result<()> {
+    let backup = super::backup_dir()?;
+    let config_home = dirs::config_dir()
+      .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
+
+    let tfc_dir = config_home.join("xdg-desktop-portal-termfilechooser");
+
+    // Restore termfilechooser config
+    let backup_tfc = backup.join("termfilechooser-config");
+    let tfc_config = tfc_dir.join("config");
+    if backup_tfc.exists() {
+      std::fs::copy(&backup_tfc, &tfc_config)?;
+      std::fs::remove_file(&backup_tfc)?;
+      println!("Restored: {}", tfc_config.display());
+    } else if tfc_config.exists() {
+      std::fs::remove_file(&tfc_config)?;
+      println!("Removed: {}", tfc_config.display());
+    }
+
+    // Restore portals.conf
+    let portal_dir = config_home.join("xdg-desktop-portal");
+    let portals_conf = portal_dir.join("portals.conf");
+    let backup_portals = backup.join("portals.conf");
+    if backup_portals.exists() {
+      std::fs::copy(&backup_portals, &portals_conf)?;
+      std::fs::remove_file(&backup_portals)?;
+      println!("Restored: {}", portals_conf.display());
+    }
+
+    // Remove wrapper script
+    let wrapper_path = tfc_dir.join("tfl-wrapper.sh");
+    if wrapper_path.exists() {
+      std::fs::remove_file(&wrapper_path)?;
+      println!("Removed: {}", wrapper_path.display());
+    }
+
+    println!("\nRestart the portal to apply: systemctl --user restart xdg-desktop-portal");
+
+    Ok(())
+  }
 }

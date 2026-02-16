@@ -167,21 +167,34 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
       ])
     }
     InputMode::Normal => {
-      if let Some(ref msg) = app.status_message {
-        Line::from(vec![
-          Span::styled(format!(" {msg}"), Style::default().fg(Color::Indexed(150))),
-        ])
-      } else if let Some(entry) = app.selected_entry() {
-        let mut spans = vec![
+      let pick_badge: Vec<Span<'static>> = if app.picker_mode.is_some() {
+        vec![
           Span::styled(
+            " PICK ",
+            Style::default()
+              .fg(Color::Indexed(234))
+              .bg(Color::Indexed(208))
+              .add_modifier(Modifier::BOLD),
+          ),
+        ]
+      } else {
+        vec![]
+      };
+
+      if let Some(ref msg) = app.status_message {
+        let mut spans = pick_badge;
+        spans.push(Span::styled(format!(" {msg}"), Style::default().fg(Color::Indexed(150))));
+        Line::from(spans)
+      } else if let Some(entry) = app.selected_entry() {
+        let mut spans = pick_badge;
+        spans.push(Span::styled(
             format!(" {}", entry.name),
             Style::default().fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
-          ),
-          Span::styled(
+          ));
+        spans.push(Span::styled(
             format!(" | {}", format_size(entry.size)),
             Style::default().fg(Color::DarkGray),
-          ),
-        ];
+          ));
 
         // Per-file git status label
         if let Some(label) = git_status_label(&entry.git_status) {
@@ -260,9 +273,9 @@ pub fn render_status_bar(app: &App, area: Rect, buf: &mut Buffer) {
 
         Line::from(spans)
       } else {
-        Line::from(vec![
-          Span::styled(" No selection", Style::default().fg(Color::DarkGray)),
-        ])
+        let mut spans = pick_badge;
+        spans.push(Span::styled(" No selection", Style::default().fg(Color::DarkGray)));
+        Line::from(spans)
       }
     }
   };
