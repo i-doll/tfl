@@ -840,8 +840,8 @@ impl App {
     Ok(())
   }
 
-  /// Returns the inactive pane's current directory (for copy/move destination)
-  #[allow(dead_code)] // Used in tests, will be used for copy/move operations
+  /// Returns the inactive pane's current directory.
+  #[cfg(test)]
   pub fn inactive_pane_dir(&self) -> Option<PathBuf> {
     if !self.dual_pane_mode {
       return None;
@@ -3464,7 +3464,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ShowProperties).unwrap();

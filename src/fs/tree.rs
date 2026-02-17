@@ -66,7 +66,6 @@ pub struct FileTree {
 }
 
 impl FileTree {
-  #[allow(dead_code)] // Used in tests only
   pub fn new(root: PathBuf) -> Result<Self> {
     Self::with_ignore_patterns(root, GlobSet::empty())
   }

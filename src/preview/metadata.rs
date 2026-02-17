@@ -5,7 +5,6 @@ use std::time::SystemTime;
 
 use crate::git::{GitCommit, GitRepo};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
   pub size: u64,
@@ -25,11 +24,9 @@ pub struct ImageMetadata {
   pub exif: Option<ExifData>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ExifData {
   pub camera: Option<String>,
-  pub date_taken: Option<String>,
   pub exposure: Option<String>,
   pub iso: Option<String>,
 }
@@ -106,10 +103,6 @@ fn get_exif_data(path: &Path) -> Option<ExifData> {
     .get_field(exif::Tag::Model, exif::In::PRIMARY)
     .map(|f| f.display_value().to_string().trim_matches('"').to_string());
 
-  let date_taken = exif
-    .get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY)
-    .map(|f| f.display_value().to_string().trim_matches('"').to_string());
-
   let exposure = exif.get_field(exif::Tag::ExposureTime, exif::In::PRIMARY).map(|f| {
     let val = f.display_value().to_string();
     let val = val.trim_matches('"');
@@ -121,11 +114,11 @@ fn get_exif_data(path: &Path) -> Option<ExifData> {
     .get_field(exif::Tag::PhotographicSensitivity, exif::In::PRIMARY)
     .map(|f| format!("ISO {}", f.display_value()));
 
-  if camera.is_none() && date_taken.is_none() && exposure.is_none() && iso.is_none() {
+  if camera.is_none() && exposure.is_none() && iso.is_none() {
     return None;
   }
 
-  Some(ExifData { camera, date_taken, exposure, iso })
+  Some(ExifData { camera, exposure, iso })
 }
 
 pub fn format_permissions(mode: u32) -> String {

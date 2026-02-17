@@ -299,10 +299,12 @@ impl PreviewState {
           let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
           (formatted_lines, Some(raw_highlighted))
         }
-        Some(structured::FormatResult::Error(_)) => {
-          // Formatting failed, show raw content
+        Some(structured::FormatResult::Error(err)) => {
+          // Formatting failed, show a short warning and then raw content.
+          let mut lines = vec![Line::from(format!(" Parse warning: {err}"))];
           let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
-          (raw_highlighted, None)
+          lines.extend(raw_highlighted);
+          (lines, None)
         }
         None => {
           // Not a structured format (shouldn't happen given is_structured check)

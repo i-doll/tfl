@@ -16,16 +16,13 @@ pub struct GitRepoInfo {
   pub untracked_count: usize,
 }
 
-#[allow(dead_code)]
 pub struct GitCommit {
   pub hash: String,
-  pub author: String,
   pub date: String,
   pub message: String,
 }
 
 pub struct GitRepo {
-  #[allow(dead_code)]
   repo: Repository,
   root: PathBuf,
 }
@@ -47,7 +44,6 @@ impl GitRepo {
     })
   }
 
-  #[allow(dead_code)]
   pub fn root(&self) -> &Path {
     &self.root
   }
@@ -169,7 +165,6 @@ impl GitRepo {
       }
 
       let hash = oid.to_string()[..7].to_string();
-      let author = commit.author().name().unwrap_or("").to_string();
       let time = commit.time();
       let date = format_relative_time(time.seconds());
       let message = commit
@@ -180,7 +175,7 @@ impl GitRepo {
         .unwrap_or("")
         .to_string();
 
-      commits.push(GitCommit { hash, author, date, message });
+      commits.push(GitCommit { hash, date, message });
 
       if commits.len() >= limit {
         break;

@@ -5,7 +5,6 @@ use std::time::SystemTime;
 
 /// File properties for display in the properties panel
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct FileProperties {
   pub path: String,
   pub size: u64,
@@ -21,7 +20,6 @@ pub struct FileProperties {
   pub mime_type: Option<String>,
   pub symlink_target: Option<String>,
   pub is_dir: bool,
-  pub is_symlink: bool,
 }
 
 impl FileProperties {
@@ -74,7 +72,6 @@ impl FileProperties {
       mime_type,
       symlink_target,
       is_dir,
-      is_symlink,
     })
   }
 }
@@ -427,7 +424,6 @@ mod tests {
     assert_eq!(props.size, 11);
     assert_eq!(props.size_human, "11 B");
     assert!(!props.is_dir);
-    assert!(!props.is_symlink);
     assert_eq!(props.symlink_target, None);
     assert_eq!(props.file_type, "Text file");
 
@@ -440,7 +436,6 @@ mod tests {
 
     let props = FileProperties::from_path(&dir).unwrap();
     assert!(props.is_dir);
-    assert!(!props.is_symlink);
     assert_eq!(props.file_type, "Directory");
 
     cleanup_test_dir(&dir);
@@ -455,7 +450,6 @@ mod tests {
     symlink(&file, &link).unwrap();
 
     let props = FileProperties::from_path(&link).unwrap();
-    assert!(props.is_symlink);
     assert_eq!(props.symlink_target, Some(file.to_string_lossy().to_string()));
     assert_eq!(props.file_type, "Symbolic link");
 
