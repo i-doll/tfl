@@ -4,9 +4,8 @@
 pub enum FormatResult {
   /// Successfully formatted content with the given extension for highlighting.
   Formatted { content: String, extension: String },
-  /// Failed to parse the content; returns an error message.
-  #[allow(dead_code)]
-  Error(String),
+  /// Failed to parse the content.
+  Error,
 }
 
 /// Detects if a file extension indicates structured data (JSON or TOML).
@@ -23,10 +22,10 @@ pub fn format_json(content: &str) -> FormatResult {
           content: formatted,
           extension: "json".to_string(),
         },
-        Err(e) => FormatResult::Error(format!("JSON serialization error: {e}")),
+        Err(_) => FormatResult::Error,
       }
     }
-    Err(e) => FormatResult::Error(format!("JSON parse error: {e}")),
+    Err(_) => FormatResult::Error,
   }
 }
 
@@ -39,10 +38,10 @@ pub fn format_toml(content: &str) -> FormatResult {
           content: formatted,
           extension: "toml".to_string(),
         },
-        Err(e) => FormatResult::Error(format!("TOML serialization error: {e}")),
+        Err(_) => FormatResult::Error,
       }
     }
-    Err(e) => FormatResult::Error(format!("TOML parse error: {e}")),
+    Err(_) => FormatResult::Error,
   }
 }
 
@@ -96,7 +95,7 @@ mod tests {
         assert!(content.contains("\"test\""));
         assert!(content.contains("42"));
       }
-      FormatResult::Error(e) => panic!("Expected Formatted, got Error: {e}"),
+      FormatResult::Error => panic!("Expected Formatted, got Error"),
     }
   }
 
@@ -111,7 +110,7 @@ mod tests {
         assert!(content.contains("\"outer\""));
         assert!(content.contains("\"inner\""));
       }
-      FormatResult::Error(e) => panic!("Expected Formatted, got Error: {e}"),
+      FormatResult::Error => panic!("Expected Formatted, got Error"),
     }
   }
 
@@ -119,12 +118,7 @@ mod tests {
   fn test_format_json_invalid() {
     let input = r#"{"name": incomplete"#;
     let result = format_json(input);
-    match result {
-      FormatResult::Error(msg) => {
-        assert!(msg.contains("JSON parse error"));
-      }
-      FormatResult::Formatted { .. } => panic!("Expected Error, got Formatted"),
-    }
+    assert!(matches!(result, FormatResult::Error));
   }
 
   #[test]
@@ -144,7 +138,7 @@ mod tests {
         assert!(content.contains("2"));
         assert!(content.contains("3"));
       }
-      FormatResult::Error(e) => panic!("Expected Formatted, got Error: {e}"),
+      FormatResult::Error => panic!("Expected Formatted, got Error"),
     }
   }
 
@@ -160,7 +154,7 @@ count = 42"#;
         assert!(content.contains("test"));
         assert!(content.contains("42"));
       }
-      FormatResult::Error(e) => panic!("Expected Formatted, got Error: {e}"),
+      FormatResult::Error => panic!("Expected Formatted, got Error"),
     }
   }
 
@@ -178,7 +172,7 @@ serde = "1.0""#;
         assert!(content.contains("[package]"));
         assert!(content.contains("[dependencies]"));
       }
-      FormatResult::Error(e) => panic!("Expected Formatted, got Error: {e}"),
+      FormatResult::Error => panic!("Expected Formatted, got Error"),
     }
   }
 
@@ -187,12 +181,7 @@ serde = "1.0""#;
     let input = r#"[package
 name = incomplete"#;
     let result = format_toml(input);
-    match result {
-      FormatResult::Error(msg) => {
-        assert!(msg.contains("TOML parse error"));
-      }
-      FormatResult::Formatted { .. } => panic!("Expected Error, got Formatted"),
-    }
+    assert!(matches!(result, FormatResult::Error));
   }
 
   #[test]

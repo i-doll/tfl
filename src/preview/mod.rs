@@ -299,7 +299,7 @@ impl PreviewState {
           let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
           (formatted_lines, Some(raw_highlighted))
         }
-        Some(structured::FormatResult::Error(_)) => {
+        Some(structured::FormatResult::Error) => {
           // Formatting failed, show raw content
           let raw_highlighted = self.highlighter.highlight(&truncated, &ext);
           (raw_highlighted, None)

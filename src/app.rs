@@ -841,7 +841,7 @@ impl App {
   }
 
   /// Returns the inactive pane's current directory (for copy/move destination)
-  #[allow(dead_code)] // Used in tests, will be used for copy/move operations
+  #[cfg(test)]
   pub fn inactive_pane_dir(&self) -> Option<PathBuf> {
     if !self.dual_pane_mode {
       return None;
