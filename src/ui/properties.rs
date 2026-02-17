@@ -128,7 +128,6 @@ mod tests {
       mime_type: Some("text/plain".to_string()),
       symlink_target: None,
       is_dir: false,
-      is_symlink: false,
     }
   }
 
@@ -165,7 +164,6 @@ mod tests {
   #[test]
   fn test_render_properties_with_symlink() {
     let mut props = make_test_props();
-    props.is_symlink = true;
     props.symlink_target = Some("/path/to/target".to_string());
     props.file_type = "Symbolic link".to_string();
 

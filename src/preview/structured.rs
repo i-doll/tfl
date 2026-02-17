@@ -5,7 +5,6 @@ pub enum FormatResult {
   /// Successfully formatted content with the given extension for highlighting.
   Formatted { content: String, extension: String },
   /// Failed to parse the content; returns an error message.
-  #[allow(dead_code)]
   Error(String),
 }
 
