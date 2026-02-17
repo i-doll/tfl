@@ -449,20 +449,24 @@ mod handler {
 
   use anyhow::Result;
 
-  const DESKTOP_ENTRY: &str = "\
-[Desktop Entry]
-Type=Application
-Name=tfl
-GenericName=File Manager
-Comment=Terminal file explorer with vim-style navigation
-Exec=tfl %f
-Icon=system-file-manager
-Terminal=true
-Categories=System;FileManager;ConsoleOnly;
-MimeType=inode/directory;
-";
+  fn desktop_entry(tfl_path: &std::path::Path) -> String {
+    format!(
+      "[Desktop Entry]\n\
+       Type=Application\n\
+       Name=tfl\n\
+       GenericName=File Manager\n\
+       Comment=Terminal file explorer with vim-style navigation\n\
+       Exec={} %f\n\
+       Icon=system-file-manager\n\
+       Terminal=true\n\
+       Categories=System;FileManager;ConsoleOnly;\n\
+       MimeType=inode/directory;\n",
+      tfl_path.display()
+    )
+  }
 
   pub fn install() -> Result<()> {
+    let tfl_path = std::env::current_exe()?;
     let backup = super::backup_dir()?;
 
     // Query current default handler
@@ -477,13 +481,13 @@ MimeType=inode/directory;
       println!("Backed up current handler: {current}");
     }
 
-    // Write desktop file
+    // Write desktop file with resolved path
     let apps_dir = dirs::data_dir()
       .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))?
       .join("applications");
     std::fs::create_dir_all(&apps_dir)?;
     let desktop_path = apps_dir.join("tfl.desktop");
-    std::fs::write(&desktop_path, DESKTOP_ENTRY)?;
+    std::fs::write(&desktop_path, desktop_entry(&tfl_path))?;
     println!("Installed: {}", desktop_path.display());
 
     // Set as default
@@ -539,7 +543,7 @@ mod portal {
 
   use anyhow::Result;
 
-  const WRAPPER_SCRIPT: &str = r#"#!/bin/bash
+  const WRAPPER_TEMPLATE: &str = r#"#!/bin/bash
 # tfl wrapper for xdg-desktop-portal-termfilechooser
 # Args: $1=multiple $2=directory $3=save $4=path $5=out_file $6=debug
 set -euo pipefail
@@ -550,15 +554,34 @@ save="$3"
 path="$4"
 out="$5"
 
+TFL="@@TFL_PATH@@"
+TERM_EMU="@@TERM_EMU@@"
+
 if [ "$save" = "1" ]; then
   dir="$(dirname "$path")"
-  tfl --chooser-file="$out" "$dir"
+  $TERM_EMU -e "$TFL" --chooser-file="$out" "$dir"
 elif [ "$directory" = "1" ]; then
-  tfl --chooser-file="$out" "${path:-.}"
+  $TERM_EMU -e "$TFL" --chooser-file="$out" "${path:-.}"
 else
-  tfl --chooser-file="$out" "${path:-.}"
+  $TERM_EMU -e "$TFL" --chooser-file="$out" "${path:-.}"
 fi
 "#;
+
+  fn detect_terminal() -> Option<String> {
+    let terminals = ["ghostty", "kitty", "alacritty", "foot", "wezterm"];
+    for term in &terminals {
+      if std::process::Command::new("which")
+        .arg(term)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+      {
+        return Some(term.to_string());
+      }
+    }
+    None
+  }
 
   fn find_portal_file() -> bool {
     let search_dirs = [
@@ -581,6 +604,15 @@ fi
          Install it first: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser"
       );
     }
+
+    let term = detect_terminal().ok_or_else(|| {
+      anyhow::anyhow!(
+        "No supported terminal emulator found.\n\
+         Install one of: ghostty, kitty, alacritty, foot, wezterm"
+      )
+    })?;
+
+    let tfl_path = std::env::current_exe()?;
 
     let backup = super::backup_dir()?;
     let config_home = dirs::config_dir()
@@ -608,9 +640,12 @@ fi
       println!("Backed up: {}", portals_conf.display());
     }
 
-    // Write wrapper script
+    // Write wrapper script with resolved paths
     let wrapper_path = tfc_dir.join("tfl-wrapper.sh");
-    std::fs::write(&wrapper_path, WRAPPER_SCRIPT)?;
+    let script = WRAPPER_TEMPLATE
+      .replace("@@TFL_PATH@@", &tfl_path.display().to_string())
+      .replace("@@TERM_EMU@@", &term);
+    std::fs::write(&wrapper_path, &script)?;
     #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt;
@@ -618,8 +653,11 @@ fi
     }
     println!("Installed: {}", wrapper_path.display());
 
-    // Write termfilechooser config
-    std::fs::write(&tfc_config, "[filechooser]\ncmd=tfl-wrapper.sh\n")?;
+    // Write termfilechooser config with absolute path
+    std::fs::write(
+      &tfc_config,
+      format!("[filechooser]\ncmd={}\n", wrapper_path.display()),
+    )?;
     println!("Wrote: {}", tfc_config.display());
 
     // Update portals.conf
