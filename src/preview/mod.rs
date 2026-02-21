@@ -1027,4 +1027,243 @@ mod tests {
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].spans[0].content, "raw");
   }
+
+  #[test]
+  fn test_scroll_down_clamps_to_content() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let path = PathBuf::from("/fake/scroll_test");
+    let content = PreviewContent {
+      lines: vec![Line::from("line1"), Line::from("line2"), Line::from("line3")],
+      preview_type: PreviewType::Text,
+      line_count: 3,
+      file_size: 0,
+      extension: String::new(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+      diff_hunks: Vec::new(),
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+
+    // Scroll down by a large amount should clamp to lines.len()-1
+    state.scroll_down(100);
+    assert_eq!(state.scroll_offset, 2); // 3 lines, max index is 2
+  }
+
+  #[test]
+  fn test_scroll_down_no_content_noop() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    // No content set
+    state.scroll_down(5);
+    assert_eq!(state.scroll_offset, 0); // Should stay at 0, no panic
+  }
+
+  #[test]
+  fn test_invalidate_clears_all() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let path = PathBuf::from("/fake/invalidate_test");
+    let content = PreviewContent {
+      lines: vec![Line::from("test")],
+      preview_type: PreviewType::Text,
+      line_count: 1,
+      file_size: 0,
+      extension: String::new(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+      diff_hunks: Vec::new(),
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+
+    state.invalidate();
+    assert!(state.cache.is_empty());
+    assert!(state.cache_order.is_empty());
+    assert!(state.current_path.is_none());
+    assert!(state.get_content().is_none());
+  }
+
+  #[test]
+  fn test_request_preview_debounce() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let dir = std::env::temp_dir().join("tfl_preview_debounce");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.txt");
+    fs::write(&file, "hello").unwrap();
+
+    // First request loads the file
+    state.request_preview(&file, None, None);
+    assert!(state.current_path.is_some());
+
+    // Immediately invalidate and re-request - should be debounced
+    state.current_path = None; // force current_path check to pass
+    state.last_request = Some((file.clone(), std::time::Instant::now()));
+    state.request_preview(&file, None, None);
+    // Debounced: current_path should remain None
+    assert!(state.current_path.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_request_preview_cache_hit() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let path = PathBuf::from("/fake/cache_hit");
+    let content = PreviewContent {
+      lines: vec![Line::from("cached")],
+      preview_type: PreviewType::Text,
+      line_count: 1,
+      file_size: 0,
+      extension: String::new(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+      diff_hunks: Vec::new(),
+    };
+    state.insert_cache(path.clone(), content);
+    // Clear last_request to avoid debounce
+    state.last_request = None;
+
+    state.request_preview(&path, None, None);
+    // Cache hit: current_path should be set
+    assert_eq!(state.current_path, Some(path.clone()));
+    // cache_order should have moved the path to the end
+    assert_eq!(state.cache_order.last().unwrap(), &path);
+  }
+
+  #[test]
+  fn test_load_text_success() {
+    let state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let dir = std::env::temp_dir().join("tfl_preview_load_text");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.rs");
+    fs::write(&file, "fn main() {\n  println!(\"hello\");\n}\n").unwrap();
+
+    let result = state.load_text(&file, &[]);
+    assert!(result.is_some());
+    let content = result.unwrap();
+    assert_eq!(content.preview_type, PreviewType::Text);
+    assert_eq!(content.line_count, 3);
+    assert!(!content.lines.is_empty());
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_load_text_nonexistent() {
+    let state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let result = state.load_text(Path::new("/nonexistent/file.txt"), &[]);
+    assert!(result.is_some());
+    let content = result.unwrap();
+    assert!(matches!(content.preview_type, PreviewType::Error(_)));
+  }
+
+  #[test]
+  fn test_load_markdown_success() {
+    let state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let dir = std::env::temp_dir().join("tfl_preview_load_md");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.md");
+    fs::write(&file, "# Hello\n\nWorld\n").unwrap();
+
+    let result = state.load_markdown(&file, &[]);
+    assert!(result.is_some());
+    let content = result.unwrap();
+    assert_eq!(content.preview_type, PreviewType::Markdown);
+    assert_eq!(content.line_count, 3);
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_load_hex_success() {
+    let state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let dir = std::env::temp_dir().join("tfl_preview_load_hex");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("test.bin");
+    fs::write(&file, [0u8, 1, 2, 3, 0xFF, 0xFE]).unwrap();
+
+    let result = state.load_hex(&file, &[]);
+    assert!(result.is_some());
+    let content = result.unwrap();
+    assert_eq!(content.preview_type, PreviewType::Binary);
+    assert!(!content.lines.is_empty());
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_next_prev_hunk_empty() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let path = PathBuf::from("/fake/no_hunks");
+    let content = PreviewContent {
+      lines: vec![Line::from("no diff")],
+      preview_type: PreviewType::Diff,
+      line_count: 0,
+      file_size: 0,
+      extension: String::new(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+      diff_hunks: Vec::new(), // no hunks
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+
+    assert!(!state.next_hunk());
+    assert!(!state.prev_hunk());
+  }
+
+  #[test]
+  fn test_next_prev_hunk_navigation() {
+    let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
+    let path = PathBuf::from("/fake/with_hunks");
+    let content = PreviewContent {
+      lines: (0..30).map(|i| Line::from(format!("line {i}"))).collect(),
+      preview_type: PreviewType::Diff,
+      line_count: 0,
+      file_size: 0,
+      extension: String::new(),
+      metadata: None,
+      image_metadata: None,
+      git_commits: Vec::new(),
+      blame_data: None,
+      raw_lines: None,
+      is_structured: false,
+      diff_hunks: vec![5, 15, 25],
+    };
+    state.insert_cache(path.clone(), content);
+    state.current_path = Some(path);
+    state.scroll_offset = 0;
+
+    // Next hunk from 0 should go to 5
+    assert!(state.next_hunk());
+    assert_eq!(state.scroll_offset, 5);
+
+    // Next hunk from 5 should go to 15
+    assert!(state.next_hunk());
+    assert_eq!(state.scroll_offset, 15);
+
+    // Prev hunk from 15 should go to 5
+    assert!(state.prev_hunk());
+    assert_eq!(state.scroll_offset, 5);
+
+    // Prev hunk from 5 should not find one (0 < 5, no hunk at 0)
+    assert!(!state.prev_hunk());
+    assert_eq!(state.scroll_offset, 5);
+  }
 }
