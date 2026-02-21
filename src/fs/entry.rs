@@ -86,6 +86,7 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
+  #[allow(dead_code)] // Used in tests
   pub fn from_path(path: PathBuf, depth: usize) -> Self {
     let metadata = path.symlink_metadata();
     let is_symlink = metadata.as_ref().is_ok_and(|m| m.is_symlink());
@@ -103,6 +104,48 @@ impl FileEntry {
       .file_name()
       .map(|n| n.to_string_lossy().to_string())
       .unwrap_or_default();
+
+    Self {
+      path,
+      name,
+      depth,
+      is_dir,
+      is_symlink,
+      symlink_target,
+      expanded: false,
+      size,
+      is_git_ignored: false,
+      git_status: GitStatus::default(),
+    }
+  }
+
+  pub fn from_dir_entry(dir_entry: std::fs::DirEntry, depth: usize) -> Self {
+    let path = dir_entry.path();
+    let name = dir_entry.file_name().to_string_lossy().to_string();
+    let file_type = dir_entry.file_type().ok();
+    let is_symlink = file_type.as_ref().is_some_and(|ft| ft.is_symlink());
+    let symlink_target = if is_symlink {
+      std::fs::read_link(&path)
+        .ok()
+        .map(|t| t.to_string_lossy().to_string())
+    } else {
+      None
+    };
+    let (is_dir, size) = if is_symlink {
+      let meta = path.metadata().ok();
+      (
+        meta.as_ref().is_some_and(|m| m.is_dir()),
+        meta.as_ref().map_or(0, |m| m.len()),
+      )
+    } else {
+      let is_dir = file_type.as_ref().is_some_and(|ft| ft.is_dir());
+      let size = if is_dir {
+        0
+      } else {
+        dir_entry.metadata().ok().map_or(0, |m| m.len())
+      };
+      (is_dir, size)
+    };
 
     Self {
       path,

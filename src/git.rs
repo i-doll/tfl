@@ -17,6 +17,7 @@ pub struct GitRepoInfo {
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct GitCommit {
   pub hash: String,
   pub author: String,
@@ -47,7 +48,6 @@ impl GitRepo {
     })
   }
 
-  #[allow(dead_code)]
   pub fn root(&self) -> &Path {
     &self.root
   }
@@ -79,7 +79,7 @@ impl GitRepo {
     self.repo.graph_ahead_behind(local_oid, upstream_oid).unwrap_or((0, 0))
   }
 
-  pub fn get_file_statuses(&self) -> (HashMap<PathBuf, GitStatus>, GitRepoInfo) {
+  pub fn get_file_statuses(&self) -> (HashMap<PathBuf, GitStatus>, GitRepoInfo, HashSet<PathBuf>) {
     let mut info = GitRepoInfo {
       branch: self.get_branch(),
       ..Default::default()
@@ -91,18 +91,24 @@ impl GitRepo {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true);
     opts.recurse_untracked_dirs(true);
-    opts.include_ignored(false);
+    opts.include_ignored(true);
 
     let Ok(statuses) = self.repo.statuses(Some(&mut opts)) else {
-      return (HashMap::new(), info);
+      return (HashMap::new(), info, HashSet::new());
     };
 
     let mut map: HashMap<PathBuf, GitStatus> = HashMap::new();
+    let mut ignored_set: HashSet<PathBuf> = HashSet::new();
 
     for entry in statuses.iter() {
       let Some(path_str) = entry.path() else { continue };
       let abs_path = self.root.join(path_str);
       let status = entry.status();
+
+      if status.is_ignored() {
+        ignored_set.insert(abs_path);
+        continue;
+      }
 
       let git_status = convert_status(status);
 
@@ -119,15 +125,17 @@ impl GitRepo {
       map.insert(abs_path, git_status);
     }
 
-    (map, info)
+    (map, info, ignored_set)
   }
 
+  #[allow(dead_code)] // Used in tests
   pub fn is_ignored(&self, path: &Path) -> bool {
     // Make path relative to repo root
     let rel_path = path.strip_prefix(&self.root).unwrap_or(path);
     self.repo.status_should_ignore(rel_path).unwrap_or(false)
   }
 
+  #[allow(dead_code)] // Used in tests
   pub fn is_ignored_batch(&self, paths: &[PathBuf]) -> HashSet<PathBuf> {
     let mut ignored = HashSet::new();
     for path in paths {
@@ -449,7 +457,7 @@ mod tests {
     fs::write(dir.join("untracked.txt"), "new file").unwrap();
 
     let repo = GitRepo::open(&dir).unwrap();
-    let (statuses, info) = repo.get_file_statuses();
+    let (statuses, info, _ignored) = repo.get_file_statuses();
 
     let status = statuses.get(&dir.join("untracked.txt"));
     assert!(status.is_some());

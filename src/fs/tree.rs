@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -19,37 +19,36 @@ fn mark_git_status(statuses: &HashMap<PathBuf, GitStatus>, children: &mut [FileE
 }
 
 fn propagate_git_status(entries: &mut [FileEntry]) {
-  // Walk forward; for each non-clean entry, walk backward to set parent dirs
-  let len = entries.len();
-  for i in 0..len {
-    if entries[i].git_status.is_clean() {
-      continue;
+  // Single forward pass using a stack of ancestor directory indices.
+  // When we encounter a non-clean entry, merge its status into all ancestors.
+  let mut dir_stack: Vec<usize> = Vec::new();
+
+  for i in 0..entries.len() {
+    let depth = entries[i].depth;
+
+    // Pop dirs that are no longer ancestors (depth >= current depth)
+    while let Some(&top) = dir_stack.last() {
+      if entries[top].depth >= depth {
+        dir_stack.pop();
+      } else {
+        break;
+      }
     }
-    let child_status = entries[i].git_status;
-    let child_depth = entries[i].depth;
-    // Walk backward to find parent directories
-    if child_depth > 0 {
-      for j in (0..i).rev() {
-        if entries[j].is_dir && entries[j].depth < child_depth {
-          entries[j].git_status.merge(&child_status);
-          if entries[j].depth == 0 {
-            break;
-          }
-        }
+
+    if entries[i].is_dir {
+      dir_stack.push(i);
+    } else if !entries[i].git_status.is_clean() {
+      let child_status = entries[i].git_status;
+      for &dir_idx in &dir_stack {
+        entries[dir_idx].git_status.merge(&child_status);
       }
     }
   }
 }
 
-fn mark_git_ignored(git_repo: Option<&GitRepo>, children: &mut [FileEntry]) {
-  let Some(repo) = git_repo else { return };
-  if children.is_empty() {
-    return;
-  }
-  let paths: Vec<PathBuf> = children.iter().map(|c| c.path.clone()).collect();
-  let ignored = repo.is_ignored_batch(&paths);
+fn mark_git_ignored(ignored_set: &HashSet<PathBuf>, children: &mut [FileEntry]) {
   for child in children.iter_mut() {
-    child.is_git_ignored = ignored.contains(&child.path);
+    child.is_git_ignored = ignored_set.contains(&child.path);
   }
 }
 
@@ -62,6 +61,8 @@ pub struct FileTree {
   pub git_statuses: HashMap<PathBuf, GitStatus>,
   pub git_info: GitRepoInfo,
   git_repo: Option<GitRepo>,
+  git_ignored_set: HashSet<PathBuf>,
+  git_statuses_dirty: bool,
   ignore_glob_set: GlobSet,
 }
 
@@ -73,7 +74,7 @@ impl FileTree {
 
   pub fn with_ignore_patterns(root: PathBuf, ignore_glob_set: GlobSet) -> Result<Self> {
     let git_repo = GitRepo::open(&root);
-    let (git_statuses, git_info) = git_repo
+    let (git_statuses, git_info, git_ignored_set) = git_repo
       .as_ref()
       .map(|r| r.get_file_statuses())
       .unwrap_or_default();
@@ -85,6 +86,8 @@ impl FileTree {
       git_statuses,
       git_info,
       git_repo,
+      git_ignored_set,
+      git_statuses_dirty: false,
       ignore_glob_set,
     };
     tree.load_dir(&root, 0)?;
@@ -98,6 +101,32 @@ impl FileTree {
 
   pub fn git_repo(&self) -> Option<&GitRepo> {
     self.git_repo.as_ref()
+  }
+
+  fn refresh_git_if_needed(&mut self) {
+    let needs_reopen = match &self.git_repo {
+      Some(repo) => !self.root.starts_with(repo.root()),
+      None => true,
+    };
+    if needs_reopen {
+      self.git_repo = GitRepo::open(&self.root);
+      self.git_statuses_dirty = true;
+    }
+    if self.git_statuses_dirty {
+      let (statuses, info, ignored_set) = self
+        .git_repo
+        .as_ref()
+        .map(|r| r.get_file_statuses())
+        .unwrap_or_default();
+      self.git_statuses = statuses;
+      self.git_info = info;
+      self.git_ignored_set = ignored_set;
+      self.git_statuses_dirty = false;
+    }
+  }
+
+  pub fn invalidate_git_statuses(&mut self) {
+    self.git_statuses_dirty = true;
   }
 
   pub fn watched_dirs(&self) -> std::collections::HashSet<PathBuf> {
@@ -131,7 +160,7 @@ impl FileTree {
     };
 
     for entry in read_dir.flatten() {
-      let child = FileEntry::from_path(entry.path(), depth);
+      let child = FileEntry::from_dir_entry(entry, depth);
       if !self.show_hidden && child.is_hidden() {
         continue;
       }
@@ -148,13 +177,11 @@ impl FileTree {
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    mark_git_ignored(self.git_repo.as_ref(), &mut children);
+    mark_git_ignored(&self.git_ignored_set, &mut children);
     mark_git_status(&self.git_statuses, &mut children);
 
     // Insert children at the correct position
-    for (i, child) in children.into_iter().enumerate() {
-      self.entries.insert(insert_pos + i, child);
-    }
+    self.entries.splice(insert_pos..insert_pos, children);
 
     Ok(())
   }
@@ -184,7 +211,7 @@ impl FileTree {
     };
 
     for entry in read_dir.flatten() {
-      let child = FileEntry::from_path(entry.path(), depth);
+      let child = FileEntry::from_dir_entry(entry, depth);
       if !self.show_hidden && child.is_hidden() {
         continue;
       }
@@ -200,12 +227,10 @@ impl FileTree {
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    mark_git_ignored(self.git_repo.as_ref(), &mut children);
+    mark_git_ignored(&self.git_ignored_set, &mut children);
     mark_git_status(&self.git_statuses, &mut children);
 
-    for (i, child) in children.into_iter().enumerate() {
-      self.entries.insert(index + 1 + i, child);
-    }
+    self.entries.splice(index + 1..index + 1, children);
 
     propagate_git_status(&mut self.entries);
 
@@ -240,15 +265,7 @@ impl FileTree {
   }
 
   pub fn reload(&mut self) -> Result<()> {
-    // Re-query git status
-    self.git_repo = GitRepo::open(&self.root);
-    let (statuses, info) = self
-      .git_repo
-      .as_ref()
-      .map(|r| r.get_file_statuses())
-      .unwrap_or_default();
-    self.git_statuses = statuses;
-    self.git_info = info;
+    self.refresh_git_if_needed();
 
     // Remember expanded dirs
     let expanded: Vec<PathBuf> = self
@@ -281,14 +298,7 @@ impl FileTree {
     }
     let path = self.entries[index].path.clone();
     self.root = path;
-    self.git_repo = GitRepo::open(&self.root);
-    let (statuses, info) = self
-      .git_repo
-      .as_ref()
-      .map(|r| r.get_file_statuses())
-      .unwrap_or_default();
-    self.git_statuses = statuses;
-    self.git_info = info;
+    self.refresh_git_if_needed();
     let root = self.root.clone();
     self.entries.clear();
     self.load_dir(&root, 0)?;
@@ -298,14 +308,7 @@ impl FileTree {
 
   pub fn navigate_to(&mut self, path: &Path) -> Result<()> {
     self.root = path.to_path_buf();
-    self.git_repo = GitRepo::open(&self.root);
-    let (statuses, info) = self
-      .git_repo
-      .as_ref()
-      .map(|r| r.get_file_statuses())
-      .unwrap_or_default();
-    self.git_statuses = statuses;
-    self.git_info = info;
+    self.refresh_git_if_needed();
     let root = self.root.clone();
     self.entries.clear();
     self.load_dir(&root, 0)?;
@@ -342,14 +345,7 @@ impl FileTree {
       expanded.push(old_root.clone());
 
       self.root = parent;
-      self.git_repo = GitRepo::open(&self.root);
-      let (statuses, info) = self
-        .git_repo
-        .as_ref()
-        .map(|r| r.get_file_statuses())
-        .unwrap_or_default();
-      self.git_statuses = statuses;
-      self.git_info = info;
+      self.refresh_git_if_needed();
       let root = self.root.clone();
       self.entries.clear();
       self.load_dir(&root, 0)?;
@@ -553,8 +549,9 @@ mod tests {
       FileEntry::from_path(dir.join("bar.txt"), 0),
     ];
 
-    let repo = GitRepo::open(&dir);
-    mark_git_ignored(repo.as_ref(), &mut children);
+    let mut ignored_set = HashSet::new();
+    ignored_set.insert(dir.join("foo.log"));
+    mark_git_ignored(&ignored_set, &mut children);
 
     let foo = children.iter().find(|e| e.name == "foo.log").unwrap();
     let bar = children.iter().find(|e| e.name == "bar.txt").unwrap();
@@ -580,7 +577,8 @@ mod tests {
       FileEntry::from_path(dir.join("bar.txt"), 0),
     ];
 
-    mark_git_ignored(None, &mut children);
+    let empty_set = HashSet::new();
+    mark_git_ignored(&empty_set, &mut children);
 
     // No entries should be marked when not in a git repo
     assert!(!children.iter().any(|e| e.is_git_ignored));
@@ -762,6 +760,7 @@ mod tests {
 
     // Modify file and reload
     fs::write(dir.join("file.txt"), "changed").unwrap();
+    tree.invalidate_git_statuses();
     tree.reload().unwrap();
 
     let file = tree.entries.iter().find(|e| e.name == "file.txt").unwrap();
