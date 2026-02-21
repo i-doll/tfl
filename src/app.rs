@@ -4726,4 +4726,131 @@ mod tests {
     assert_eq!(app.cursor, left_cursor);
     cleanup_test_dir(&dir);
   }
+
+  // === Favorites integration tests ===
+
+  #[test]
+  fn test_favorites_open_close() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::FavoritesOpen).unwrap();
+    assert_eq!(app.input_mode, InputMode::Favorites);
+    assert_eq!(app.favorites_cursor, 0);
+    app.update(Action::FavoritesClose).unwrap();
+    assert_eq!(app.input_mode, InputMode::Normal);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_move_down_up() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    // Clear pre-existing favorites for a clean test
+    while app.favorites.len() > 0 {
+      app.favorites.remove(0);
+    }
+    app.favorites.add(dir.join("aaa_dir"));
+    app.favorites.add(dir.join("zzz_dir"));
+    app.update(Action::FavoritesOpen).unwrap();
+
+    app.update(Action::FavoritesDown).unwrap();
+    assert_eq!(app.favorites_cursor, 1);
+    // Clamp at max
+    app.update(Action::FavoritesDown).unwrap();
+    assert_eq!(app.favorites_cursor, 1);
+
+    app.update(Action::FavoritesUp).unwrap();
+    assert_eq!(app.favorites_cursor, 0);
+    // Clamp at 0
+    app.update(Action::FavoritesUp).unwrap();
+    assert_eq!(app.favorites_cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_move_on_empty() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    // Clear any existing favorites
+    while app.favorites.len() > 0 {
+      app.favorites.remove(0);
+    }
+    app.update(Action::FavoritesOpen).unwrap();
+    // Should not panic on empty list
+    app.update(Action::FavoritesDown).unwrap();
+    app.update(Action::FavoritesUp).unwrap();
+    assert_eq!(app.favorites_cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_add_shows_status() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::FavoriteAdd).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Added"));
+    assert!(app.wrote_config);
+    assert!(app.favorites.contains(&dir));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_add_duplicate() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.favorites.add(dir.clone());
+    app.update(Action::FavoriteAdd).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("Already"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_select_navigates() {
+    let dir = setup_test_dir();
+    let target = dir.join("aaa_dir");
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    while app.favorites.len() > 0 {
+      app.favorites.remove(0);
+    }
+    app.favorites.add(target.clone());
+    app.favorites_cursor = 0;
+    app.input_mode = InputMode::Favorites;
+    app.update(Action::FavoritesSelect).unwrap();
+    assert_eq!(app.tree.root, target);
+    assert_eq!(app.input_mode, InputMode::Normal);
+    assert_eq!(app.cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_select_nonexistent() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.favorites.add(PathBuf::from("/nonexistent/dir/12345"));
+    app.favorites_cursor = app.favorites.len() - 1;
+    app.input_mode = InputMode::Favorites;
+    app.update(Action::FavoritesSelect).unwrap();
+    assert!(app.status_message.as_ref().unwrap().contains("no longer exists"));
+    // Should stay in original location
+    assert_eq!(app.tree.root, dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_favorites_remove_clamps_cursor() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    while app.favorites.len() > 0 {
+      app.favorites.remove(0);
+    }
+    app.favorites.add(dir.join("aaa_dir"));
+    app.favorites.add(dir.join("zzz_dir"));
+    app.favorites_cursor = 1; // Point to last item
+    app.input_mode = InputMode::Favorites;
+    app.update(Action::FavoritesRemove).unwrap();
+    // Cursor should clamp to new last index (0)
+    assert_eq!(app.favorites_cursor, 0);
+    assert_eq!(app.favorites.len(), 1);
+    cleanup_test_dir(&dir);
+  }
 }
