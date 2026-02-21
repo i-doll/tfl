@@ -1368,4 +1368,116 @@ patterns = ["[invalid", "valid.log"]
     let config = Config::default();
     assert!(!config.has_apps_file);
   }
+
+  // === named_key tests ===
+
+  #[test]
+  fn test_named_key_f_keys() {
+    // F1-F24 should be valid
+    for n in 1..=24 {
+      let key_str = format!("f{n}");
+      assert_eq!(named_key(&key_str), Some(KeyCode::F(n)), "F{n} should parse");
+    }
+    // F0 should be rejected
+    assert_eq!(named_key("f0"), None);
+    // F25 should be rejected
+    assert_eq!(named_key("f25"), None);
+  }
+
+  #[test]
+  fn test_named_key_special_keys() {
+    assert_eq!(named_key("pageup"), Some(KeyCode::PageUp));
+    assert_eq!(named_key("pagedown"), Some(KeyCode::PageDown));
+    assert_eq!(named_key("delete"), Some(KeyCode::Delete));
+    assert_eq!(named_key("backspace"), Some(KeyCode::Backspace));
+    assert_eq!(named_key("tab"), Some(KeyCode::Tab));
+    assert_eq!(named_key("enter"), Some(KeyCode::Enter));
+    assert_eq!(named_key("esc"), Some(KeyCode::Esc));
+    assert_eq!(named_key("space"), Some(KeyCode::Char(' ')));
+    assert_eq!(named_key("up"), Some(KeyCode::Up));
+    assert_eq!(named_key("down"), Some(KeyCode::Down));
+    assert_eq!(named_key("left"), Some(KeyCode::Left));
+    assert_eq!(named_key("right"), Some(KeyCode::Right));
+  }
+
+  #[test]
+  fn test_named_key_unknown() {
+    assert_eq!(named_key("unknown"), None);
+    assert_eq!(named_key("foobar"), None);
+    assert_eq!(named_key(""), None);
+  }
+
+  // === compile_glob_set tests ===
+
+  #[test]
+  fn test_compile_glob_set_invalid_pattern() {
+    let mut config = Config::empty();
+    config.ignore_patterns = vec!["*.log".to_string(), "[invalid".to_string()];
+    let mut errors = Vec::new();
+    let glob_set = config.compile_glob_set(&mut errors);
+    // Invalid pattern should produce an error
+    assert!(!errors.is_empty());
+    // The GlobSet should still be usable (with valid patterns)
+    assert!(glob_set.is_match("test.log"));
+    assert!(!glob_set.is_match("test.txt"));
+  }
+
+  // === load_apps_str tests ===
+
+  #[test]
+  fn test_load_apps_str_valid() {
+    let mut config = Config::default();
+    let mut errors = Vec::new();
+    config.load_apps_str(r#"
+      [[apps]]
+      name = "MyEditor"
+      command = "myeditor"
+      tui = true
+      opens_dir = true
+    "#, &mut errors);
+    assert!(errors.is_empty());
+    let app = config.custom_apps.last().unwrap();
+    assert_eq!(app.name, "MyEditor");
+    assert_eq!(app.command, "myeditor");
+    assert!(app.is_tui);
+    assert!(app.opens_dir);
+  }
+
+  #[test]
+  fn test_load_apps_str_missing_command() {
+    let mut config = Config::default();
+    let mut errors = Vec::new();
+    config.load_apps_str(r#"
+      [[apps]]
+      name = "Broken"
+    "#, &mut errors);
+    // Should produce an error about missing command/macos_app
+    assert!(!errors.is_empty());
+    assert!(errors[0].contains("needs command or macos_app"));
+  }
+
+  #[test]
+  fn test_load_apps_str_invalid_toml() {
+    let mut config = Config::default();
+    let mut errors = Vec::new();
+    config.load_apps_str("not valid toml {{{", &mut errors);
+    assert!(!errors.is_empty());
+    assert!(errors[0].contains("parse"));
+  }
+
+  #[test]
+  fn test_load_apps_str_defaults() {
+    let mut config = Config::default();
+    let mut errors = Vec::new();
+    config.load_apps_str(r#"
+      [[apps]]
+      name = "Simple"
+      command = "simple"
+    "#, &mut errors);
+    assert!(errors.is_empty());
+    let app = config.custom_apps.last().unwrap();
+    // tui defaults to false, opens_dir defaults to false
+    assert!(!app.is_tui);
+    assert!(!app.opens_dir);
+  }
 }
