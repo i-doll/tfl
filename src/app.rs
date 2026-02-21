@@ -4973,4 +4973,103 @@ mod tests {
     // Should not crash and mode returns to Normal since no targets
     cleanup_test_dir(&dir);
   }
+
+  // === pick_file and mark_all tests ===
+
+  #[test]
+  fn test_pick_file_selects_file() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    // Move to a file entry
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    let file_path = app.selected_entry().unwrap().path.clone();
+    app.update(Action::EnterDir).unwrap(); // In picker mode, EnterDir triggers pick_file
+    assert!(app.should_quit);
+    assert_eq!(app.picked_paths, vec![file_path]);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_pick_file_enters_directory() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    // First entry is a directory
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::EnterDir).unwrap();
+    assert!(!app.should_quit);
+    assert!(app.picked_paths.is_empty());
+    // Should have entered the directory
+    assert_ne!(app.tree.root, dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_pick_file_marks_collect_files() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::Stdout)).unwrap();
+    // Mark a file entry
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ToggleMark).unwrap();
+    // Mark another file if available
+    if app.selected_entry().is_some_and(|e| !e.is_dir) {
+      app.update(Action::ToggleMark).unwrap();
+    }
+    assert!(!app.marked.is_empty());
+
+    app.update(Action::EnterDir).unwrap(); // triggers pick_file with marks
+    assert!(app.should_quit);
+    // All picked paths should be files, not dirs
+    for p in &app.picked_paths {
+      assert!(!p.is_dir());
+    }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_mark_all_marks_visible() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    let visible_count = app.visible_entries().len();
+    assert!(visible_count > 0);
+
+    app.update(Action::MarkAll).unwrap();
+    assert_eq!(app.marked.len(), visible_count);
+    assert!(app.status_message.as_ref().unwrap().contains(&visible_count.to_string()));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_mark_all_toggle_clears() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::MarkAll).unwrap();
+    assert!(!app.marked.is_empty());
+
+    app.update(Action::MarkAll).unwrap();
+    assert!(app.marked.is_empty());
+    assert!(app.status_message.as_ref().unwrap().contains("cleared"));
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_mark_all_respects_search() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    let total = app.visible_entries().len();
+
+    // Filter to entries matching "bbb"
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchInput('b')).unwrap();
+    let filtered = app.visible_entries().len();
+    assert!(filtered < total);
+
+    app.update(Action::MarkAll).unwrap();
+    // Only filtered entries should be marked
+    assert_eq!(app.marked.len(), filtered);
+    cleanup_test_dir(&dir);
+  }
 }
