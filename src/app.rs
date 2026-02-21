@@ -4534,4 +4534,196 @@ mod tests {
     }
     cleanup_test_dir(&dir);
   }
+
+  // === Dual-pane right-pane operation tests ===
+
+  #[test]
+  fn test_dual_pane_go_to_top_bottom() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+    assert_eq!(app.active_pane, 1);
+
+    // Move cursor down in right pane
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert!(right.cursor > 0);
+
+    // GoToTop should reset right pane cursor
+    app.update(Action::GoToTop).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.cursor, 0);
+
+    // GoToBottom should set cursor to last visible
+    app.update(Action::GoToBottom).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    let max = right.cached_visible.len().saturating_sub(1);
+    assert_eq!(right.cursor, max);
+
+    // Left pane cursor should be unaffected
+    assert_eq!(app.cursor, 0);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_enter_directory() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+
+    // First entry should be aaa_dir
+    let right = app.right_pane.as_ref().unwrap();
+    assert!(right.tree.entries[right.cached_visible[0]].is_dir);
+
+    app.update(Action::EnterDir).unwrap();
+
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.tree.root, dir.join("aaa_dir"));
+    assert_eq!(right.cursor, 0);
+
+    // Left pane should still be at original root
+    assert_eq!(app.tree.root, dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_go_parent() {
+    let dir = setup_test_dir();
+    fs::write(dir.join("aaa_dir").join("inner.txt"), "data").unwrap();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+
+    // Enter aaa_dir in right pane
+    app.update(Action::EnterDir).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.tree.root, dir.join("aaa_dir"));
+
+    // MoveLeft should go to parent
+    app.update(Action::MoveLeft).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.tree.root, dir);
+
+    // Left pane unaffected
+    assert_eq!(app.tree.root, dir);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_collapse_expanded() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+
+    // Expand aaa_dir in right pane
+    app.update(Action::MoveRight).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert!(right.tree.entries[right.cached_visible[0]].expanded);
+
+    // MoveLeft on expanded dir should collapse it
+    app.update(Action::MoveLeft).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert!(!right.tree.entries[right.cached_visible[0]].expanded);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_toggle_hidden() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+
+    let right = app.right_pane.as_ref().unwrap();
+    let count_before = right.cached_visible.len();
+
+    // Toggle hidden in right pane
+    app.update(Action::ToggleHidden).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    let count_after = right.cached_visible.len();
+
+    // Should see more entries (hidden file .hidden is now visible)
+    assert!(count_after > count_before);
+
+    // Left pane should be unaffected
+    assert_eq!(app.cached_visible.len(), count_before);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_search_filter() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+
+    let left_count = app.cached_visible.len();
+
+    // Search in right pane
+    app.update(Action::SearchStart).unwrap();
+    app.update(Action::SearchInput('b')).unwrap();
+
+    let right = app.right_pane.as_ref().unwrap();
+    assert!(right.cached_visible.len() < left_count);
+    assert!(!right.search_query.is_empty());
+
+    // Left pane should be unaffected
+    assert_eq!(app.cached_visible.len(), left_count);
+    assert!(app.search_query.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_mark_all() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+    app.update(Action::SwitchPane).unwrap();
+
+    app.update(Action::MarkAll).unwrap();
+
+    let right = app.right_pane.as_ref().unwrap();
+    assert!(!right.marked.is_empty());
+
+    // Left pane marks should be empty
+    assert!(app.marked.is_empty());
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_dual_pane_move_cursor() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ToggleDualPane).unwrap();
+
+    // Move left pane cursor
+    app.update(Action::MoveDown).unwrap();
+    app.update(Action::MoveDown).unwrap();
+    let left_cursor = app.cursor;
+
+    // Switch to right pane
+    app.update(Action::SwitchPane).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.cursor, 0);
+
+    // Move right pane cursor
+    app.update(Action::MoveDown).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.cursor, 1);
+
+    // Move up
+    app.update(Action::MoveUp).unwrap();
+    let right = app.right_pane.as_ref().unwrap();
+    assert_eq!(right.cursor, 0);
+
+    // Left pane cursor unaffected
+    assert_eq!(app.cursor, left_cursor);
+    cleanup_test_dir(&dir);
+  }
 }
