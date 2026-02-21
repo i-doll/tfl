@@ -4853,4 +4853,124 @@ mod tests {
     assert_eq!(app.favorites.len(), 1);
     cleanup_test_dir(&dir);
   }
+
+  // === Chmod and compress tests ===
+
+  #[test]
+  fn test_chmod_digit_in_octal_mode() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+    app.update(Action::ChmodToggleOctal).unwrap();
+    assert!(app.chmod_state.octal_mode);
+
+    // Clear pre-filled octal input to start fresh
+    app.chmod_state.octal_input.clear();
+
+    // Enter "755"
+    app.update(Action::ChmodDigit('7')).unwrap();
+    app.update(Action::ChmodDigit('5')).unwrap();
+    app.update(Action::ChmodDigit('5')).unwrap();
+    assert_eq!(app.chmod_state.octal_input, "755");
+    assert_eq!(app.chmod_state.new_mode & 0o777, 0o755);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_octal_backspace() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+    app.update(Action::ChmodToggleOctal).unwrap();
+    app.chmod_state.octal_input.clear();
+
+    app.update(Action::ChmodDigit('7')).unwrap();
+    app.update(Action::ChmodDigit('5')).unwrap();
+    assert_eq!(app.chmod_state.octal_input, "75");
+
+    app.update(Action::ChmodOctalBackspace).unwrap();
+    assert_eq!(app.chmod_state.octal_input, "7");
+    // Mode should update after backspace
+    assert_eq!(app.chmod_state.new_mode & 0o777, 0o007);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_octal_max_digits() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+    app.update(Action::ChmodToggleOctal).unwrap();
+    app.chmod_state.octal_input.clear();
+
+    // Enter 4 digits (max for setuid/setgid/sticky)
+    app.update(Action::ChmodDigit('4')).unwrap();
+    app.update(Action::ChmodDigit('7')).unwrap();
+    app.update(Action::ChmodDigit('5')).unwrap();
+    app.update(Action::ChmodDigit('5')).unwrap();
+    assert_eq!(app.chmod_state.octal_input.len(), 4);
+
+    // 5th digit should be rejected
+    app.update(Action::ChmodDigit('0')).unwrap();
+    assert_eq!(app.chmod_state.octal_input.len(), 4);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_apply_octal_input_invalid() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+    let original = app.chmod_state.new_mode;
+
+    // Directly set invalid octal - should not crash
+    app.chmod_state.octal_input = "999".to_string();
+    app.apply_octal_input();
+    // u32::from_str_radix("999", 8) fails, mode unchanged
+    assert_eq!(app.chmod_state.new_mode, original);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_chmod_toggle_bit_all_positions() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    app.update(Action::ChmodStart).unwrap();
+
+    // Test each of the 9 permission bit positions (0-8)
+    for bit in 0..9 {
+      let before = app.chmod_state.new_mode;
+      app.update(Action::ChmodToggleBit(bit)).unwrap();
+      assert_ne!(app.chmod_state.new_mode, before, "Bit {bit} should toggle");
+      // Toggle back
+      app.update(Action::ChmodToggleBit(bit)).unwrap();
+      assert_eq!(app.chmod_state.new_mode, before, "Bit {bit} should toggle back");
+    }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_compress_start_opens_dialog() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    // Mark a file so we have targets
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    app.update(Action::ToggleMark).unwrap();
+    app.update(Action::CompressStart).unwrap();
+    assert_eq!(app.input_mode, InputMode::Compress);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_compress_select_invalid_format() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+    // Out-of-range index should return Ok without state change
+    app.input_mode = InputMode::Compress;
+    app.update(Action::CompressSelect(99)).unwrap();
+    // Should not crash and mode returns to Normal since no targets
+    cleanup_test_dir(&dir);
+  }
 }
