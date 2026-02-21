@@ -237,6 +237,7 @@ Options:
   if show_hidden {
     app.tree.show_hidden = true;
     app.tree.reload()?;
+    app.rebuild_visible_cache();
   }
 
   // Trigger initial preview
@@ -255,12 +256,16 @@ Options:
   let mut last_tree_change: Option<Instant> = None;
 
   loop {
-    terminal.draw(|frame| ui::draw(frame, &mut app, &config))?;
+    if app.needs_redraw {
+      terminal.draw(|frame| ui::draw(frame, &mut app, &config))?;
+      app.needs_redraw = false;
+    }
 
     match events.next()? {
       Event::Key(key) => {
         let action = map_key(key, app.input_mode, &config);
         app.update(action)?;
+        app.needs_redraw = true;
         events.set_watched_dirs(compute_watched_dirs(&app));
       }
       Event::Mouse(mouse) => {
@@ -269,11 +274,13 @@ Options:
           && let Some(action) = map_breadcrumb_click(mouse.column, &app.breadcrumb_segments)
         {
           app.update(action)?;
+          app.needs_redraw = true;
           events.set_watched_dirs(compute_watched_dirs(&app));
         }
       }
       Event::Resize(w, h) => {
         app.update(crate::action::Action::Resize(w, h))?;
+        app.needs_redraw = true;
       }
       Event::ConfigChanged => {
         if app.wrote_config {
@@ -282,6 +289,7 @@ Options:
         } else if last_reload.elapsed() > Duration::from_millis(500) {
           reload_config(&mut config, &mut app);
           last_reload = Instant::now();
+          app.needs_redraw = true;
         }
       }
       Event::TreeChanged => {
@@ -299,8 +307,10 @@ Options:
         if app.input_mode == crate::event::InputMode::Normal {
           if app.status_ticks > 0 {
             app.status_ticks -= 1;
-          } else {
+            app.needs_redraw = true;
+          } else if app.status_message.is_some() {
             app.status_message = None;
+            app.needs_redraw = true;
           }
         }
         // Debounced tree reload from external changes
@@ -309,15 +319,20 @@ Options:
         {
           last_tree_change = None;
           let cursor_path = app.selected_entry().map(|e| e.path.clone());
+          app.tree.invalidate_git_statuses();
           app.tree.reload()?;
+          app.rebuild_visible_cache();
           if let Some(ref mut pane) = app.right_pane {
+            pane.tree.invalidate_git_statuses();
             let _ = pane.tree.reload();
+            pane.rebuild_visible_cache();
           }
           if let Some(ref path) = cursor_path {
             app.reposition_cursor_to(path);
           }
           app.preview.invalidate();
           app.update_preview();
+          app.needs_redraw = true;
           events.set_watched_dirs(compute_watched_dirs(&app));
         }
       }
@@ -340,7 +355,14 @@ Options:
         reload_config(&mut config, &mut app);
         last_reload = Instant::now();
       }
+      app.tree.invalidate_git_statuses();
       app.tree.reload()?;
+      app.rebuild_visible_cache();
+      if let Some(ref mut pane) = app.right_pane {
+        pane.tree.invalidate_git_statuses();
+        let _ = pane.tree.reload();
+        pane.rebuild_visible_cache();
+      }
       app.preview.invalidate();
       // Re-request preview for currently selected file
       if let Some(entry) = app.selected_entry() {
