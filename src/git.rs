@@ -599,4 +599,182 @@ mod tests {
 
     let _ = fs::remove_dir_all(&dir);
   }
+
+  #[test]
+  fn test_convert_status_index_deleted() {
+    let status = convert_status(Status::INDEX_DELETED);
+    assert_eq!(status.staged, Some(GitFileStatus::Deleted));
+  }
+
+  #[test]
+  fn test_convert_status_index_renamed() {
+    let status = convert_status(Status::INDEX_RENAMED);
+    assert_eq!(status.staged, Some(GitFileStatus::Renamed));
+  }
+
+  #[test]
+  fn test_convert_status_wt_deleted() {
+    let status = convert_status(Status::WT_DELETED);
+    assert_eq!(status.unstaged, Some(GitFileStatus::Deleted));
+  }
+
+  #[test]
+  fn test_convert_status_wt_renamed() {
+    let status = convert_status(Status::WT_RENAMED);
+    assert_eq!(status.unstaged, Some(GitFileStatus::Renamed));
+  }
+
+  #[test]
+  fn test_convert_status_index_modified() {
+    let status = convert_status(Status::INDEX_MODIFIED);
+    assert_eq!(status.staged, Some(GitFileStatus::Modified));
+  }
+
+  #[test]
+  fn test_convert_status_combined() {
+    // Both staged new and working tree modified
+    let status = convert_status(Status::INDEX_NEW | Status::WT_MODIFIED);
+    assert_eq!(status.staged, Some(GitFileStatus::Added));
+    assert_eq!(status.unstaged, Some(GitFileStatus::Modified));
+  }
+
+  #[test]
+  fn test_get_file_commits_returns_history() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+
+    let file_path = dir.join("tracked.txt");
+    let git_repo = Repository::open(&dir).unwrap();
+
+    // First commit
+    fs::write(&file_path, "version 1").unwrap();
+    let mut index = git_repo.index().unwrap();
+    index.add_path(Path::new("tracked.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repo.find_tree(tree_id).unwrap();
+    let sig = git_repo.signature().unwrap();
+    let commit1 = git_repo
+      .commit(Some("HEAD"), &sig, &sig, "First commit", &tree, &[])
+      .unwrap();
+
+    // Second commit
+    fs::write(&file_path, "version 2").unwrap();
+    let mut index = git_repo.index().unwrap();
+    index.add_path(Path::new("tracked.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repo.find_tree(tree_id).unwrap();
+    let parent = git_repo.find_commit(commit1).unwrap();
+    git_repo
+      .commit(Some("HEAD"), &sig, &sig, "Second commit", &tree, &[&parent])
+      .unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let commits = repo.get_file_commits(&file_path, 10);
+    assert_eq!(commits.len(), 2);
+    // Most recent first
+    assert_eq!(commits[0].message, "Second commit");
+    assert_eq!(commits[1].message, "First commit");
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_get_file_commits_unchanged_file() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+
+    let file_path = dir.join("unchanged.txt");
+    let other_path = dir.join("other.txt");
+    let git_repo = Repository::open(&dir).unwrap();
+
+    // First commit with both files
+    fs::write(&file_path, "content").unwrap();
+    fs::write(&other_path, "other").unwrap();
+    let mut index = git_repo.index().unwrap();
+    index.add_path(Path::new("unchanged.txt")).unwrap();
+    index.add_path(Path::new("other.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repo.find_tree(tree_id).unwrap();
+    let sig = git_repo.signature().unwrap();
+    let commit1 = git_repo
+      .commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+      .unwrap();
+
+    // Second commit only changes other file
+    fs::write(&other_path, "changed").unwrap();
+    let mut index = git_repo.index().unwrap();
+    index.add_path(Path::new("other.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repo.find_tree(tree_id).unwrap();
+    let parent = git_repo.find_commit(commit1).unwrap();
+    git_repo
+      .commit(Some("HEAD"), &sig, &sig, "Change other", &tree, &[&parent])
+      .unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let commits = repo.get_file_commits(&file_path, 10);
+    // Only the initial commit should touch unchanged.txt
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].message, "Initial");
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_get_file_commits_outside_repo() {
+    let dir = make_test_dir();
+    init_git_repo(&dir);
+    // Make initial commit so repo has HEAD
+    fs::write(dir.join("file.txt"), "data").unwrap();
+    let git_repo = Repository::open(&dir).unwrap();
+    let mut index = git_repo.index().unwrap();
+    index.add_path(Path::new("file.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repo.find_tree(tree_id).unwrap();
+    let sig = git_repo.signature().unwrap();
+    git_repo
+      .commit(Some("HEAD"), &sig, &sig, "Init", &tree, &[])
+      .unwrap();
+
+    let repo = GitRepo::open(&dir).unwrap();
+    let commits = repo.get_file_commits(Path::new("/outside/repo/file.txt"), 10);
+    assert!(commits.is_empty());
+
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn test_format_relative_time_months() {
+    let now = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap()
+      .as_secs() as i64;
+    // ~45 days ago
+    assert_eq!(format_relative_time(now - 86400 * 45), "1mo ago");
+  }
+
+  #[test]
+  fn test_format_relative_time_years() {
+    let now = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap()
+      .as_secs() as i64;
+    // ~400 days ago
+    assert_eq!(format_relative_time(now - 86400 * 400), "1y ago");
+  }
+
+  #[test]
+  fn test_format_relative_time_future() {
+    let now = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap()
+      .as_secs() as i64;
+    // Timestamp in the future
+    assert_eq!(format_relative_time(now + 3600), "future");
+  }
 }
