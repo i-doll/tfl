@@ -575,4 +575,78 @@ mod tests {
     assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Properties, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Properties, &c), Action::None);
   }
+
+  // === Compress mode tests ===
+
+  #[test]
+  fn test_compress_mode_select_formats() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('1')), InputMode::Compress, &c), Action::CompressSelect(0));
+    assert_eq!(map_key(key(KeyCode::Char('2')), InputMode::Compress, &c), Action::CompressSelect(1));
+    assert_eq!(map_key(key(KeyCode::Char('3')), InputMode::Compress, &c), Action::CompressSelect(2));
+    assert_eq!(map_key(key(KeyCode::Char('4')), InputMode::Compress, &c), Action::CompressSelect(3));
+  }
+
+  #[test]
+  fn test_compress_mode_close() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Compress, &c), Action::CompressClose);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Compress, &c), Action::CompressClose);
+  }
+
+  #[test]
+  fn test_compress_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::Compress, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('5')), InputMode::Compress, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Compress, &c), Action::None);
+  }
+
+  // === Error mode tests ===
+
+  #[test]
+  fn test_error_mode_close_keys() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Esc), InputMode::Error, &c), Action::ErrorClose);
+    assert_eq!(map_key(key(KeyCode::Enter), InputMode::Error, &c), Action::ErrorClose);
+    assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Error, &c), Action::ErrorClose);
+  }
+
+  #[test]
+  fn test_error_mode_other_keys_ignored() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Error, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('a')), InputMode::Error, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Down), InputMode::Error, &c), Action::None);
+  }
+
+  // === Breadcrumb click tests ===
+
+  #[test]
+  fn test_map_breadcrumb_click_on_segment() {
+    use crate::ui::breadcrumb::BreadcrumbSegment;
+    let segments = vec![
+      BreadcrumbSegment { name: "home".to_string(), path: PathBuf::from("/home"), start_col: 0, width: 4 },
+      BreadcrumbSegment { name: "user".to_string(), path: PathBuf::from("/home/user"), start_col: 7, width: 4 },
+    ];
+    // Click on first segment (col 1 because map_breadcrumb_click subtracts 1 for leading space)
+    let action = map_breadcrumb_click(1, &segments);
+    assert_eq!(action, Some(Action::BreadcrumbSelect(0)));
+
+    // Click on second segment
+    let action = map_breadcrumb_click(8, &segments);
+    assert_eq!(action, Some(Action::BreadcrumbSelect(1)));
+  }
+
+  #[test]
+  fn test_map_breadcrumb_click_gap() {
+    use crate::ui::breadcrumb::BreadcrumbSegment;
+    let segments = vec![
+      BreadcrumbSegment { name: "home".to_string(), path: PathBuf::from("/home"), start_col: 0, width: 4 },
+      BreadcrumbSegment { name: "user".to_string(), path: PathBuf::from("/home/user"), start_col: 7, width: 4 },
+    ];
+    // Click in the gap (separator) between segments - col 6 adjusted to 5
+    let action = map_breadcrumb_click(6, &segments);
+    assert_eq!(action, None);
+  }
 }

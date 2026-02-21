@@ -537,4 +537,71 @@ mod tests {
     assert_eq!(month, 3);
     assert_eq!(day, 1);
   }
+
+  #[test]
+  fn test_determine_file_type_extensions() {
+    let dir = setup_test_dir();
+
+    let cases = [
+      ("test.py", "Python source"),
+      ("data.json", "JSON data"),
+      ("photo.png", "PNG image"),
+      ("song.mp3", "MP3 audio"),
+      ("archive.zip", "ZIP archive"),
+      ("doc.pdf", "PDF document"),
+    ];
+    for (name, expected) in &cases {
+      let file = dir.join(name);
+      fs::write(&file, "content").unwrap();
+      let meta = fs::metadata(&file).unwrap();
+      assert_eq!(determine_file_type(&file, &meta, false), *expected, "Failed for {name}");
+    }
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_determine_file_type_special_names() {
+    let dir = setup_test_dir();
+
+    let cases = [
+      ("Dockerfile", "Dockerfile"),
+      (".gitignore", "Git ignore rules"),
+      ("LICENSE", "License file"),
+      ("Makefile", "Makefile"),
+    ];
+    for (name, expected) in &cases {
+      let file = dir.join(name);
+      fs::write(&file, "content").unwrap();
+      let meta = fs::metadata(&file).unwrap();
+      assert_eq!(determine_file_type(&file, &meta, false), *expected, "Failed for {name}");
+    }
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_determine_file_type_unknown() {
+    let dir = setup_test_dir();
+    let file = dir.join("data.xyz");
+    fs::write(&file, "content").unwrap();
+    let meta = fs::metadata(&file).unwrap();
+    assert_eq!(determine_file_type(&file, &meta, false), "XYZ file");
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_days_to_ymd_month_boundaries() {
+    // 1970-02-01 = day 31
+    let (year, month, day) = days_to_ymd(31);
+    assert_eq!((year, month, day), (1970, 2, 1));
+
+    // 1970-12-31 = day 364
+    let (year, month, day) = days_to_ymd(364);
+    assert_eq!((year, month, day), (1970, 12, 31));
+
+    // 1971-01-01 = day 365
+    let (year, month, day) = days_to_ymd(365);
+    assert_eq!((year, month, day), (1971, 1, 1));
+  }
 }
