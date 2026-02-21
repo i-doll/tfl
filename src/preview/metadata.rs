@@ -260,6 +260,7 @@ fn format_exposure(val: &str) -> String {
   val.to_string()
 }
 
+#[allow(dead_code)]
 pub fn get_git_commits(git_repo: Option<&GitRepo>, path: &Path, limit: usize) -> Vec<GitCommit> {
   git_repo.map(|r| r.get_file_commits(path, limit)).unwrap_or_default()
 }

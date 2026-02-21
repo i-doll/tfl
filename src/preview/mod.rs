@@ -19,7 +19,7 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 
 use self::blame::BlameData;
-use self::metadata::{FileMetadata, ImageMetadata, get_file_metadata, get_file_metadata_with_lines, get_image_metadata, get_git_commits};
+use self::metadata::{FileMetadata, ImageMetadata, get_file_metadata, get_file_metadata_with_lines, get_image_metadata};
 use self::text::SyntaxHighlighter;
 use crate::git::{GitCommit, GitRepo};
 use crate::theme::Theme;
@@ -67,6 +67,7 @@ pub struct PreviewState {
   pub content: Option<PreviewContent>,
   pub image_protocol: Option<StatefulProtocol>,
   pub image_rx: Option<mpsc::Receiver<self::image::ImageLoadResult>>,
+  pub git_commits_rx: Option<mpsc::Receiver<(PathBuf, Vec<GitCommit>)>>,
   pub blame_enabled: bool,
   pub markdown_rendered: bool,
   /// Whether to show formatted (pretty-printed) view for structured data.
@@ -88,6 +89,7 @@ impl PreviewState {
       content: None,
       image_protocol: None,
       image_rx: None,
+      git_commits_rx: None,
       blame_enabled: false,
       markdown_rendered: true,
       show_formatted: true,
@@ -110,9 +112,18 @@ impl PreviewState {
     self.invalidate();
   }
 
-  pub fn toggle_blame(&mut self) {
+  pub fn toggle_blame(&mut self, git_repo: Option<&GitRepo>) {
     self.blame_enabled = !self.blame_enabled;
     self.scroll_offset = 0;
+
+    // Lazily compute blame data on first toggle-on
+    if self.blame_enabled
+      && let Some(path) = self.current_path.clone()
+      && let Some(content) = self.cache.get_mut(&path)
+      && content.blame_data.is_none()
+    {
+      content.blame_data = git_repo.and_then(|repo| blame::get_blame(repo, &path));
+    }
   }
 
   /// Toggles between formatted and raw view for structured data files.
@@ -154,6 +165,7 @@ impl PreviewState {
     self.scroll_offset = 0;
     self.image_protocol = None;
     self.image_rx = None;
+    self.git_commits_rx = None;
     self.current_path = Some(path.to_path_buf());
 
     // Check cache
@@ -175,10 +187,15 @@ impl PreviewState {
 
   fn load_preview(&mut self, path: &Path, picker: Option<&Picker>, git_repo: Option<&GitRepo>) {
     let preview_type = detect_preview_type(path);
-    let git_commits = get_git_commits(git_repo, path, 3);
+
+    // Spawn async git commit loading
+    if let Some(repo) = git_repo {
+      self.git_commits_rx = Some(load_git_commits_async(repo.root(), path, 3));
+    }
+    let git_commits = Vec::new();
     let content = match preview_type {
-      PreviewType::Text => self.load_text(path, git_repo),
-      PreviewType::Markdown => self.load_markdown(path, git_repo),
+      PreviewType::Text => self.load_text(path, &git_commits),
+      PreviewType::Markdown => self.load_markdown(path, &git_commits),
       PreviewType::Image => {
         if let Some(picker) = picker {
           self.image_rx = Some(self::image::load_image_async(path, picker));
@@ -201,8 +218,8 @@ impl PreviewState {
           diff_hunks: Vec::new(),
         })
       }
-      PreviewType::Binary => self.load_hex(path, git_repo),
-      PreviewType::Archive => self.load_archive(path, git_repo),
+      PreviewType::Binary => self.load_hex(path, &git_commits),
+      PreviewType::Archive => self.load_archive(path, &git_commits),
       PreviewType::Directory => self.load_directory(path),
       PreviewType::TooLarge => {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -257,7 +274,7 @@ impl PreviewState {
     }
   }
 
-  fn load_text(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
+  fn load_text(&self, path: &Path, git_commits: &[GitCommit]) -> Option<PreviewContent> {
     let content = match std::fs::read_to_string(path) {
       Ok(c) => c,
       Err(e) => {
@@ -283,8 +300,6 @@ impl PreviewState {
     let ext = get_extension(path);
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let metadata = get_file_metadata_with_lines(path, line_count);
-    let git_commits = get_git_commits(git_repo, path, 3);
-    let blame_data = git_repo.and_then(|repo| blame::get_blame(repo, path));
 
     // Check if this is a structured data file (JSON/TOML)
     let is_structured = structured::is_structured_data(&ext);
@@ -324,15 +339,15 @@ impl PreviewState {
       extension: ext,
       metadata,
       image_metadata: None,
-      git_commits,
-      blame_data,
+      git_commits: git_commits.to_vec(),
+      blame_data: None,
       raw_lines,
       is_structured,
       diff_hunks: Vec::new(),
     })
   }
 
-  fn load_markdown(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
+  fn load_markdown(&self, path: &Path, git_commits: &[GitCommit]) -> Option<PreviewContent> {
     let content = match std::fs::read_to_string(path) {
       Ok(c) => c,
       Err(e) => {
@@ -358,8 +373,6 @@ impl PreviewState {
     let ext = get_extension(path);
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let metadata = get_file_metadata_with_lines(path, line_count);
-    let git_commits = get_git_commits(git_repo, path, 3);
-    let blame_data = git_repo.and_then(|repo| blame::get_blame(repo, path));
 
     // Render markdown if in rendered mode, otherwise show raw with syntax highlighting
     let lines = if self.markdown_rendered {
@@ -376,15 +389,15 @@ impl PreviewState {
       extension: ext,
       metadata,
       image_metadata: None,
-      git_commits,
-      blame_data,
+      git_commits: git_commits.to_vec(),
+      blame_data: None,
       raw_lines: None,
       is_structured: false,
       diff_hunks: Vec::new(),
     })
   }
 
-  fn load_hex(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
+  fn load_hex(&self, path: &Path, git_commits: &[GitCommit]) -> Option<PreviewContent> {
     let data = match std::fs::read(path) {
       Ok(d) => d,
       Err(e) => {
@@ -409,7 +422,6 @@ impl PreviewState {
     let truncated = &data[..data.len().min(MAX_HEX_BYTES)];
     let lines = hex::hex_dump(truncated, &self.theme);
     let metadata = get_file_metadata(path);
-    let git_commits = get_git_commits(git_repo, path, 3);
 
     Some(PreviewContent {
       lines,
@@ -419,7 +431,7 @@ impl PreviewState {
       extension: get_extension(path),
       metadata,
       image_metadata: None,
-      git_commits,
+      git_commits: git_commits.to_vec(),
       blame_data: None,
       raw_lines: None,
       is_structured: false,
@@ -447,10 +459,9 @@ impl PreviewState {
     })
   }
 
-  fn load_archive(&self, path: &Path, git_repo: Option<&GitRepo>) -> Option<PreviewContent> {
+  fn load_archive(&self, path: &Path, git_commits: &[GitCommit]) -> Option<PreviewContent> {
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let metadata = get_file_metadata(path);
-    let git_commits = get_git_commits(git_repo, path, 3);
     let archive_type = archive::archive_type(path).unwrap_or("archive");
     let lines = archive::render_archive_summary(archive_type, file_size, &self.theme);
 
@@ -462,7 +473,7 @@ impl PreviewState {
       extension: get_extension(path),
       metadata,
       image_metadata: None,
-      git_commits,
+      git_commits: git_commits.to_vec(),
       blame_data: None,
       raw_lines: None,
       is_structured: false,
@@ -484,7 +495,7 @@ impl PreviewState {
     self.current_path.as_ref().and_then(|p| self.cache.get(p))
   }
 
-  pub fn check_image_loaded(&mut self) {
+  pub fn check_image_loaded(&mut self) -> bool {
     if let Some(ref rx) = self.image_rx
       && let Ok(result) = rx.try_recv() {
         match result {
@@ -512,7 +523,22 @@ impl PreviewState {
           }
         }
         self.image_rx = None;
+        return true;
       }
+    false
+  }
+
+  pub fn check_git_commits_loaded(&mut self) -> bool {
+    if let Some(ref rx) = self.git_commits_rx
+      && let Ok((path, commits)) = rx.try_recv()
+    {
+      if let Some(content) = self.cache.get_mut(&path) {
+        content.git_commits = commits;
+      }
+      self.git_commits_rx = None;
+      return true;
+    }
+    false
   }
 
   pub fn scroll_up(&mut self, amount: usize) {
@@ -534,6 +560,7 @@ impl PreviewState {
     self.content = None;
     self.image_protocol = None;
     self.image_rx = None;
+    self.git_commits_rx = None;
   }
 
   /// Toggle between raw and rendered markdown mode
@@ -636,6 +663,25 @@ impl PreviewState {
     }
     false
   }
+}
+
+fn load_git_commits_async(
+  repo_root: &Path,
+  path: &Path,
+  limit: usize,
+) -> mpsc::Receiver<(PathBuf, Vec<GitCommit>)> {
+  let (tx, rx) = mpsc::channel();
+  let repo_root = repo_root.to_path_buf();
+  let path = path.to_path_buf();
+
+  std::thread::spawn(move || {
+    let commits = GitRepo::open(&repo_root)
+      .map(|r| r.get_file_commits(&path, limit))
+      .unwrap_or_default();
+    let _ = tx.send((path, commits));
+  });
+
+  rx
 }
 
 fn get_extension(path: &Path) -> String {
@@ -876,10 +922,10 @@ mod tests {
     let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     assert!(!state.blame_enabled);
 
-    state.toggle_blame();
+    state.toggle_blame(None);
     assert!(state.blame_enabled);
 
-    state.toggle_blame();
+    state.toggle_blame(None);
     assert!(!state.blame_enabled);
   }
 
@@ -888,7 +934,7 @@ mod tests {
     let mut state = PreviewState::new("base16-ocean.dark", Theme::dark());
     state.scroll_offset = 15;
 
-    state.toggle_blame();
+    state.toggle_blame(None);
     assert_eq!(state.scroll_offset, 0);
   }
 
