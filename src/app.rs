@@ -153,6 +153,7 @@ pub struct App {
   pub max_tree_ratio: u16,
   pub ratio_step: u16,
   pub show_help: bool,
+  pub help_scroll: usize,
   pub should_quit: bool,
   pub should_suspend: Option<SuspendAction>,
   pub status_message: Option<String>,
@@ -231,6 +232,7 @@ impl App {
       max_tree_ratio: config.max_tree_ratio,
       ratio_step: config.ratio_step,
       show_help: false,
+      help_scroll: 0,
       should_quit: false,
       should_suspend: None,
       status_message: None,
@@ -322,8 +324,20 @@ impl App {
         }
       }
       Action::MoveLeft => self.go_parent_or_collapse()?,
-      Action::ScrollPreviewDown => self.preview.scroll_down(3),
-      Action::ScrollPreviewUp => self.preview.scroll_up(3),
+      Action::ScrollPreviewDown => {
+        if self.show_help {
+          self.help_scroll = self.help_scroll.saturating_add(3);
+        } else {
+          self.preview.scroll_down(3);
+        }
+      }
+      Action::ScrollPreviewUp => {
+        if self.show_help {
+          self.help_scroll = self.help_scroll.saturating_sub(3);
+        } else {
+          self.preview.scroll_up(3);
+        }
+      }
       Action::ToggleHidden => self.toggle_hidden()?,
       Action::ToggleFormatted => {
         if self.preview.toggle_formatted() {
@@ -476,6 +490,9 @@ impl App {
       }
       Action::ToggleHelp => {
         self.show_help = !self.show_help;
+        if self.show_help {
+          self.help_scroll = 0;
+        }
         self.input_mode = if self.show_help { InputMode::Help } else { InputMode::Normal };
       }
       Action::ToggleBlame => {
@@ -2764,6 +2781,43 @@ mod tests {
     app.update(Action::ToggleHelp).unwrap();
     assert!(!app.show_help);
     assert_eq!(app.input_mode, InputMode::Normal);
+
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_help_scroll() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
+
+    // Open help
+    app.update(Action::ToggleHelp).unwrap();
+    assert!(app.show_help);
+    assert_eq!(app.help_scroll, 0);
+
+    // Scroll down modifies help_scroll, not preview
+    app.update(Action::ScrollPreviewDown).unwrap();
+    assert_eq!(app.help_scroll, 3);
+
+    app.update(Action::ScrollPreviewDown).unwrap();
+    assert_eq!(app.help_scroll, 6);
+
+    // Scroll up
+    app.update(Action::ScrollPreviewUp).unwrap();
+    assert_eq!(app.help_scroll, 3);
+
+    // Scroll up past 0 saturates
+    app.update(Action::ScrollPreviewUp).unwrap();
+    assert_eq!(app.help_scroll, 0);
+    app.update(Action::ScrollPreviewUp).unwrap();
+    assert_eq!(app.help_scroll, 0);
+
+    // Re-opening help resets scroll
+    app.update(Action::ToggleHelp).unwrap();
+    assert!(!app.show_help);
+    app.help_scroll = 10; // simulate leftover
+    app.update(Action::ToggleHelp).unwrap();
+    assert_eq!(app.help_scroll, 0);
 
     cleanup_test_dir(&dir);
   }
