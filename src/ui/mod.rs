@@ -89,7 +89,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, config: &Config) {
 
   // Overlays
   if app.show_help {
-    help::render_help(config, area, frame.buffer_mut(), theme);
+    help::render_help(app, config, area, frame.buffer_mut(), theme);
   }
   if app.input_mode == crate::event::InputMode::Favorites {
     favorites::render_favorites(app, area, frame.buffer_mut(), theme);

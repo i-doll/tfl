@@ -243,6 +243,8 @@ pub fn map_key(key: KeyEvent, mode: InputMode, config: &Config) -> Action {
       KeyCode::Esc => Action::ToggleHelp,
       KeyCode::Char('?') => Action::ToggleHelp,
       KeyCode::Char('q') => Action::ToggleHelp,
+      KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down | KeyCode::PageDown => Action::ScrollPreviewDown,
+      KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up | KeyCode::PageUp => Action::ScrollPreviewUp,
       _ => Action::None,
     },
     InputMode::Prompt => match key.code {
@@ -432,9 +434,22 @@ mod tests {
   #[test]
   fn test_help_mode_other_keys_ignored() {
     let c = cfg();
-    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Help, &c), Action::None);
     assert_eq!(map_key(key(KeyCode::Char('q')), InputMode::Help, &c), Action::ToggleHelp);
     assert_eq!(map_key(key(KeyCode::Enter), InputMode::Help, &c), Action::None);
+    assert_eq!(map_key(key(KeyCode::Char('x')), InputMode::Help, &c), Action::None);
+  }
+
+  #[test]
+  fn test_help_mode_scroll_keys() {
+    let c = cfg();
+    assert_eq!(map_key(key(KeyCode::Char('j')), InputMode::Help, &c), Action::ScrollPreviewDown);
+    assert_eq!(map_key(key(KeyCode::Char('k')), InputMode::Help, &c), Action::ScrollPreviewUp);
+    assert_eq!(map_key(key(KeyCode::Char('J')), InputMode::Help, &c), Action::ScrollPreviewDown);
+    assert_eq!(map_key(key(KeyCode::Char('K')), InputMode::Help, &c), Action::ScrollPreviewUp);
+    assert_eq!(map_key(key(KeyCode::Down), InputMode::Help, &c), Action::ScrollPreviewDown);
+    assert_eq!(map_key(key(KeyCode::Up), InputMode::Help, &c), Action::ScrollPreviewUp);
+    assert_eq!(map_key(key(KeyCode::PageDown), InputMode::Help, &c), Action::ScrollPreviewDown);
+    assert_eq!(map_key(key(KeyCode::PageUp), InputMode::Help, &c), Action::ScrollPreviewUp);
   }
 
   #[test]
