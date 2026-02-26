@@ -24,7 +24,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Syntax-highlighted text preview** via syntect
 - **Rendered markdown preview** with styled headings, lists, code blocks, and links
 - **JSON/TOML pretty-printing** with formatted/raw view toggle (`P`)
-- **Image preview** in supported terminals (Kitty graphics protocol)
+- **Image preview** in supported terminals (Kitty graphics protocol), including JPEG XL
 - **Hex dump** for binary files
 - **Directory summaries** with file counts and sizes
 - **Fuzzy search/filter** across file names
@@ -205,6 +205,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 | `crossterm` | Terminal backend (input, raw mode, alternate screen) |
 | `ratatui-image` | Image rendering via Kitty graphics protocol |
 | `image` | Image decoding |
+| `jxl-oxide` | JPEG XL image decoding |
 | `syntect` | Syntax highlighting for text preview |
 | `pulldown-cmark` | Markdown parsing for rendered preview |
 | `infer` | MIME type detection for binary vs text |

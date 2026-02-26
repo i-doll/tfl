@@ -691,7 +691,7 @@ fn get_extension(path: &Path) -> String {
     .unwrap_or_default()
 }
 
-const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "ico", "svg"];
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "ico", "svg", "jxl"];
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"];
 
 pub fn detect_preview_type(path: &Path) -> PreviewType {

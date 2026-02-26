@@ -85,12 +85,24 @@ fn get_group(meta: &Metadata) -> Option<String> {
 }
 
 pub fn get_image_metadata(path: &Path) -> Option<ImageMetadata> {
-  let img = image::image_dimensions(path).ok()?;
-  let (width, height) = img;
+  let (width, height) = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("jxl")) {
+    jxl_dimensions(path)?
+  } else {
+    image::image_dimensions(path).ok()?
+  };
   let aspect_ratio = calculate_aspect_ratio(width, height);
   let exif = get_exif_data(path);
 
   Some(ImageMetadata { width, height, aspect_ratio, exif })
+}
+
+fn jxl_dimensions(path: &Path) -> Option<(u32, u32)> {
+  use image::ImageDecoder;
+
+  let file = std::fs::File::open(path).ok()?;
+  let reader = std::io::BufReader::new(file);
+  let decoder = jxl_oxide::integration::JxlDecoder::new(reader).ok()?;
+  Some(decoder.dimensions())
 }
 
 fn get_exif_data(path: &Path) -> Option<ExifData> {
