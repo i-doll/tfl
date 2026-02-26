@@ -12,6 +12,7 @@ crossterm = "0.29"
 ratatui-image = { version = "10.0", default-features = false, features = ["image-defaults", "crossterm"] }
 image = "0.25"
 syntect = "5.3"
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
 infer = "0.19"
 ignore = "0.4"
 anyhow = "1"

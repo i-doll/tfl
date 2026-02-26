@@ -17,7 +17,7 @@ pub struct SyntaxHighlighter {
 
 impl SyntaxHighlighter {
   pub fn new(syntax_theme: &str) -> Self {
-    let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+    let mut builder = two_face::syntax::extra_newlines().into_builder();
     let toml_syntax = SyntaxDefinition::load_from_str(
       include_str!("syntaxes/TOML.sublime-syntax"),
       true,
@@ -252,6 +252,17 @@ mod tests {
     assert_eq!(h.theme_name, "base16-ocean.dark");
     h.set_theme_name("Catppuccin Mocha");
     assert_eq!(h.theme_name, "Catppuccin Mocha");
+  }
+
+  #[test]
+  fn test_highlight_typescript() {
+    let h = SyntaxHighlighter::new("base16-ocean.dark");
+    let ts = "const x: number = 42;\nfunction greet(name: string): void {\n  console.log(name);\n}\n";
+    let lines = h.highlight(ts, "ts");
+    assert_eq!(lines.len(), 4);
+    for line in &lines {
+      assert!(line.spans.len() > 2, "TypeScript should produce multiple styled spans, got: {:?}", line.spans);
+    }
   }
 
   #[test]
