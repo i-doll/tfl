@@ -44,7 +44,11 @@ fn main() -> Result<()> {
   #[cfg(target_os = "linux")]
   let mut pick_stdout = false;
   #[cfg(target_os = "linux")]
+  let mut pick_directory_stdout = false;
+  #[cfg(target_os = "linux")]
   let mut chooser_file: Option<String> = None;
+  #[cfg(target_os = "linux")]
+  let mut chooser_directory: Option<String> = None;
   #[cfg(target_os = "linux")]
   let mut install_handler = false;
   #[cfg(target_os = "linux")]
@@ -64,8 +68,14 @@ fn main() -> Result<()> {
       #[cfg(target_os = "linux")]
       "--pick" => pick_stdout = true,
       #[cfg(target_os = "linux")]
+      "--pick-dir" => pick_directory_stdout = true,
+      #[cfg(target_os = "linux")]
       a if a.starts_with("--chooser-file=") => {
         chooser_file = Some(a.strip_prefix("--chooser-file=").unwrap().to_string());
+      }
+      #[cfg(target_os = "linux")]
+      a if a.starts_with("--chooser-dir=") => {
+        chooser_directory = Some(a.strip_prefix("--chooser-dir=").unwrap().to_string());
       }
       #[cfg(target_os = "linux")]
       "--install-handler" => install_handler = true,
@@ -76,13 +86,13 @@ fn main() -> Result<()> {
       #[cfg(target_os = "linux")]
       "--uninstall-portal" => uninstall_portal = true,
       #[cfg(not(target_os = "linux"))]
-      "--pick" | "--install-handler" | "--uninstall-handler" | "--install-portal" | "--uninstall-portal" => {
+      "--pick" | "--pick-dir" | "--install-handler" | "--uninstall-handler" | "--install-portal" | "--uninstall-portal" => {
         eprintln!("tfl: {arg} is only supported on Linux");
         std::process::exit(1);
       }
       #[cfg(not(target_os = "linux"))]
-      a if a.starts_with("--chooser-file=") => {
-        eprintln!("tfl: --chooser-file is only supported on Linux");
+      a if a.starts_with("--chooser-file=") || a.starts_with("--chooser-dir=") => {
+        eprintln!("tfl: picker options are only supported on Linux");
         std::process::exit(1);
       }
       a if !a.starts_with('-') => path_arg = Some(a.to_string()),
@@ -105,6 +115,8 @@ Options:
     println!(concat!(
       "  --pick                   File picker mode: print selected path to stdout\n",
       "  --chooser-file=PATH      File picker mode: write selected path to PATH\n",
+      "  --pick-dir               Folder picker mode: print selected path to stdout\n",
+      "  --chooser-dir=PATH       Folder picker mode: write selected path to PATH\n",
       "  --install-handler        Set tfl as default file manager\n",
       "  --uninstall-handler      Restore previous default file manager\n",
       "  --install-portal         Set up file dialog integration\n",
@@ -203,8 +215,12 @@ Options:
   #[cfg(target_os = "linux")]
   let picker_mode = if pick_stdout {
     Some(PickerOutput::Stdout)
+  } else if pick_directory_stdout {
+    Some(PickerOutput::DirectoryStdout)
   } else {
-    chooser_file.map(|path| PickerOutput::ChooserFile(PathBuf::from(path)))
+    chooser_file
+      .map(|path| PickerOutput::ChooserFile(PathBuf::from(path)))
+      .or_else(|| chooser_directory.map(|path| PickerOutput::DirectoryChooserFile(PathBuf::from(path))))
   };
   #[cfg(not(target_os = "linux"))]
   let picker_mode = None;
@@ -583,7 +599,7 @@ if [ "$save" = "1" ]; then
   dir="$(dirname "$path")"
   $TERM_EMU -e "$TFL" --chooser-file="$out" "$dir"
 elif [ "$directory" = "1" ]; then
-  $TERM_EMU -e "$TFL" --chooser-file="$out" "${path:-.}"
+  $TERM_EMU -e "$TFL" --chooser-dir="$out" "${path:-.}"
 else
   $TERM_EMU -e "$TFL" --chooser-file="$out" "${path:-.}"
 fi

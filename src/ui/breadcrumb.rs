@@ -167,7 +167,7 @@ mod tests {
     let segments = parse_breadcrumb_segments(Path::new("/usr/local/bin"));
     // We may get 4 segments: /, usr, local, bin OR fewer if home is a parent
     // For /usr/local/bin, home is typically /home/user, so we should get all 4
-    assert!(segments.len() >= 1);
+    assert!(!segments.is_empty());
     let last = segments.last().unwrap();
     assert_eq!(last.name, "bin");
     assert_eq!(last.path, PathBuf::from("/usr/local/bin"));

@@ -22,7 +22,7 @@ if [ "$save" = "1" ]; then
   dir="$(dirname "$path")"
   $TERM_EMU -e "$TFL" --chooser-file="$out" "$dir"
 elif [ "$directory" = "1" ]; then
-  $TERM_EMU -e "$TFL" --chooser-file="$out" "${path:-.}"
+  $TERM_EMU -e "$TFL" --chooser-dir="$out" "${path:-.}"
 else
   $TERM_EMU -e "$TFL" --chooser-file="$out" "${path:-.}"
 fi

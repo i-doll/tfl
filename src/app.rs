@@ -211,6 +211,14 @@ pub enum SuspendAction {
 pub enum PickerOutput {
   Stdout,
   ChooserFile(PathBuf),
+  DirectoryStdout,
+  DirectoryChooserFile(PathBuf),
+}
+
+impl PickerOutput {
+  fn picks_directories(&self) -> bool {
+    matches!(self, Self::DirectoryStdout | Self::DirectoryChooserFile(_))
+  }
 }
 
 impl App {
@@ -315,7 +323,13 @@ impl App {
       Action::MoveDown => self.move_cursor(1),
       Action::MoveUp => self.move_cursor(-1),
       Action::ToggleExpand => self.enter_or_expand()?,
-      Action::MoveRight => self.expand_only()?,
+      Action::MoveRight => {
+        if self.picker_mode.as_ref().is_some_and(PickerOutput::picks_directories) {
+          self.enter_directory()?;
+        } else {
+          self.expand_only()?;
+        }
+      }
       Action::EnterDir => {
         if self.picker_mode.is_some() {
           self.pick_file()?;
@@ -1217,11 +1231,13 @@ impl App {
   }
 
   fn pick_file(&mut self) -> Result<()> {
-    // If marks exist, collect all marked non-dir paths
+    let pick_directories = self.picker_mode.as_ref().is_some_and(PickerOutput::picks_directories);
+
+    // If marks exist, collect all marked paths matching the picker mode.
     let marks = self.active_marks();
     if !marks.is_empty() {
       let paths: Vec<PathBuf> = marks.iter()
-        .filter(|p| !p.is_dir())
+        .filter(|path| path.is_dir() == pick_directories)
         .cloned()
         .collect();
       if !paths.is_empty() {
@@ -1236,7 +1252,15 @@ impl App {
         let idx = pane.cached_visible.get(pane.cursor).copied();
         if let Some(idx) = idx {
           if pane.tree.entries[idx].is_dir {
+            if pick_directories {
+              self.picked_paths = vec![pane.tree.entries[idx].path.clone()];
+              self.should_quit = true;
+              return Ok(());
+            }
             return self.enter_directory();
+          }
+          if pick_directories {
+            return Ok(());
           }
           self.picked_paths = vec![pane.tree.entries[idx].path.clone()];
           self.should_quit = true;
@@ -1246,7 +1270,15 @@ impl App {
       let idx = self.cached_visible.get(self.cursor).copied();
       if let Some(idx) = idx {
         if self.tree.entries[idx].is_dir {
+          if pick_directories {
+            self.picked_paths = vec![self.tree.entries[idx].path.clone()];
+            self.should_quit = true;
+            return Ok(());
+          }
           return self.enter_directory();
+        }
+        if pick_directories {
+          return Ok(());
         }
         self.picked_paths = vec![self.tree.entries[idx].path.clone()];
         self.should_quit = true;
@@ -1996,12 +2028,12 @@ impl App {
     if self.picked_paths.is_empty() { return Ok(()) }
     let Some(ref mode) = self.picker_mode else { return Ok(()) };
     match mode {
-      PickerOutput::Stdout => {
+      PickerOutput::Stdout | PickerOutput::DirectoryStdout => {
         for path in &self.picked_paths {
           println!("{}", path.display());
         }
       }
-      PickerOutput::ChooserFile(file) => {
+      PickerOutput::ChooserFile(file) | PickerOutput::DirectoryChooserFile(file) => {
         let mut f = std::fs::File::create(file)
           .map_err(|e| format!("Failed to write chooser file: {e}"))?;
         for path in &self.picked_paths {
@@ -3560,7 +3592,7 @@ mod tests {
     let dir = setup_test_dir();
     let mut app = App::new(dir.clone(), None, &cfg(), None).unwrap();
     // Move to a file
-    while app.selected_entry().map_or(true, |e| e.is_dir) {
+    while app.selected_entry().is_none_or(|e| e.is_dir) {
       app.update(Action::MoveDown).unwrap();
     }
     app.update(Action::ShowProperties).unwrap();
@@ -5080,6 +5112,64 @@ mod tests {
     for p in &app.picked_paths {
       assert!(!p.is_dir());
     }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_pick_folder_selects_directory() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::DirectoryStdout)).unwrap();
+    let picked_dir = app.selected_entry().unwrap().path.clone();
+
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::EnterDir).unwrap();
+    assert!(app.should_quit);
+    assert_eq!(app.picked_paths, vec![picked_dir]);
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_pick_folder_marks_collect_directories() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::DirectoryStdout)).unwrap();
+
+    assert!(app.selected_entry().unwrap().is_dir);
+    let first_dir = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+
+    while app.selected_entry().is_some_and(|entry| entry.path == first_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+    while app.selected_entry().is_some_and(|entry| !entry.is_dir) {
+      app.update(Action::MoveDown).unwrap();
+    }
+
+    assert!(app.selected_entry().unwrap().is_dir);
+    let second_dir = app.selected_entry().unwrap().path.clone();
+    app.update(Action::ToggleMark).unwrap();
+
+    app.update(Action::EnterDir).unwrap();
+    assert!(app.should_quit);
+    assert_eq!(app.picked_paths.len(), 2);
+    assert!(app.picked_paths.contains(&first_dir));
+    assert!(app.picked_paths.contains(&second_dir));
+    for path in &app.picked_paths {
+      assert!(path.is_dir());
+    }
+    cleanup_test_dir(&dir);
+  }
+
+  #[test]
+  fn test_pick_folder_move_right_enters_directory() {
+    let dir = setup_test_dir();
+    let mut app = App::new(dir.clone(), None, &cfg(), Some(PickerOutput::DirectoryStdout)).unwrap();
+    let old_root = app.tree.root.clone();
+
+    assert!(app.selected_entry().unwrap().is_dir);
+    app.update(Action::MoveRight).unwrap();
+    assert_eq!(app.tree.root, old_root.join("aaa_dir"));
+    assert!(!app.should_quit);
+    assert!(app.picked_paths.is_empty());
     cleanup_test_dir(&dir);
   }
 
