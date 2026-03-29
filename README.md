@@ -55,7 +55,7 @@ A terminal file explorer with vim-style navigation and rich file previews, built
 - **Image EXIF data** — camera model, ISO, exposure for photos with embedded metadata
 - **Archive browsing** — preview contents of ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ files with file listing
 - **Archive extraction** — extract archives to current directory, with optional delete after extract
-- **File picker mode** — use as a file picker from scripts or editors (`--pick` / `--chooser-file`)
+- **File and folder picker modes** — use as a picker from scripts, editors, or portal integrations (`--pick`, `--chooser-file`, `--pick-dir`, `--chooser-dir`)
 - **Default file manager** — register/unregister as XDG default file manager (Linux)
 - **File dialog integration** — desktop file dialog support via xdg-desktop-portal-termfilechooser (Linux)
 
@@ -255,7 +255,9 @@ tfl [options] [path]
 tfl --init
 tfl -a ~/projects
 tfl --pick
+tfl --pick-dir
 tfl --chooser-file=/tmp/chosen
+tfl --chooser-dir=/tmp/chosen-dir
 tfl --help
 ```
 
@@ -266,6 +268,8 @@ If no path is given, opens the current directory.
 | `-a`, `--all` | Show hidden files |
 | `--pick` | File picker mode: print selected path to stdout |
 | `--chooser-file=PATH` | File picker mode: write selected path to PATH |
+| `--pick-dir` | Folder picker mode: print selected path to stdout |
+| `--chooser-dir=PATH` | Folder picker mode: write selected path to PATH |
 | `--install-handler` | Set tfl as default file manager (Linux) |
 | `--uninstall-handler` | Restore previous default file manager (Linux) |
 | `--install-portal` | Set up file dialog integration (Linux) |
@@ -274,19 +278,29 @@ If no path is given, opens the current directory.
 | `-h`, `--help` | Print help message |
 | `-V`, `--version` | Print version |
 
-### File picker mode
+### File and folder picker modes
 
 Use `--pick` or `--chooser-file=PATH` to run tfl as a file picker. Navigate to a file and press Enter to select it. Pressing `q` or `Esc` cancels the selection.
 
 - `--pick` prints the selected file path to stdout (exit code 0), or exits with code 1 if cancelled.
 - `--chooser-file=PATH` writes the selected path to the given file instead of stdout.
+- `--pick-dir` prints the selected directory path to stdout (exit code 0), or exits with code 1 if cancelled.
+- `--chooser-dir=PATH` writes the selected directory path to the given file instead of stdout.
 
-Directories are navigated into (not selected) when you press Enter in picker mode. A `PICK` badge is shown in the status bar as a visual indicator.
+In file picker mode, pressing `Enter` on a directory navigates into it instead of selecting it.
+
+In folder picker mode, pressing `Enter` selects the highlighted directory. Use `l` / `→` to enter a directory while staying in picker mode. A `PICK` badge is shown in the status bar as a visual indicator.
 
 Example: select a file and open it in vim:
 
 ```sh
 vim "$(tfl --pick)"
+```
+
+Example: select a folder and `cd` into it:
+
+```sh
+cd "$(tfl --pick-dir)"
 ```
 
 ### Default file manager (Linux)
